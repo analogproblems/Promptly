@@ -21,6 +21,10 @@ pub mod flags {
     pub const DASHED_UNDERLINE: u16 = 1 << 10;
     /// This cell is inside the current selection.
     pub const SELECTED: u16 = 1 << 11;
+    /// This cell is part of a search match (the colours already show it).
+    pub const MATCH: u16 = 1 << 12;
+    /// This cell is part of a link: an OSC 8 hyperlink or a URL in the text.
+    pub const LINK: u16 = 1 << 13;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

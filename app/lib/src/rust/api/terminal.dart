@@ -93,6 +93,32 @@ void terminalSelectClear({required int id}) =>
 String? terminalSelectionText({required int id}) =>
     RustLib.instance.api.crateApiTerminalTerminalSelectionText(id: id);
 
+/// Search the screen and scrollback for `query` (plain text, any case), or
+/// stop searching with `None`. Matches are highlighted in the frames.
+void terminalSearchSet({required int id, String? query}) => RustLib.instance.api
+    .crateApiTerminalTerminalSearchSet(id: id, query: query);
+
+/// Move to the next match: up into history when `backward`. The match is
+/// selected and scrolled into view. `None` when nothing matches.
+TerminalSearchHit? terminalSearchStep({
+  required int id,
+  required bool backward,
+}) => RustLib.instance.api.crateApiTerminalTerminalSearchStep(
+  id: id,
+  backward: backward,
+);
+
+/// The link under a viewport cell: an OSC 8 hyperlink or a URL in the text.
+String? terminalLinkAt({
+  required int id,
+  required int col,
+  required int line,
+}) => RustLib.instance.api.crateApiTerminalTerminalLinkAt(
+  id: id,
+  col: col,
+  line: line,
+);
+
 /// Show a message from Promptly in the terminal, such as "connection
 /// dropped". Use `\r\n` for line breaks; nothing is sent to the program.
 void terminalNotice({required int id, required String text}) =>
@@ -322,6 +348,33 @@ class TerminalRow {
           fg == other.fg &&
           bg == other.bg &&
           flags == other.flags;
+}
+
+/// Where the focused search match is, for "3 of 12" in the search bar.
+class TerminalSearchHit {
+  final int index;
+  final int total;
+
+  /// Viewport row of the match, after scrolling it into view.
+  final int line;
+
+  const TerminalSearchHit({
+    required this.index,
+    required this.total,
+    required this.line,
+  });
+
+  @override
+  int get hashCode => index.hashCode ^ total.hashCode ^ line.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TerminalSearchHit &&
+          runtimeType == other.runtimeType &&
+          index == other.index &&
+          total == other.total &&
+          line == other.line;
 }
 
 /// How a selection grows from where it started.

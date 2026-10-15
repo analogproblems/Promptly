@@ -43,7 +43,7 @@ Goal: the same hosts on all your devices, for free.
 - Sync setup screen, status line, device list, QR enrolment, recovery key. **Done** (the QR is shown on desktop; scanning comes with the phone builds).
 - `promptly-cli` with `inspect`, `export`, `import`, `sync`, `ssh-config`, `change-passphrase`. **Done.**
 - Import from `~/.ssh/config` on desktop, with the keys it names. **Done.** Keys trusted on one device are trusted on all: `known_hosts` entries travel in the vault.
-- Group defaults (user and key), SSH agent authentication, keyboard-interactive auth, OSC 52 clipboard writes behind a setting. **Done.** OSC 8 links, hardware keyboard polish and native desktop menus move to M3; agent forwarding landed with M3's connection work.
+- Group defaults (user and key), SSH agent authentication, keyboard-interactive auth, OSC 52 clipboard writes behind a setting. **Done.** Hardware keyboard polish and native desktop menus move to M3; agent forwarding and OSC 8 links landed with M3's connection and terminal work.
 
 Done when: a host added on your Linux desktop appears on your Windows machine within a minute via a shared folder or SFTP, and the CLI can export the vault to JSON.
 
@@ -55,7 +55,8 @@ Goal: parity with the paid apps on the features people actually use.
 - SFTP browser, share-sheet upload, dual pane on tablet and desktop.
 - Port forwarding (local, remote, dynamic) and jump hosts. **Done.** Forwards are saved per host, start on connect when marked so, and toggle from the session bar; jump hosts chain, each with its own login. Agent forwarding, a startup command and environment variables came with it, and `~/.ssh/config` import picks up `ProxyJump`, the forward lines and `ForwardAgent`.
 - Persistent sessions via tmux. **Done.** A per-host switch attaches to `tmux new-session -A -s promptly`, falling back to a plain login shell where tmux is missing.
-- Scrollback search, reachability dots, favourites and recents polish.
+- Scrollback search. **Done.** Ctrl+Shift+F opens a bar in the session: every match is highlighted, the current one is selected (so Copy works on it) and scrolled into view, Enter walks up through history and Shift+Enter back down, with "3 of 12" alongside. Links came with it: OSC 8 hyperlinks and plain URLs are underlined, Ctrl+click opens them, and the right-click menu offers Open link and Copy link.
+- Reachability dots, favourites and recents polish.
 - Desktop: tabs, split panes, command palette, drag a host onto a pane.
 
 Done when: a sysadmin can do a full day of work without opening another SSH client.

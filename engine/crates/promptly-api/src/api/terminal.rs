@@ -123,6 +123,14 @@ impl TerminalEvent {
     }
 }
 
+/// Where the focused search match is, for "3 of 12" in the search bar.
+pub struct TerminalSearchHit {
+    pub index: u32,
+    pub total: u32,
+    /// Viewport row of the match, after scrolling it into view.
+    pub line: i32,
+}
+
 pub struct SessionInfo {
     pub id: u32,
     pub label: String,
@@ -391,6 +399,38 @@ pub fn terminal_select_clear(id: u32) -> Result<(), String> {
 #[frb(sync)]
 pub fn terminal_selection_text(id: u32) -> Result<Option<String>, String> {
     Ok(entry(id)?.session.selection_text())
+}
+
+/// Search the screen and scrollback for `query` (plain text, any case), or
+/// stop searching with `None`. Matches are highlighted in the frames.
+#[frb(sync)]
+pub fn terminal_search_set(id: u32, query: Option<String>) -> Result<(), String> {
+    let entry = entry(id)?;
+    entry.session.search_set(query.as_deref(), |f| {
+        entry.emit(TerminalEvent::frame(f.into()))
+    });
+    Ok(())
+}
+
+/// Move to the next match: up into history when `backward`. The match is
+/// selected and scrolled into view. `None` when nothing matches.
+#[frb(sync)]
+pub fn terminal_search_step(id: u32, backward: bool) -> Result<Option<TerminalSearchHit>, String> {
+    let entry = entry(id)?;
+    let hit = entry
+        .session
+        .search_step(backward, |f| entry.emit(TerminalEvent::frame(f.into())));
+    Ok(hit.map(|h| TerminalSearchHit {
+        index: h.index,
+        total: h.total,
+        line: h.line,
+    }))
+}
+
+/// The link under a viewport cell: an OSC 8 hyperlink or a URL in the text.
+#[frb(sync)]
+pub fn terminal_link_at(id: u32, col: u16, line: i32) -> Result<Option<String>, String> {
+    Ok(entry(id)?.session.link_at(col, line))
 }
 
 /// Show a message from Promptly in the terminal, such as "connection

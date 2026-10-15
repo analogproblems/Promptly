@@ -120,6 +120,41 @@ class TerminalController extends ChangeNotifier {
     }
   }
 
+  // ---- Search and links ---------------------------------------------------
+
+  /// Search the screen and scrollback; null or empty stops searching and
+  /// drops the highlighted match.
+  void searchSet(String? query) {
+    final q = query?.trim();
+    if (q == null || q.isEmpty) {
+      _selecting = false;
+      _guard(() => engine.terminalSearchSet(id, null));
+    } else {
+      _guard(() => engine.terminalSearchSet(id, q));
+    }
+  }
+
+  /// Move to the next match: up into history when `backward`. The match
+  /// becomes the selection, so Copy works on it.
+  TerminalSearchHit? searchStep({required bool backward}) {
+    try {
+      final hit = engine.terminalSearchStep(id, backward);
+      if (hit != null) _selecting = true;
+      return hit;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The link under a viewport cell, if any.
+  String? linkAt(int col, int line) {
+    try {
+      return engine.terminalLinkAt(id, col, line);
+    } catch (_) {
+      return null;
+    }
+  }
+
   void setFontSize(double size) {
     fontSize = size.clamp(8, 40);
     notifyListeners();

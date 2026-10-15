@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/app.dart';
@@ -115,6 +116,25 @@ class FakeEngine implements Engine {
   void terminalSelectClear(int id) {}
   @override
   String? terminalSelectionText(int id) => null;
+
+  /// Search queries and steps, in order; a non-empty query finds 2 of 5.
+  final List<String> searchCalls = [];
+  String? _query;
+
+  @override
+  void terminalSearchSet(int id, String? query) {
+    searchCalls.add('search $query');
+    _query = query;
+  }
+
+  @override
+  TerminalSearchHit? terminalSearchStep(int id, bool backward) {
+    searchCalls.add(backward ? 'step back' : 'step forward');
+    return _query == null ? null : const TerminalSearchHit(index: 2, total: 5, line: 1);
+  }
+
+  @override
+  String? terminalLinkAt(int id, int col, int line) => null;
   @override
   void terminalClose(int id) {}
   @override
@@ -957,6 +977,35 @@ void main() {
     expect(find.textContaining('up 3 days'), findsOneWidget);
     expect(find.text('Exit 0'), findsOneWidget);
     expect(find.textContaining('host key is trusted'), findsOneWidget);
+  });
+
+  testWidgets('Ctrl+Shift+F opens the search bar, which counts matches and closes with Escape', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'deploy@web-1');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('search-field')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('search-field')), 'needle');
+    await tester.pumpAndSettle();
+    expect(engine.searchCalls, ['search needle', 'step back']);
+    expect(find.text('2 of 5'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('search-next')));
+    await tester.pumpAndSettle();
+    expect(engine.searchCalls.last, 'step forward');
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('search-field')), findsNothing);
+    expect(engine.searchCalls.last, 'search null', reason: 'closing drops the highlights');
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

@@ -121,6 +121,13 @@ class TerminalPainter extends CustomPainter {
           final p = glyphs.paragraph(g, row.fg[x], f);
           canvas.drawParagraph(p, Offset(left, top + (ch - p.height) / 2));
         }
+        if ((f & CellFlags.link) != 0 && (f & CellFlags.anyUnderline) == 0) {
+          // Links get a faint underline of their own colour, so they read
+          // as links without shouting.
+          final width = (f & CellFlags.wide) != 0 ? cw * 2 : cw;
+          paint.color = Color(0x99000000 | row.fg[x]);
+          canvas.drawRect(Rect.fromLTWH(left, top + ch - 2, width, 1), paint);
+        }
         if ((f & (CellFlags.anyUnderline | CellFlags.strikeout)) != 0) {
           final width = (f & CellFlags.wide) != 0 ? cw * 2 : cw;
           paint.color = Color(0xFF000000 | row.fg[x]);

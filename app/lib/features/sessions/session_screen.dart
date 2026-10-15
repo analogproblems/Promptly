@@ -1,6 +1,13 @@
+import 'dart:io' show Platform, Process;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../../core/engine/engine.dart' show TerminalSearchHit;
 
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
@@ -15,13 +22,101 @@ import 'snippets_drawer.dart';
 /// A single session: slim top bar, then nothing but terminal. While an SSH
 /// connection is being made, the terminal area shows the progress and any
 /// question the server has.
-class SessionScreen extends ConsumerWidget {
+class SessionScreen extends ConsumerStatefulWidget {
   const SessionScreen({super.key, required this.id});
 
   final int id;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<SessionScreen> createState() => _SessionScreenState();
+}
+
+class _SessionScreenState extends ConsumerState<SessionScreen> {
+  bool _searching = false;
+  final _search = TextEditingController();
+  final _searchFocus = FocusNode(debugLabel: 'search');
+  TerminalSearchHit? _hit;
+
+  /// True once a query is typed and nothing matched.
+  bool _noMatch = false;
+
+  int get id => widget.id;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  SessionEntry? _entry() {
+    for (final e in ref.read(sessionManagerProvider)) {
+      if (e.id == id) return e;
+    }
+    return null;
+  }
+
+  void _openSearch() {
+    setState(() => _searching = true);
+    _searchFocus.requestFocus();
+  }
+
+  void _closeSearch() {
+    _entry()?.controller?.searchSet(null);
+    _search.clear();
+    setState(() {
+      _searching = false;
+      _hit = null;
+      _noMatch = false;
+    });
+  }
+
+  void _onQuery(String text) {
+    final c = _entry()?.controller;
+    if (c == null) return;
+    c.searchSet(text);
+    if (text.trim().isEmpty) {
+      setState(() {
+        _hit = null;
+        _noMatch = false;
+      });
+      return;
+    }
+    _step(backward: true);
+  }
+
+  void _step({required bool backward}) {
+    final c = _entry()?.controller;
+    if (c == null) return;
+    final hit = c.searchStep(backward: backward);
+    setState(() {
+      _hit = hit;
+      _noMatch = hit == null && _search.text.trim().isNotEmpty;
+    });
+  }
+
+  Future<void> _openLink(String uri) async {
+    final ok = await openExternalLink(uri);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open $uri')));
+    }
+  }
+
+  KeyEventResult _onSearchKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      _closeSearch();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+      _step(backward: !HardwareKeyboard.instance.isShiftPressed);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final entry = ref.watch(sessionManagerProvider.select((s) {
       for (final e in s) {
         if (e.id == id) return e;
@@ -90,6 +185,13 @@ class SessionScreen extends ConsumerWidget {
                       '${c.grid.cols}×${c.grid.rows}',
                       style: monoStyle(context, size: 11, color: t.muted),
                     ),
+                  if (c != null)
+                    IconButton(
+                      key: const Key('session-search'),
+                      tooltip: 'Search (Ctrl+Shift+F)',
+                      onPressed: _searching ? _closeSearch : _openSearch,
+                      icon: Icon(_searching ? Icons.search_off : Icons.search),
+                    ),
                   if (live)
                     IconButton(
                       key: const Key('session-snippets'),
@@ -113,6 +215,7 @@ class SessionScreen extends ConsumerWidget {
                 ],
               ),
             ),
+            if (_searching && c != null) _searchBar(context),
             Expanded(
               child: c == null
                   ? (entry.flow != null
@@ -127,7 +230,7 @@ class SessionScreen extends ConsumerWidget {
                   : Stack(
                       fit: StackFit.expand,
                       children: [
-                        TerminalView(controller: c),
+                        TerminalView(controller: c, onFind: _openSearch, onOpenLink: _openLink),
                         if (entry.reconnecting)
                           _ReconnectOverlay(
                             entry: entry,
@@ -161,6 +264,91 @@ class SessionScreen extends ConsumerWidget {
         );
       },
     );
+  }
+
+  /// Find in the screen and scrollback: a field, the count, up and down.
+  Widget _searchBar(BuildContext context) {
+    final t = context.tokens;
+    final hit = _hit;
+    final status = _noMatch
+        ? 'No matches'
+        : hit == null
+            ? ''
+            : '${hit.index} of ${hit.total}';
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: t.surface,
+        border: Border(bottom: BorderSide(color: t.border)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.search, size: 18, color: t.muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Focus(
+              onKeyEvent: _onSearchKey,
+              child: TextField(
+                key: const Key('search-field'),
+                controller: _search,
+                focusNode: _searchFocus,
+                style: monoStyle(context, size: 13),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: InputBorder.none,
+                  hintText: 'Find in this session',
+                ),
+                onChanged: _onQuery,
+              ),
+            ),
+          ),
+          Text(status, key: const Key('search-status'), style: TextStyle(fontSize: 12, color: _noMatch ? t.danger : t.muted)),
+          IconButton(
+            key: const Key('search-prev'),
+            tooltip: 'Previous match (Enter)',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => _step(backward: true),
+            icon: const Icon(Icons.keyboard_arrow_up, size: 20),
+          ),
+          IconButton(
+            key: const Key('search-next'),
+            tooltip: 'Next match (Shift+Enter)',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => _step(backward: false),
+            icon: const Icon(Icons.keyboard_arrow_down, size: 20),
+          ),
+          IconButton(
+            key: const Key('search-close'),
+            tooltip: 'Close (Esc)',
+            visualDensity: VisualDensity.compact,
+            onPressed: _closeSearch,
+            icon: const Icon(Icons.close, size: 18),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Hand a link to the system. On Linux that is `xdg-open`, which every
+/// desktop wires to the person's browser; elsewhere the platform's own
+/// opener. False when nothing could take it.
+Future<bool> openExternalLink(String uri) async {
+  final parsed = Uri.tryParse(uri);
+  if (parsed == null || parsed.scheme.isEmpty) return false;
+  if (!kIsWeb && Platform.isLinux) {
+    try {
+      final result = await Process.run('xdg-open', [uri]).timeout(const Duration(seconds: 5));
+      if (result.exitCode == 0) return true;
+    } catch (_) {
+      // No xdg-open: fall through to the platform opener.
+    }
+  }
+  try {
+    return await launchUrl(parsed, mode: LaunchMode.externalApplication).timeout(const Duration(seconds: 5));
+  } catch (_) {
+    return false;
   }
 }
 

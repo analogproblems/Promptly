@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use promptly_term::{Emulator, EmulatorEvent, Frame, Palette, SelectKind, TermSize};
+use promptly_term::{Emulator, EmulatorEvent, Frame, Palette, SearchHit, SelectKind, TermSize};
 
 pub use local::LocalShell;
 
@@ -150,6 +150,26 @@ impl Session {
     /// The selected text, or `None` when nothing is selected.
     pub fn selection_text(&self) -> Option<String> {
         self.emulator.lock().unwrap().selection_text()
+    }
+
+    /// Search the screen and scrollback for plain text, or stop with `None`.
+    pub fn search_set(&self, query: Option<&str>, emit: impl FnOnce(Frame)) {
+        let mut emu = self.emulator.lock().unwrap();
+        emu.search_set(query);
+        emit(emu.frame());
+    }
+
+    /// Move to the next match, up into history when `backward`.
+    pub fn search_step(&self, backward: bool, emit: impl FnOnce(Frame)) -> Option<SearchHit> {
+        let mut emu = self.emulator.lock().unwrap();
+        let hit = emu.search_step(backward);
+        emit(emu.frame());
+        hit
+    }
+
+    /// The link under a viewport cell, if any.
+    pub fn link_at(&self, col: u16, line: i32) -> Option<String> {
+        self.emulator.lock().unwrap().link_at(col, line)
     }
 
     /// Build a complete frame regardless of what changed.

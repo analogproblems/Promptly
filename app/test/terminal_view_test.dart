@@ -11,8 +11,9 @@ import 'package:promptly/features/terminal/terminal_view.dart';
 class RecordingEngine implements Engine {
   final List<String> calls = [];
 
-  /// What the engine reports as selected text.
+  /// What the engine reports as selected text, and as the link under a cell.
   String? selection;
+  String? link;
 
   @override
   String version() => 'test';
@@ -53,6 +54,20 @@ class RecordingEngine implements Engine {
   void terminalSelectClear(int id) => calls.add('clear');
   @override
   String? terminalSelectionText(int id) => selection;
+  @override
+  void terminalSearchSet(int id, String? query) => calls.add('search $query');
+  @override
+  TerminalSearchHit? terminalSearchStep(int id, bool backward) {
+    calls.add(backward ? 'step back' : 'step forward');
+    return const TerminalSearchHit(index: 2, total: 5, line: 1);
+  }
+
+  @override
+  String? terminalLinkAt(int id, int col, int line) {
+    calls.add('link $col,$line');
+    return link;
+  }
+
   @override
   void terminalClose(int id) => calls.add('close');
   @override
@@ -140,6 +155,41 @@ class RecordingEngine implements Engine {
 }
 
 void main() {
+  testWidgets('Ctrl+click opens a link, Ctrl+Shift+F asks for the search bar', (tester) async {
+    final engine = RecordingEngine()..link = 'https://example.com/docs';
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    String? opened;
+    var findAsked = 0;
+    await tester.pumpWidget(MaterialApp(
+      theme: buildPromptlyTheme(Brightness.dark),
+      home: Scaffold(
+        body: TerminalView(
+          controller: controller,
+          onFind: () => findAsked++,
+          onOpenLink: (uri) => opened = uri,
+        ),
+      ),
+    ));
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyF);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    expect(findAsked, 1);
+    expect(engine.calls.where((c) => c.startsWith('write')), isEmpty, reason: 'the shortcut is not typed');
+
+    // Control is still held: a click asks the engine for the link and opens it.
+    final origin = tester.getTopLeft(find.byType(TerminalView));
+    final gesture = await tester.startGesture(origin + const Offset(4, 4), kind: PointerDeviceKind.mouse);
+    await gesture.up();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    expect(engine.calls, contains('link 0,0'));
+    expect(opened, 'https://example.com/docs');
+    expect(engine.calls.where((c) => c.startsWith('select')), isEmpty, reason: 'opening a link does not start a selection');
+    controller.dispose();
+  });
+
   testWidgets('the view subscribes, sizes the session to fit, and sends keys', (tester) async {
     final engine = RecordingEngine();
     final controller = TerminalController(engine: engine, id: 1, label: 'test');

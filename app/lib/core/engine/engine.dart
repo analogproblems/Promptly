@@ -39,6 +39,7 @@ export '../../src/rust/api/terminal.dart'
         TerminalEventKind,
         TerminalFrame,
         TerminalRow,
+        TerminalSearchHit,
         TerminalSelectKind;
 
 /// What the app needs from the Rust engine, as a plain interface so screens
@@ -74,6 +75,15 @@ abstract class Engine {
   void terminalSelectUpdate(int id, int col, int line, bool sideRight);
   void terminalSelectClear(int id);
   String? terminalSelectionText(int id);
+
+  /// Search the screen and scrollback for plain text; null stops searching.
+  void terminalSearchSet(int id, String? query);
+
+  /// Move to the next match, up into history when `backward`.
+  rust_term.TerminalSearchHit? terminalSearchStep(int id, bool backward);
+
+  /// The link under a viewport cell, if any.
+  String? terminalLinkAt(int id, int col, int line);
   void terminalClose(int id);
 
   /// Where the engine keeps its files. Called once at startup.
@@ -224,6 +234,16 @@ class RustEngine implements Engine {
 
   @override
   String? terminalSelectionText(int id) => rust_term.terminalSelectionText(id: id);
+
+  @override
+  void terminalSearchSet(int id, String? query) => rust_term.terminalSearchSet(id: id, query: query);
+
+  @override
+  rust_term.TerminalSearchHit? terminalSearchStep(int id, bool backward) =>
+      rust_term.terminalSearchStep(id: id, backward: backward);
+
+  @override
+  String? terminalLinkAt(int id, int col, int line) => rust_term.terminalLinkAt(id: id, col: col, line: line);
 
   @override
   void terminalClose(int id) => rust_term.terminalClose(id: id);

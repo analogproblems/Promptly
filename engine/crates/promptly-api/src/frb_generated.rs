@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -698820453;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1471612553;
 
 // Section: executor
 
@@ -1449,6 +1449,38 @@ fn wire__crate__api__terminal__terminal_events_impl(
         },
     )
 }
+fn wire__crate__api__terminal__terminal_link_at_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "terminal_link_at",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_id = <u32>::sse_decode(&mut deserializer);
+            let api_col = <u16>::sse_decode(&mut deserializer);
+            let api_line = <i32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::terminal::terminal_link_at(api_id, api_col, api_line)?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__terminal__terminal_list_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -1728,6 +1760,68 @@ fn wire__crate__api__terminal__terminal_scroll_to_bottom_impl(
             deserializer.end();
             transform_result_sse::<_, String>((move || {
                 let output_ok = crate::api::terminal::terminal_scroll_to_bottom(api_id)?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__terminal__terminal_search_set_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "terminal_search_set",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_id = <u32>::sse_decode(&mut deserializer);
+            let api_query = <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::terminal::terminal_search_set(api_id, api_query)?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__terminal__terminal_search_step_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "terminal_search_step",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_id = <u32>::sse_decode(&mut deserializer);
+            let api_backward = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::terminal::terminal_search_step(api_id, api_backward)?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -2346,6 +2440,19 @@ impl SseDecode for Option<crate::api::terminal::TerminalFrame> {
     }
 }
 
+impl SseDecode for Option<crate::api::terminal::TerminalSearchHit> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::terminal::TerminalSearchHit>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<u32> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -2930,6 +3037,20 @@ impl SseDecode for crate::api::terminal::TerminalRow {
     }
 }
 
+impl SseDecode for crate::api::terminal::TerminalSearchHit {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_index = <u32>::sse_decode(deserializer);
+        let mut var_total = <u32>::sse_decode(deserializer);
+        let mut var_line = <i32>::sse_decode(deserializer);
+        return crate::api::terminal::TerminalSearchHit {
+            index: var_index,
+            total: var_total,
+            line: var_line,
+        };
+    }
+}
+
 impl SseDecode for crate::api::terminal::TerminalSelectKind {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3069,24 +3190,27 @@ fn pde_ffi_dispatcher_sync_impl(
         38 => wire__crate__api__sync__sync_qr_payload_impl(ptr, rust_vec_len, data_len),
         41 => wire__crate__api__sync__sync_status_impl(ptr, rust_vec_len, data_len),
         42 => wire__crate__api__terminal__terminal_close_impl(ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
-        52 => {
+        44 => wire__crate__api__terminal__terminal_link_at_impl(ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
+        53 => {
             wire__crate__api__terminal__terminal_scroll_to_bottom_impl(ptr, rust_vec_len, data_len)
         }
-        53 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
-        54 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
-        55 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
-        56 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
-        57 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
-        58 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
-        59 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
+        54 => wire__crate__api__terminal__terminal_search_set_impl(ptr, rust_vec_len, data_len),
+        55 => wire__crate__api__terminal__terminal_search_step_impl(ptr, rust_vec_len, data_len),
+        56 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
+        57 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
+        58 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
+        59 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
+        60 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
+        61 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
+        62 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -3831,6 +3955,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::terminal::TerminalRow>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::terminal::TerminalSearchHit {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.index.into_into_dart().into_dart(),
+            self.total.into_into_dart().into_dart(),
+            self.line.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::terminal::TerminalSearchHit
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::terminal::TerminalSearchHit>
+    for crate::api::terminal::TerminalSearchHit
+{
+    fn into_into_dart(self) -> crate::api::terminal::TerminalSearchHit {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::terminal::TerminalSelectKind {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
@@ -4182,6 +4328,16 @@ impl SseEncode for Option<crate::api::terminal::TerminalFrame> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::terminal::TerminalFrame>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::terminal::TerminalSearchHit> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::terminal::TerminalSearchHit>::sse_encode(value, serializer);
         }
     }
 }
@@ -4625,6 +4781,15 @@ impl SseEncode for crate::api::terminal::TerminalRow {
         <Vec<u32>>::sse_encode(self.fg, serializer);
         <Vec<u32>>::sse_encode(self.bg, serializer);
         <Vec<u16>>::sse_encode(self.flags, serializer);
+    }
+}
+
+impl SseEncode for crate::api::terminal::TerminalSearchHit {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.index, serializer);
+        <u32>::sse_encode(self.total, serializer);
+        <i32>::sse_encode(self.line, serializer);
     }
 }
 

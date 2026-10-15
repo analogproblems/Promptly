@@ -8,6 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+regex = "1"
 alacritty_terminal = "0.26.0"
 serde = { workspace = true }
 thiserror = { workspace = true }

@@ -16,6 +16,8 @@ abstract final class CellFlags {
   static const dottedUnderline = 1 << 9;
   static const dashedUnderline = 1 << 10;
   static const selected = 1 << 11;
+  static const match = 1 << 12;
+  static const link = 1 << 13;
 
   static const anyUnderline =
       underline | doubleUnderline | undercurl | dottedUnderline | dashedUnderline;

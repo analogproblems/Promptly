@@ -70,6 +70,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TerminalFrame dco_decode_box_autoadd_terminal_frame(dynamic raw);
 
   @protected
+  TerminalSearchHit dco_decode_box_autoadd_terminal_search_hit(dynamic raw);
+
+  @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
@@ -152,6 +155,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TerminalFrame? dco_decode_opt_box_autoadd_terminal_frame(dynamic raw);
+
+  @protected
+  TerminalSearchHit? dco_decode_opt_box_autoadd_terminal_search_hit(
+    dynamic raw,
+  );
 
   @protected
   int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
@@ -250,6 +258,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TerminalRow dco_decode_terminal_row(dynamic raw);
 
   @protected
+  TerminalSearchHit dco_decode_terminal_search_hit(dynamic raw);
+
+  @protected
   TerminalSelectKind dco_decode_terminal_select_kind(dynamic raw);
 
   @protected
@@ -315,6 +326,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TerminalFrame sse_decode_box_autoadd_terminal_frame(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TerminalSearchHit sse_decode_box_autoadd_terminal_search_hit(
     SseDeserializer deserializer,
   );
 
@@ -411,6 +427,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TerminalFrame? sse_decode_opt_box_autoadd_terminal_frame(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TerminalSearchHit? sse_decode_opt_box_autoadd_terminal_search_hit(
     SseDeserializer deserializer,
   );
 
@@ -519,6 +540,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TerminalRow sse_decode_terminal_row(SseDeserializer deserializer);
 
   @protected
+  TerminalSearchHit sse_decode_terminal_search_hit(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   TerminalSelectKind sse_decode_terminal_select_kind(
     SseDeserializer deserializer,
   );
@@ -601,6 +627,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_terminal_frame(
     TerminalFrame self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_terminal_search_hit(
+    TerminalSearchHit self,
     SseSerializer serializer,
   );
 
@@ -743,6 +775,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_terminal_search_hit(
+    TerminalSearchHit? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
 
   @protected
@@ -870,6 +908,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_terminal_row(TerminalRow self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_terminal_search_hit(
+    TerminalSearchHit self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_terminal_select_kind(

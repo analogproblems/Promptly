@@ -11,7 +11,7 @@ pub mod frame;
 pub mod palette;
 pub mod themes;
 
-pub use emulator::{Emulator, EmulatorEvent, SelectKind};
+pub use emulator::{Emulator, EmulatorEvent, SearchHit, SelectKind};
 pub use frame::{flags, CursorShape, CursorState, Frame, RowUpdate};
 pub use palette::{Palette, Rgb};
 

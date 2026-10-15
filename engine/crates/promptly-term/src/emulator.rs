@@ -4,11 +4,13 @@ use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{self, Processor};
+use std::sync::LazyLock;
 
 use crate::frame::{self, CursorShape, CursorState, Frame, RowUpdate};
 use crate::palette::{dim, pack, unpack, Palette, Rgb};
@@ -50,6 +52,33 @@ fn side(right: bool) -> Side {
     }
 }
 
+/// Where the focused search match sits, for the "3 of 12" in the search
+/// bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchHit {
+    /// 1-based position of the focused match among all matches, oldest
+    /// first.
+    pub index: u32,
+    pub total: u32,
+    /// Viewport row of the focused match after scrolling it into view.
+    pub line: i32,
+}
+
+/// An active search: the compiled query, and the match the person is on.
+struct Search {
+    grid: RegexSearch,
+    row: regex::Regex,
+    focus: Option<Match>,
+}
+
+/// Plain-text URLs worth a click. Trailing punctuation is trimmed when the
+/// link is read back.
+static URL: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"(?i)\b(?:https?|ftp|ssh|git|file)://[^\s<>"'`]+"#).expect("url regex")
+});
+
+const MAX_MATCHES: usize = 10_000;
+
 #[derive(Clone, Default)]
 struct Listener(Arc<Mutex<Vec<Event>>>);
 
@@ -71,6 +100,7 @@ pub struct Emulator {
     force_full: bool,
     /// The selection as of the last frame, so rows it left are repainted.
     last_selection: Option<SelectionRange>,
+    search: Option<Search>,
 }
 
 impl Emulator {
@@ -91,7 +121,136 @@ impl Emulator {
             bell: false,
             force_full: true,
             last_selection: None,
+            search: None,
         }
+    }
+
+    // ---- Search ------------------------------------------------------------
+
+    /// Start searching for `query` (case-insensitive, plain text), or stop
+    /// with `None`. Every match is highlighted from the next frame on;
+    /// `search_step` moves between them.
+    pub fn search_set(&mut self, query: Option<&str>) {
+        let query = query.map(str::trim).filter(|q| !q.is_empty());
+        let had_focus = self.search.as_ref().is_some_and(|s| s.focus.is_some());
+        self.search = query.and_then(|q| {
+            let pattern = format!("(?i){}", regex::escape(q));
+            Some(Search {
+                grid: RegexSearch::new(&pattern).ok()?,
+                row: regex::Regex::new(&pattern).ok()?,
+                focus: None,
+            })
+        });
+        if had_focus {
+            // The old focus was shown as the selection; it no longer applies.
+            self.term.selection = None;
+        }
+        self.force_full = true;
+    }
+
+    /// Move to the next match: up into history when `backward`, else down
+    /// towards the newest output. Starts from the bottom of the viewport.
+    /// The match becomes the selection and is scrolled into view.
+    pub fn search_step(&mut self, backward: bool) -> Option<SearchHit> {
+        let search = self.search.as_mut()?;
+        let term = &self.term;
+        let (origin, direction, side) = match (&search.focus, backward) {
+            (Some(m), true) => (
+                m.start().sub(term, Boundary::None, 1),
+                Direction::Left,
+                Side::Right,
+            ),
+            (Some(m), false) => (
+                m.end().add(term, Boundary::None, 1),
+                Direction::Right,
+                Side::Left,
+            ),
+            (None, backward) => {
+                let display_offset = term.grid().display_offset() as i32;
+                let bottom = Line(term.screen_lines() as i32 - 1 - display_offset);
+                let top = Line(-display_offset);
+                if backward {
+                    (
+                        Point::new(bottom, term.last_column()),
+                        Direction::Left,
+                        Side::Right,
+                    )
+                } else {
+                    (Point::new(top, Column(0)), Direction::Right, Side::Left)
+                }
+            }
+        };
+        let found = term.search_next(&mut search.grid, origin, direction, side, None)?;
+        search.focus = Some(found.clone());
+
+        let mut selection = Selection::new(SelectionType::Simple, *found.start(), Side::Left);
+        selection.update(*found.end(), Side::Right);
+        self.term.selection = Some(selection);
+
+        // Bring the match into view, centred when it was off screen.
+        let display_offset = self.term.grid().display_offset() as i32;
+        let screen = self.term.screen_lines() as i32;
+        let line = found.start().line.0;
+        let visible = line >= -display_offset && line < screen - display_offset;
+        let mut offset = display_offset;
+        if !visible {
+            offset = (screen / 2 - line).clamp(0, self.term.history_size() as i32);
+            self.term
+                .scroll_display(Scroll::Delta(offset - display_offset));
+        }
+        self.force_full = true;
+
+        let (index, total) = self.match_position(&found);
+        Some(SearchHit {
+            index,
+            total,
+            line: line + offset,
+        })
+    }
+
+    /// Every match in the grid, oldest first, and where `focus` sits among
+    /// them.
+    fn match_position(&mut self, focus: &Match) -> (u32, u32) {
+        let Some(search) = self.search.as_mut() else {
+            return (0, 0);
+        };
+        let start = Point::new(self.term.topmost_line(), Column(0));
+        let end = Point::new(self.term.bottommost_line(), self.term.last_column());
+        let mut index = 0;
+        let mut total = 0;
+        for m in RegexIter::new(start, end, Direction::Right, &self.term, &mut search.grid)
+            .take(MAX_MATCHES)
+        {
+            total += 1;
+            if m.start() == focus.start() {
+                index = total;
+            }
+        }
+        (index, total)
+    }
+
+    // ---- Links -------------------------------------------------------------
+
+    /// The link under a viewport cell: an OSC 8 hyperlink, or a URL written
+    /// in the text of that row.
+    pub fn link_at(&self, col: u16, line: i32) -> Option<String> {
+        let point = self.point_at(col, line);
+        let grid = self.term.grid();
+        if let Some(link) = grid[point.line][point.column].hyperlink() {
+            return Some(link.uri().to_string());
+        }
+        let (text, columns, _) = row_text(grid, point.line);
+        for m in URL.find_iter(&text) {
+            let cols = (columns[m.start()], columns[m.end().saturating_sub(1)]);
+            if point.column.0 >= cols.0 && point.column.0 <= cols.1 {
+                return Some(
+                    m.as_str()
+                        .trim_end_matches(['.', ',', ';', ':', ')', ']', '}', '\'', '"', '!', '?'])
+                        .to_string(),
+                );
+            }
+        }
+        None
     }
 
     /// A viewport position as a grid point, clamped to cells that exist.
@@ -289,6 +448,32 @@ impl Emulator {
         let mut bg = Vec::with_capacity(cols);
         let mut flags_out = Vec::with_capacity(cols);
 
+        // Search matches and plain URLs are found on the row's text once.
+        let (text, columns, wide) = row_text(grid, line);
+        let mut marks = vec![0u16; cols];
+        if let Some(search) = &self.search {
+            for m in search.row.find_iter(&text) {
+                mark(
+                    &mut marks,
+                    &columns,
+                    &wide,
+                    m.start(),
+                    m.end(),
+                    frame::flags::MATCH,
+                );
+            }
+        }
+        for m in URL.find_iter(&text) {
+            mark(
+                &mut marks,
+                &columns,
+                &wide,
+                m.start(),
+                m.end(),
+                frame::flags::LINK,
+            );
+        }
+
         for col in 0..cols {
             let cell = &row[Column(col)];
             let cf = cell.flags;
@@ -351,10 +536,21 @@ impl Emulator {
             {
                 out |= frame::flags::WIDE_SPACER;
             }
+            out |= marks[col];
+            if cell.hyperlink().is_some() {
+                out |= frame::flags::LINK;
+            }
+            if out & frame::flags::MATCH != 0 {
+                b = self.palette.ansi[3];
+                f = self.palette.background;
+            }
             if let Some(sel) = selection {
                 if sel.contains(Point::new(line, Column(col))) {
                     out |= frame::flags::SELECTED;
                     b = self.palette.selection;
+                    if out & frame::flags::MATCH != 0 {
+                        f = self.palette.foreground;
+                    }
                 }
             }
 
@@ -450,12 +646,132 @@ impl Emulator {
     }
 }
 
+/// A grid row as text, with the column each byte of it came from and which
+/// columns hold a double-width character.
+fn row_text(
+    grid: &alacritty_terminal::grid::Grid<alacritty_terminal::term::cell::Cell>,
+    line: Line,
+) -> (String, Vec<usize>, Vec<bool>) {
+    let row = &grid[line];
+    let mut text = String::with_capacity(grid.columns());
+    let mut columns = Vec::with_capacity(grid.columns());
+    let mut wide = vec![false; grid.columns()];
+    for col in 0..grid.columns() {
+        let cell = &row[Column(col)];
+        if cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+            || cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+        {
+            continue;
+        }
+        wide[col] = cell.flags.contains(Flags::WIDE_CHAR);
+        let before = text.len();
+        text.push(cell.c);
+        columns.extend(std::iter::repeat_n(col, text.len() - before));
+    }
+    (text, columns, wide)
+}
+
+/// Set `flag` on the columns that bytes `start..end` of the row text came
+/// from, including the spacer after a wide character.
+fn mark(marks: &mut [u16], columns: &[usize], wide: &[bool], start: usize, end: usize, flag: u16) {
+    for &col in columns.iter().take(end.min(columns.len())).skip(start) {
+        marks[col] |= flag;
+        if wide[col] && col + 1 < marks.len() {
+            marks[col + 1] |= flag;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn emu() -> Emulator {
         Emulator::new(TermSize::new(20, 4), Palette::promptly_dark())
+    }
+
+    #[test]
+    fn search_highlights_steps_and_counts() {
+        let mut e = emu();
+        for i in 0..8 {
+            e.feed(format!("line {i} needle\r\n").as_bytes());
+        }
+        e.feed(b"last NEEDLE here");
+        let _ = e.frame();
+
+        e.search_set(Some("needle"));
+        let f = e.frame();
+        assert!(f.full);
+        let last = f.rows_changed.iter().find(|r| r.line == 3).unwrap();
+        assert_ne!(
+            last.flags[5] & frame::flags::MATCH,
+            0,
+            "matches ignore case"
+        );
+        assert_eq!(last.flags[4] & frame::flags::MATCH, 0);
+        assert_eq!(last.bg[5], Palette::promptly_dark().ansi[3]);
+
+        // Up from the bottom: the newest match first, then older ones,
+        // scrolling into history when needed.
+        let hit = e.search_step(true).unwrap();
+        assert_eq!((hit.index, hit.total), (9, 9));
+        assert_eq!(hit.line, 3);
+        assert_eq!(e.selection_text().as_deref(), Some("NEEDLE"));
+        let hit = e.search_step(true).unwrap();
+        assert_eq!((hit.index, hit.total), (8, 9));
+        for _ in 0..6 {
+            e.search_step(true).unwrap();
+        }
+        let hit = e.search_step(true).unwrap();
+        assert_eq!(hit.index, 1, "the oldest match");
+        assert!(e.frame().display_offset > 0, "scrolled back to show it");
+        // Past the first match wraps to the last.
+        assert_eq!(e.search_step(true).unwrap().index, 9);
+        // And forwards goes the other way.
+        assert_eq!(e.search_step(false).unwrap().index, 1);
+
+        e.search_set(None);
+        let f = e.frame();
+        assert!(f.full);
+        assert!(
+            e.selection_text().is_none(),
+            "clearing the search drops its selection"
+        );
+        assert!(f
+            .rows_changed
+            .iter()
+            .all(|r| r.flags.iter().all(|f| f & frame::flags::MATCH == 0)));
+        assert!(e.search_step(true).is_none());
+    }
+
+    #[test]
+    fn links_are_flagged_and_read_back() {
+        let mut e = Emulator::new(TermSize::new(60, 4), Palette::promptly_dark());
+        e.feed(b"see https://example.com/docs, now\r\n");
+        e.feed(b"\x1b]8;;https://hidden.example/x\x1b\\click me\x1b]8;;\x1b\\ plain");
+        let f = e.frame();
+        let first = &f.rows_changed[0];
+        assert_eq!(first.flags[3] & frame::flags::LINK, 0);
+        assert_ne!(first.flags[4] & frame::flags::LINK, 0);
+        assert_ne!(
+            first.flags[27] & frame::flags::LINK,
+            0,
+            "the comma is flagged with the url"
+        );
+        assert_eq!(first.flags[29] & frame::flags::LINK, 0);
+        assert_eq!(
+            e.link_at(10, 0).as_deref(),
+            Some("https://example.com/docs"),
+            "trailing punctuation is not part of the link"
+        );
+        assert_eq!(e.link_at(1, 0), None);
+
+        let second = &f.rows_changed[1];
+        assert_ne!(second.flags[0] & frame::flags::LINK, 0);
+        assert_ne!(second.flags[7] & frame::flags::LINK, 0);
+        assert_eq!(second.flags[9] & frame::flags::LINK, 0);
+        assert_eq!(e.link_at(2, 1).as_deref(), Some("https://hidden.example/x"));
+        assert_eq!(e.link_at(12, 1), None);
     }
 
     #[test]

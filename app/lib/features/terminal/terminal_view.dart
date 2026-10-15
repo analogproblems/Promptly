@@ -7,15 +7,29 @@ import 'package:flutter/services.dart';
 import '../../core/engine/engine.dart' show TerminalSelectKind;
 import 'key_mapper.dart';
 import 'terminal_controller.dart';
+import 'terminal_grid.dart';
 import 'terminal_painter.dart';
 
 /// The terminal itself: paints the controller's grid, sizes the session to
 /// fit, and turns keys, mouse, scrolls and pastes into engine calls.
 class TerminalView extends StatefulWidget {
-  const TerminalView({super.key, required this.controller, this.autofocus = true});
+  const TerminalView({
+    super.key,
+    required this.controller,
+    this.autofocus = true,
+    this.onFind,
+    this.onOpenLink,
+  });
 
   final TerminalController controller;
   final bool autofocus;
+
+  /// Ctrl+Shift+F (or Cmd+F): the screen around the terminal shows its
+  /// search bar.
+  final VoidCallback? onFind;
+
+  /// Ctrl+click (or Cmd+click) on a link, and "Open link" in the menu.
+  final void Function(String uri)? onOpenLink;
 
   @override
   State<TerminalView> createState() => _TerminalViewState();
@@ -39,6 +53,9 @@ class _TerminalViewState extends State<TerminalView> {
   DateTime? _lastDown;
   Offset? _lastDownAt;
   _Cell? _lastCell;
+
+  /// Whether the pointer rests on a link, for the cursor.
+  bool _overLink = false;
 
   static const _multiClickGap = Duration(milliseconds: 400);
 
@@ -117,6 +134,10 @@ class _TerminalViewState extends State<TerminalView> {
       _copySelection();
       return KeyEventResult.handled;
     }
+    if (copyPaste && key == LogicalKeyboardKey.keyF && widget.onFind != null) {
+      widget.onFind!();
+      return KeyEventResult.handled;
+    }
     if (shift && key == LogicalKeyboardKey.pageUp) {
       c.scroll(c.grid.rows - 1);
       return KeyEventResult.handled;
@@ -172,13 +193,35 @@ class _TerminalViewState extends State<TerminalView> {
     return (col: col, line: line, right: right);
   }
 
+  /// True when the cell holds part of a link.
+  bool _isLinkCell(_Cell cell) {
+    final grid = widget.controller.grid;
+    if (cell.line < 0 || cell.line >= grid.lines.length) return false;
+    final row = grid.lines[cell.line];
+    return cell.col < row.flags.length && (row.flags[cell.col] & CellFlags.link) != 0;
+  }
+
+  void _onHover(PointerHoverEvent e) {
+    final over = _isLinkCell(_cellAt(e.localPosition));
+    if (over != _overLink) setState(() => _overLink = over);
+  }
+
   void _onPointerDown(PointerDownEvent e) {
     _focus.requestFocus();
     // Touch selection (long press, handles) comes with the mobile build.
     if (e.kind == PointerDeviceKind.touch) return;
     if (e.buttons & kSecondaryButton != 0) {
-      _showContextMenu(e.position);
+      _showContextMenu(e.position, _cellAt(e.localPosition));
       return;
+    }
+    final hw = HardwareKeyboard.instance;
+    if (e.buttons & kPrimaryButton != 0 && (hw.isControlPressed || hw.isMetaPressed)) {
+      final cell = _cellAt(e.localPosition);
+      final link = widget.controller.linkAt(cell.col, cell.line);
+      if (link != null) {
+        widget.onOpenLink?.call(link);
+        return;
+      }
     }
     if (e.buttons & kMiddleMouseButton != 0) {
       _pasteFromClipboard();
@@ -223,17 +266,27 @@ class _TerminalViewState extends State<TerminalView> {
     _dragging = false;
   }
 
-  Future<void> _showContextMenu(Offset global) async {
+  Future<void> _showContextMenu(Offset global, _Cell cell) async {
     final hasSelection = widget.controller.selectionText()?.isNotEmpty == true;
+    final link = _isLinkCell(cell) ? widget.controller.linkAt(cell.col, cell.line) : null;
     final choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
       items: [
+        if (link != null) ...[
+          const PopupMenuItem(value: 'open-link', child: Text('Open link')),
+          const PopupMenuItem(value: 'copy-link', child: Text('Copy link')),
+          const PopupMenuDivider(),
+        ],
         PopupMenuItem(value: 'copy', enabled: hasSelection, child: const Text('Copy')),
         const PopupMenuItem(value: 'paste', child: Text('Paste')),
       ],
     );
     switch (choice) {
+      case 'open-link':
+        widget.onOpenLink?.call(link!);
+      case 'copy-link':
+        await Clipboard.setData(ClipboardData(text: link!));
       case 'copy':
         await _copySelection();
       case 'paste':
@@ -272,7 +325,8 @@ class _TerminalViewState extends State<TerminalView> {
             onPointerUp: _onPointerUp,
             onPointerCancel: _onPointerUp,
             child: MouseRegion(
-              cursor: SystemMouseCursors.text,
+              cursor: _overLink ? SystemMouseCursors.click : SystemMouseCursors.text,
+              onHover: _onHover,
               child: ClipRect(
                 child: CustomPaint(
                   size: Size(constraints.maxWidth, constraints.maxHeight),
