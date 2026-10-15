@@ -424,6 +424,7 @@ pub fn terminal_screen_text(id: u32) -> Result<String, String> {
 #[frb(sync)]
 pub fn terminal_close(id: u32) -> Result<(), String> {
     let removed = SESSIONS.lock().unwrap().remove(&id);
+    crate::ssh_flow::forget_connection(id);
     if let Some(entry) = removed {
         entry.session.close();
         *entry.sink.lock().unwrap() = None;

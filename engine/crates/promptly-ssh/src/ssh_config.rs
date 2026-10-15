@@ -20,6 +20,59 @@ pub struct ConfigHost {
     pub identity_files: Vec<PathBuf>,
     pub proxy_jump: Option<String>,
     pub keepalive_seconds: Option<u32>,
+    /// `LocalForward`, `RemoteForward` and `DynamicForward` lines, in order.
+    pub forwards: Vec<ConfigForward>,
+    /// `ForwardAgent yes`.
+    pub forward_agent: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigForwardKind {
+    Local,
+    Remote,
+    Dynamic,
+}
+
+/// One forward line, parsed. `bind_host` is empty when the line gave none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigForward {
+    pub kind: ConfigForwardKind,
+    pub bind_host: String,
+    pub bind_port: u16,
+    pub target_host: String,
+    pub target_port: u16,
+}
+
+/// `[bind:]port host:hostport` for local and remote forwards, `[bind:]port`
+/// for dynamic ones. None when the line does not parse.
+fn parse_forward(kind: ConfigForwardKind, value: &str) -> Option<ConfigForward> {
+    let mut parts = value.split_whitespace();
+    let listen = parts.next()?;
+    let (bind_host, bind_port) = split_host_port(listen, true)?;
+    let (target_host, target_port) = if kind == ConfigForwardKind::Dynamic {
+        (String::new(), 0)
+    } else {
+        split_host_port(parts.next()?, false)?
+    };
+    Some(ConfigForward {
+        kind,
+        bind_host,
+        bind_port,
+        target_host,
+        target_port,
+    })
+}
+
+/// "host:port", "[v6]:port", or just "port" when `port_only_ok`. OpenSSH
+/// also accepts "/" as the separator.
+fn split_host_port(spec: &str, port_only_ok: bool) -> Option<(String, u16)> {
+    let spec = spec.trim();
+    if port_only_ok && !spec.contains([':', '/']) {
+        return Some((String::new(), spec.parse().ok()?));
+    }
+    let (host, port) = spec.rsplit_once([':', '/'])?;
+    let host = host.trim_matches(['[', ']']);
+    Some((host.to_string(), port.parse().ok()?))
 }
 
 #[derive(Debug, Default)]
@@ -191,15 +244,28 @@ pub fn parse(text: &str, ssh_dir: &Path, home: &Path) -> Vec<ConfigHost> {
         .map(|alias| {
             let mut first: BTreeMap<&str, &str> = BTreeMap::new();
             let mut identity_files: Vec<PathBuf> = Vec::new();
+            let mut forwards: Vec<ConfigForward> = Vec::new();
             for b in &blocks {
                 if !(b.patterns.is_empty() || block_matches(&b.patterns, &alias)) {
                     continue;
                 }
                 for (k, v) in &b.settings {
+                    let forward_kind = match k.as_str() {
+                        "localforward" => Some(ConfigForwardKind::Local),
+                        "remoteforward" => Some(ConfigForwardKind::Remote),
+                        "dynamicforward" => Some(ConfigForwardKind::Dynamic),
+                        _ => None,
+                    };
                     if k == "identityfile" {
                         let p = expand_home(v, home);
                         if !identity_files.contains(&p) {
                             identity_files.push(p);
+                        }
+                    } else if let Some(kind) = forward_kind {
+                        if let Some(f) = parse_forward(kind, v) {
+                            if !forwards.contains(&f) {
+                                forwards.push(f);
+                            }
                         }
                     } else {
                         first.entry(k.as_str()).or_insert(v.as_str());
@@ -221,6 +287,10 @@ pub fn parse(text: &str, ssh_dir: &Path, home: &Path) -> Vec<ConfigHost> {
                 keepalive_seconds: first
                     .get("serveraliveinterval")
                     .and_then(|p| p.parse().ok()),
+                forwards,
+                forward_agent: first
+                    .get("forwardagent")
+                    .is_some_and(|v| v.eq_ignore_ascii_case("yes")),
                 alias,
             }
         })
@@ -260,6 +330,11 @@ Host db
     IdentityFile ~/.ssh/db_key
     ProxyJump web-1
     Port 22
+    LocalForward 5432 localhost:5432
+    LocalForward 127.0.0.1:8080 [::1]:80
+    RemoteForward 9000 127.0.0.1:3000
+    DynamicForward 1080
+    ForwardAgent yes
 
 Host web-1
     User override-never-wins
@@ -277,6 +352,28 @@ Host *.internal
             ["web-1", "web-2", "db"],
             "wildcard-only aliases are not hosts"
         );
+        let db = &hosts[2];
+        assert!(db.forward_agent);
+        let described: Vec<String> = db
+            .forwards
+            .iter()
+            .map(|f| {
+                format!(
+                    "{:?} {}:{} {}:{}",
+                    f.kind, f.bind_host, f.bind_port, f.target_host, f.target_port
+                )
+            })
+            .collect();
+        assert_eq!(
+            described,
+            [
+                "Local :5432 localhost:5432",
+                "Local 127.0.0.1:8080 ::1:80",
+                "Remote :9000 127.0.0.1:3000",
+                "Dynamic :1080 :0",
+            ]
+        );
+        assert!(!hosts[0].forward_agent);
         let web1 = &hosts[0];
         assert_eq!(web1.hostname, "web-1.example.com");
         assert_eq!(web1.user.as_deref(), Some("deploy"), "first value wins");

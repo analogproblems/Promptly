@@ -72,6 +72,10 @@ class RecordingEngine implements Engine {
   @override
   void sshCancel(int attemptId) {}
   @override
+  List<SshForwardStatus> sshForwards(int sessionId) => const [];
+  @override
+  Future<int> sshForwardSet(int sessionId, int index, bool enabled) async => 0;
+  @override
   List<StoreRecord> recordsList(String collection) => const [];
   @override
   StoreRecord? recordGet(String collection, String id) => null;

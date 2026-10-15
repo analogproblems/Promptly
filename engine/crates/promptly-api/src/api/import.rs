@@ -111,6 +111,29 @@ pub fn ssh_config_import(aliases: Vec<String>) -> Result<ImportReport, String> {
         if let Some(k) = h.keepalive_seconds {
             host.keepalive_seconds = k;
         }
+        host.agent_forwarding = h.forward_agent;
+        host.port_forwards = h
+            .forwards
+            .iter()
+            .map(|f| promptly_vault::model::PortForward {
+                kind: match f.kind {
+                    promptly_ssh::ConfigForwardKind::Local => {
+                        promptly_vault::model::ForwardKind::Local
+                    }
+                    promptly_ssh::ConfigForwardKind::Remote => {
+                        promptly_vault::model::ForwardKind::Remote
+                    }
+                    promptly_ssh::ConfigForwardKind::Dynamic => {
+                        promptly_vault::model::ForwardKind::Dynamic
+                    }
+                },
+                bind_host: f.bind_host.clone(),
+                bind_port: f.bind_port,
+                target_host: f.target_host.clone(),
+                target_port: f.target_port,
+                auto: true,
+            })
+            .collect();
         host.auth = Auth::Agent;
         // The first key file that can be read.
         for file in &h.identity_files {

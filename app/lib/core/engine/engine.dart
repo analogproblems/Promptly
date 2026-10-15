@@ -18,8 +18,13 @@ export '../../src/rust/api/ssh.dart'
     show
         SshAuthKind,
         SshConnectRequest,
+        SshEnvVar,
         SshEvent,
         SshEventKind,
+        SshForward,
+        SshForwardKind,
+        SshForwardStatus,
+        SshHop,
         SshHostKey,
         SshHostKeyStatus,
         SshKbPrompt,
@@ -84,6 +89,12 @@ abstract class Engine {
   void sshAnswerSecret(int attemptId, String? secret);
   void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers);
   void sshCancel(int attemptId);
+
+  /// The port forwards of a live SSH session, and whether each is running.
+  List<rust_ssh.SshForwardStatus> sshForwards(int sessionId);
+
+  /// Start or stop one forward; returns the port in use when starting.
+  Future<int> sshForwardSet(int sessionId, int index, bool enabled);
 
   /// Records in the local store, as JSON in the vault's format.
   List<rust_store.StoreRecord> recordsList(String collection);
@@ -240,6 +251,13 @@ class RustEngine implements Engine {
 
   @override
   void sshCancel(int attemptId) => rust_ssh.sshCancel(attemptId: attemptId);
+
+  @override
+  List<rust_ssh.SshForwardStatus> sshForwards(int sessionId) => rust_ssh.sshForwards(sessionId: sessionId);
+
+  @override
+  Future<int> sshForwardSet(int sessionId, int index, bool enabled) =>
+      rust_ssh.sshForwardSet(sessionId: sessionId, index: index, enabled: enabled);
 
   @override
   List<rust_store.StoreRecord> recordsList(String collection) =>

@@ -154,15 +154,109 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     return entry;
   }
 
-  /// Connect to a saved host with its stored auth. A missing key is reported
-  /// as an error on the entry rather than thrown.
+  /// Connect to a saved host with its stored auth, through its jump hosts.
+  /// A missing key is reported as an error on the entry rather than thrown.
   SessionEntry connectHost(Host host, {required String theme}) {
     final engine = ref.read(engineProvider);
-    var kind = SshAuthKind.interactive;
-    String? password;
-    String? privateKey;
-    String? problem;
-    // The group fills in what the host leaves blank.
+    final entry = SessionEntry(
+      id: _nextId++,
+      label: host.label,
+      isLocal: false,
+      hostId: host.id,
+      color: host.color ?? defaultColorFor(host.label),
+    );
+    final login = _loginFor(host);
+    var problem = login.problem;
+
+    // The chain of jump hosts, nearest to this device first.
+    final jumps = <SshHop>[];
+    final seen = <String>{host.id};
+    var next = _jumpHostIdFor(host);
+    while (next != null && problem == null) {
+      if (!seen.add(next)) {
+        problem = 'The jump hosts for ${host.label} go round in a circle. Check their settings.';
+        break;
+      }
+      final hop = ref.read(hostsProvider.notifier).byId(next);
+      if (hop == null) {
+        problem = 'The jump host for ${host.label} no longer exists. Edit the host and pick another.';
+        break;
+      }
+      final hopLogin = _loginFor(hop);
+      if (hopLogin.problem != null) {
+        problem = 'Jump host ${hop.label}: ${hopLogin.problem}';
+        break;
+      }
+      jumps.insert(
+        0,
+        SshHop(
+          user: hopLogin.username,
+          host: hop.hostname,
+          port: hop.port,
+          auth: hopLogin.kind,
+          password: hopLogin.password,
+          privateKey: hopLogin.privateKey,
+          passphrase: null,
+        ),
+      );
+      next = _jumpHostIdFor(hop);
+    }
+
+    if (problem != null) {
+      entry.setError(problem);
+      state = [...state, entry];
+      return entry;
+    }
+    final request = SshConnectRequest(
+      user: login.username,
+      host: host.hostname,
+      port: host.port,
+      auth: login.kind,
+      password: login.password,
+      privateKey: login.privateKey,
+      passphrase: null,
+      cols: 80,
+      rows: 24,
+      theme: theme,
+      label: host.label,
+      keepaliveSeconds: host.keepaliveSeconds,
+      reattachSessionId: null,
+      jumps: jumps,
+      persistent: host.persistentSession,
+      startupCommand: host.startupCommand,
+      env: [for (final e in host.env.entries) SshEnvVar(name: e.key, value: e.value)],
+      agentForward: host.agentForwarding,
+      forwards: [for (final f in host.portForwards) _forward(f)],
+    );
+    _startFlow(entry, engine, request);
+    state = [...state, entry];
+    return entry;
+  }
+
+  static SshForward _forward(PortForward f) => SshForward(
+        kind: switch (f.kind) {
+          ForwardKind.local => SshForwardKind.local,
+          ForwardKind.remote => SshForwardKind.remote,
+          ForwardKind.dynamic => SshForwardKind.dynamic_,
+        },
+        bindHost: f.bindHost,
+        bindPort: f.bindPort,
+        targetHost: f.targetHost,
+        targetPort: f.targetPort,
+        auto: f.auto,
+      );
+
+  /// The host's own jump host, or its group's.
+  String? _jumpHostIdFor(Host host) {
+    if (host.jumpHostId != null) return host.jumpHostId;
+    final group = ref.read(groupsProvider.notifier).byId(host.groupId);
+    return group?.defaults['jump_host_id'] as String?;
+  }
+
+  /// How to log in to a host: its own settings, with the group filling in
+  /// what it leaves blank.
+  ({String username, SshAuthKind kind, String? password, String? privateKey, String? problem}) _loginFor(Host host) {
+    final engine = ref.read(engineProvider);
     final group = ref.read(groupsProvider.notifier).byId(host.groupId);
     final defaults = group?.defaults ?? const <String, dynamic>{};
     var username = host.username;
@@ -174,52 +268,30 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     }
     switch (auth.kind) {
       case AuthKind.identity:
-        kind = SshAuthKind.key;
         final identity = ref.read(identitiesProvider.notifier).byId(auth.identityId);
         final secretId = identity?.privateKeySecretId;
-        privateKey = secretId == null ? null : _secret(engine, secretId);
-        if (privateKey == null) {
-          problem = 'The key for this host is missing. Edit the host and pick a key.';
-        }
+        final privateKey = secretId == null ? null : _secret(engine, secretId);
+        return (
+          username: username,
+          kind: SshAuthKind.key,
+          password: null,
+          privateKey: privateKey,
+          problem: privateKey == null ? 'The key for this host is missing. Edit the host and pick a key.' : null,
+        );
       case AuthKind.password:
-        kind = SshAuthKind.password;
         final secretId = auth.passwordSecretId;
-        password = secretId == null ? null : _secret(engine, secretId);
+        return (
+          username: username,
+          kind: SshAuthKind.password,
+          password: secretId == null ? null : _secret(engine, secretId),
+          privateKey: null,
+          problem: null,
+        );
       case AuthKind.agent:
-        kind = SshAuthKind.agent;
+        return (username: username, kind: SshAuthKind.agent, password: null, privateKey: null, problem: null);
       case AuthKind.interactive:
-        kind = SshAuthKind.interactive;
+        return (username: username, kind: SshAuthKind.interactive, password: null, privateKey: null, problem: null);
     }
-    final entry = SessionEntry(
-      id: _nextId++,
-      label: host.label,
-      isLocal: false,
-      hostId: host.id,
-      color: host.color ?? defaultColorFor(host.label),
-    );
-    if (problem != null) {
-      entry.setError(problem);
-      state = [...state, entry];
-      return entry;
-    }
-    final request = SshConnectRequest(
-      user: username,
-      host: host.hostname,
-      port: host.port,
-      auth: kind,
-      password: password,
-      privateKey: privateKey,
-      passphrase: null,
-      cols: 80,
-      rows: 24,
-      theme: theme,
-      label: host.label,
-      keepaliveSeconds: host.keepaliveSeconds,
-      reattachSessionId: null,
-    );
-    _startFlow(entry, engine, request);
-    state = [...state, entry];
-    return entry;
   }
 
   String? _secret(Engine engine, String id) {
@@ -374,6 +446,12 @@ class SessionManager extends Notifier<List<SessionEntry>> {
         label: r.label,
         keepaliveSeconds: r.keepaliveSeconds,
         reattachSessionId: c?.id,
+        jumps: r.jumps,
+        persistent: r.persistent,
+        startupCommand: r.startupCommand,
+        env: r.env,
+        agentForward: r.agentForward,
+        forwards: r.forwards,
       );
 
   SessionEntry? byId(int id) {

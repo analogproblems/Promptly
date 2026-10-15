@@ -1,18 +1,21 @@
 //! The connect flow: resolve, connect, verify the host key, authenticate,
 //! open a shell.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use promptly_term::TermSize;
-use russh::client::{self, AuthResult, KeyboardInteractiveAuthResponse};
+use russh::client::{self, AuthResult, ChannelOpenHandle, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::{self, PrivateKeyWithHashAlg, PublicKey};
-use russh::{MethodKind, MethodSet};
+use russh::{Channel, ChannelOpenFailure, MethodKind, MethodSet};
+use tokio::net::TcpStream;
 
 use crate::endpoint::Endpoint;
+use crate::forward::{Connection, ForwardSpec};
 use crate::hostkey::{HostKeyInfo, HostKeyStatus, KnownHosts};
 use crate::transport::{SshReader, SshTransport};
 
@@ -43,6 +46,21 @@ pub struct ConnectParams {
     pub size: TermSize,
     pub keepalive: Duration,
     pub timeout: Duration,
+    /// Connect through this host first (ProxyJump), which may itself have
+    /// a jump host.
+    pub jump: Option<Box<ConnectParams>>,
+    /// Run this instead of the login shell; the session ends when it does.
+    pub command: Option<String>,
+    /// Typed into the shell once it is open, as if at the keyboard. Include
+    /// the trailing newline to run it.
+    pub startup_input: Option<String>,
+    /// Environment variables to ask the server to set. Servers only accept
+    /// the names in their `AcceptEnv`, so these may be ignored.
+    pub env: Vec<(String, String)>,
+    /// Let programs on the server use the SSH agent on this device.
+    pub agent_forward: bool,
+    /// Port forwards to set up; those marked `auto` start on connect.
+    pub forwards: Vec<ForwardSpec>,
 }
 
 impl ConnectParams {
@@ -54,13 +72,29 @@ impl ConnectParams {
             size,
             keepalive: Duration::from_secs(30),
             timeout: Duration::from_secs(20),
+            jump: None,
+            command: None,
+            startup_input: None,
+            env: Vec::new(),
+            agent_forward: false,
+            forwards: Vec::new(),
         }
+    }
+
+    /// The command that attaches to (or starts) the tmux session Promptly
+    /// keeps on the server, falling back to a plain login shell where tmux
+    /// is not installed.
+    pub fn persistent_command() -> String {
+        "tmux new-session -A -s promptly 2>/dev/null || exec \"${SHELL:-/bin/sh}\" -l".to_string()
     }
 }
 
 /// Progress shown inside the terminal area while connecting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectStep {
+    /// Connecting to the jump host first; its own steps are folded into
+    /// this one.
+    JumpHost,
     Resolving,
     Connecting,
     VerifyingHostKey,
@@ -103,6 +137,19 @@ pub enum ConnectError {
     },
     #[error("gave up connecting to {host} after {seconds} seconds")]
     Timeout { host: String, seconds: u64 },
+    #[error("jump host {host}: {source}")]
+    Jump {
+        host: String,
+        #[source]
+        source: Box<ConnectError>,
+    },
+    #[error("{via} could not open a tunnel to {host}:{port}: {reason}")]
+    Tunnel {
+        via: String,
+        host: String,
+        port: u16,
+        reason: String,
+    },
     #[error("the host key was not trusted")]
     HostKeyRejected,
     #[error("{0}")]
@@ -115,16 +162,74 @@ pub enum ConnectError {
     Ssh(#[from] russh::Error),
 }
 
-/// Handles the server's questions during the handshake.
+/// Handles the server's questions during the handshake, and the channels
+/// it opens later for remote forwards and agent forwarding.
 pub struct Handler {
     prompter: Arc<dyn Prompter>,
     known_hosts: Arc<dyn KnownHosts>,
     host: String,
     port: u16,
+    remote_targets: Arc<Mutex<HashMap<u32, (String, u16)>>>,
+    agent_forward: bool,
 }
 
 impl client::Handler for Handler {
     type Error = ConnectError;
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        _connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        let target = self
+            .remote_targets
+            .lock()
+            .unwrap()
+            .get(&connected_port)
+            .cloned();
+        let Some((host, port)) = target else {
+            reply
+                .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
+            return Ok(());
+        };
+        reply.accept().await;
+        crate::runtime().spawn(async move {
+            match TcpStream::connect((host.as_str(), port)).await {
+                Ok(tcp) => crate::forward::pipe(tcp, channel).await,
+                Err(e) => {
+                    tracing::info!("remote forward to {host}:{port} failed: {e}");
+                    let _ = channel.close().await;
+                }
+            }
+        });
+        Ok(())
+    }
+
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        let socket = std::env::var("SSH_AUTH_SOCK").ok();
+        let Some(path) = socket.filter(|_| self.agent_forward) else {
+            reply
+                .reject(ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
+            return Ok(());
+        };
+        reply.accept().await;
+        crate::runtime().spawn(async move {
+            forward_agent(path, channel).await;
+        });
+        Ok(())
+    }
 
     async fn check_server_key(
         &mut self,
@@ -158,11 +263,20 @@ pub async fn connect(
     prompter: Arc<dyn Prompter>,
     known_hosts: Arc<dyn KnownHosts>,
 ) -> Result<(SshTransport, SshReader), ConnectError> {
-    let handle = connect_handle(&params, prompter.clone(), known_hosts).await?;
+    let connection = Arc::new(connect_handle(&params, prompter.clone(), known_hosts).await?);
+    for spec in &params.forwards {
+        connection.add_forward(spec.clone()).await;
+    }
 
     prompter.progress(ConnectStep::OpeningShell);
-    let channel = handle.channel_open_session().await?;
+    let channel = connection.handle().channel_open_session().await?;
     let (read_half, write_half) = channel.split();
+    for (name, value) in &params.env {
+        let _ = write_half.set_env(false, name.clone(), value.clone()).await;
+    }
+    if params.agent_forward {
+        let _ = write_half.agent_forward(false).await;
+    }
     write_half
         .request_pty(
             true,
@@ -174,46 +288,53 @@ pub async fn connect(
             &[],
         )
         .await?;
-    write_half.request_shell(true).await?;
+    match &params.command {
+        Some(command) => write_half.exec(true, command.as_bytes().to_vec()).await?,
+        None => write_half.request_shell(true).await?,
+    }
+    if let Some(input) = &params.startup_input {
+        write_half.data(input.as_bytes()).await?;
+    }
     prompter.progress(ConnectStep::Connected);
 
-    Ok(SshTransport::start(handle, read_half, write_half))
+    Ok(SshTransport::start(connection, read_half, write_half))
 }
 
 /// Resolve, connect, verify the host key and authenticate: everything up to
-/// an open session, for a shell or for SFTP.
+/// an open session, for a shell or for SFTP. With a jump host, that host is
+/// connected first and the session runs through a tunnel it opens.
 pub async fn connect_handle(
     params: &ConnectParams,
     prompter: Arc<dyn Prompter>,
     known_hosts: Arc<dyn KnownHosts>,
-) -> Result<client::Handle<Handler>, ConnectError> {
+) -> Result<Connection, ConnectError> {
     let host = params.endpoint.host.clone();
     let port = params.endpoint.port;
 
-    prompter.progress(ConnectStep::Resolving);
-    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
-        .await
-        .map_err(|_| ConnectError::Resolve { host: host.clone() })?
-        .collect();
-    if addrs.is_empty() {
-        return Err(ConnectError::Resolve { host });
-    }
-
-    prompter.progress(ConnectStep::Connecting);
     let config = Arc::new(client::Config {
         keepalive_interval: Some(params.keepalive),
         keepalive_max: 3,
         nodelay: true,
         ..client::Config::default()
     });
+    let remote_targets = Arc::new(Mutex::new(HashMap::new()));
     let handler = Handler {
         prompter: prompter.clone(),
-        known_hosts,
+        known_hosts: known_hosts.clone(),
         host: host.clone(),
         port,
+        remote_targets: remote_targets.clone(),
+        agent_forward: params.agent_forward,
     };
-    let connecting = client::connect(config, &addrs[..], handler);
-    let mut handle = match tokio::time::timeout(params.timeout, connecting).await {
+
+    // A jump chain gets more time: every hop has its own handshake.
+    let timeout = if params.jump.is_some() {
+        params.timeout * 2
+    } else {
+        params.timeout
+    };
+    let opening = open_session(params, config, handler, prompter.clone(), known_hosts);
+    let (mut handle, hops) = match tokio::time::timeout(timeout, opening).await {
         Ok(Ok(h)) => h,
         Ok(Err(ConnectError::Ssh(russh::Error::UnknownKey))) => {
             return Err(ConnectError::HostKeyRejected)
@@ -229,14 +350,124 @@ pub async fn connect_handle(
         Err(_) => {
             return Err(ConnectError::Timeout {
                 host,
-                seconds: params.timeout.as_secs(),
+                seconds: timeout.as_secs(),
             })
         }
     };
 
     prompter.progress(ConnectStep::Authenticating);
     authenticate(&mut handle, params, &prompter).await?;
-    Ok(handle)
+    Ok(Connection::new(handle, hops, remote_targets))
+}
+
+/// The transport-level part of connecting: a TCP connection, or a tunnel
+/// through the jump host, with the SSH handshake run over it.
+async fn open_session(
+    params: &ConnectParams,
+    config: Arc<client::Config>,
+    handler: Handler,
+    prompter: Arc<dyn Prompter>,
+    known_hosts: Arc<dyn KnownHosts>,
+) -> Result<(client::Handle<Handler>, Vec<Arc<client::Handle<Handler>>>), ConnectError> {
+    let host = params.endpoint.host.clone();
+    let port = params.endpoint.port;
+
+    if let Some(jump) = &params.jump {
+        prompter.progress(ConnectStep::JumpHost);
+        let hop_prompter: Arc<dyn Prompter> = Arc::new(HopPrompter(prompter.clone()));
+        let hop = Box::pin(connect_handle(jump, hop_prompter, known_hosts))
+            .await
+            .map_err(|e| ConnectError::Jump {
+                host: jump.endpoint.host.clone(),
+                source: Box::new(e),
+            })?;
+        prompter.progress(ConnectStep::Connecting);
+        let channel = hop
+            .handle()
+            .channel_open_direct_tcpip(host.clone(), u32::from(port), "127.0.0.1", 0)
+            .await
+            .map_err(|e| ConnectError::Tunnel {
+                via: jump.endpoint.host.clone(),
+                host: host.clone(),
+                port,
+                reason: match e {
+                    russh::Error::ChannelOpenFailure(_) => "the jump host refused".into(),
+                    other => other.to_string(),
+                },
+            })?;
+        let handle = client::connect_stream(config, channel.into_stream(), handler).await?;
+        return Ok((handle, hop.into_handles()));
+    }
+
+    prompter.progress(ConnectStep::Resolving);
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), port))
+        .await
+        .map_err(|_| ConnectError::Resolve { host: host.clone() })?
+        .collect();
+    if addrs.is_empty() {
+        return Err(ConnectError::Resolve { host });
+    }
+
+    prompter.progress(ConnectStep::Connecting);
+    let stream = TcpStream::connect(&addrs[..])
+        .await
+        .map_err(|e| ConnectError::Connect {
+            host: host.clone(),
+            port,
+            reason: friendly_io(&e),
+        })?;
+    let _ = stream.set_nodelay(true);
+    let handle = client::connect_stream(config, stream, handler).await?;
+    Ok((handle, Vec::new()))
+}
+
+/// The prompter a jump host sees: its progress folds into the one
+/// "jump host" step, while its questions (an unknown key, a password) reach
+/// the person as usual.
+struct HopPrompter(Arc<dyn Prompter>);
+
+impl Prompter for HopPrompter {
+    fn progress(&self, step: ConnectStep) {
+        if !matches!(step, ConnectStep::OpeningShell | ConnectStep::Connected) {
+            self.0.progress(ConnectStep::JumpHost);
+        }
+    }
+    fn confirm_host_key(&self, info: HostKeyInfo, status: HostKeyStatus) -> BoxFuture<'_, bool> {
+        self.0.confirm_host_key(info, status)
+    }
+    fn ask_secret(&self, prompt: String) -> BoxFuture<'_, Option<String>> {
+        self.0.ask_secret(prompt)
+    }
+    fn ask_keyboard_interactive(
+        &self,
+        name: String,
+        instructions: String,
+        prompts: Vec<KeyboardPrompt>,
+    ) -> BoxFuture<'_, Option<Vec<String>>> {
+        self.0.ask_keyboard_interactive(name, instructions, prompts)
+    }
+}
+
+/// Join an agent-forwarding channel from the server to the agent socket on
+/// this device.
+#[cfg(unix)]
+async fn forward_agent(path: String, channel: Channel<Msg>) {
+    match tokio::net::UnixStream::connect(&path).await {
+        Ok(mut sock) => {
+            let mut stream = channel.into_stream();
+            let _ = tokio::io::copy_bidirectional(&mut sock, &mut stream).await;
+        }
+        Err(e) => {
+            tracing::info!("agent forwarding: could not open {path}: {e}");
+            let _ = channel.close().await;
+        }
+    }
+}
+
+#[cfg(not(unix))]
+async fn forward_agent(_path: String, channel: Channel<Msg>) {
+    tracing::info!("agent forwarding is not supported on this platform yet");
+    let _ = channel.close().await;
 }
 
 fn friendly_io(e: &io::Error) -> String {
@@ -494,7 +725,7 @@ fn is_wrong_passphrase(e: &keys::Error) -> bool {
 mod tests {
     use super::*;
     use crate::hostkey::FileKnownHosts;
-    use promptly_session::{pump, Session, SessionEvent, SessionKind};
+    use promptly_session::{pump, Session, SessionEvent, SessionKind, Transport};
     use promptly_term::Palette;
     use std::sync::Mutex;
     use std::time::Instant;
@@ -549,20 +780,22 @@ mod tests {
         endpoint: Endpoint,
         password: &str,
     ) -> (String, Option<HostKeyStatus>) {
-        let dir =
-            std::env::temp_dir().join(format!("promptly-ssh-test-{}-{label}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let known = Arc::new(FileKnownHosts::new(vec![], dir.join("known_hosts")));
-        let prompter = Arc::new(TestPrompter {
-            password: password.to_string(),
-            steps: Mutex::new(vec![]),
-            host_key_asked: Mutex::new(None),
-        });
+        let params = ConnectParams::new(endpoint, auth, TermSize::new(60, 8));
+        let (text, asked, _) = run_shell_with(label, params, password, None);
+        (text, asked)
+    }
+
+    /// Connect with `params`, run `input` (or a size check) in the shell
+    /// until it exits, and return the screen, whether the host key was
+    /// asked about, and the steps reported.
+    fn run_shell_with(
+        label: &str,
+        params: ConnectParams,
+        password: &str,
+        input: Option<&str>,
+    ) -> (String, Option<HostKeyStatus>, Vec<ConnectStep>) {
+        let (transport, reader, prompter) = connect_only(label, params, password);
         let size = TermSize::new(60, 8);
-        let params = ConnectParams::new(endpoint, auth, size);
-        let (transport, reader) = crate::runtime()
-            .block_on(connect(params, prompter.clone(), known))
-            .expect("connect");
         let session = Arc::new(Session::new(
             SessionKind::Ssh {
                 host: "test".into(),
@@ -581,9 +814,14 @@ mod tests {
                 assert_eq!((f.cols, f.rows), (100, 30))
             })
             .unwrap();
-        session
-            .write(b"sleep 0.3; stty size; echo ssh-$((6*7))-ok; exit 3\n")
-            .unwrap();
+        if let Some(input) = input {
+            std::thread::sleep(Duration::from_secs(1));
+            session.write(input.as_bytes()).unwrap();
+        } else {
+            session
+                .write(b"sleep 0.3; stty size; echo ssh-$((6*7))-ok; exit 3\n")
+                .unwrap();
+        }
         let deadline = Instant::now() + Duration::from_secs(15);
         let mut code = None;
         while Instant::now() < deadline {
@@ -594,16 +832,224 @@ mod tests {
                 break;
             }
         }
-        assert_eq!(code, Some(Some(3)), "shell should exit with 3");
+        if input.is_none() {
+            assert_eq!(code, Some(Some(3)), "shell should exit with 3");
+        } else {
+            assert!(code.is_some(), "the program should exit");
+        }
         let steps = prompter.steps.lock().unwrap().clone();
         assert_eq!(
             steps.last(),
             Some(&ConnectStep::Connected),
             "steps: {steps:?}"
         );
-        let _ = std::fs::remove_dir_all(&dir);
         let asked = *prompter.host_key_asked.lock().unwrap();
-        (session.screen_text(), asked)
+        (session.screen_text(), asked, steps)
+    }
+
+    /// Connect and hand back the transport, for tests that use the
+    /// connection rather than the shell.
+    fn connect_only(
+        label: &str,
+        params: ConnectParams,
+        password: &str,
+    ) -> (SshTransport, SshReader, Arc<TestPrompter>) {
+        let dir =
+            std::env::temp_dir().join(format!("promptly-ssh-test-{}-{label}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let known = Arc::new(FileKnownHosts::new(vec![], dir.join("known_hosts")));
+        let prompter = Arc::new(TestPrompter {
+            password: password.to_string(),
+            steps: Mutex::new(vec![]),
+            host_key_asked: Mutex::new(None),
+        });
+        let (transport, reader) = crate::runtime()
+            .block_on(connect(params, prompter.clone(), known))
+            .expect("connect");
+        let _ = std::fs::remove_dir_all(&dir);
+        (transport, reader, prompter)
+    }
+
+    /// Read the first bytes a server sends on a fresh connection.
+    fn banner_from(port: u16) -> String {
+        use std::io::Read;
+        let mut tcp = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut buf = [0u8; 64];
+        let n = tcp.read(&mut buf).unwrap_or(0);
+        String::from_utf8_lossy(&buf[..n]).into_owned()
+    }
+
+    fn forward(kind: crate::forward::ForwardKind, target_port: u16) -> ForwardSpec {
+        ForwardSpec {
+            kind,
+            bind_host: String::new(),
+            bind_port: 0,
+            target_host: "127.0.0.1".into(),
+            target_port,
+            auto: true,
+        }
+    }
+
+    #[test]
+    fn jump_host_runs_a_shell() {
+        let Some((endpoint, password)) = test_server() else {
+            return;
+        };
+        // The test server jumps through itself: a real tunnel, one box.
+        let mut params = ConnectParams::new(
+            endpoint.clone(),
+            AuthMethod::Password {
+                password: Some(password.clone()),
+            },
+            TermSize::new(60, 8),
+        );
+        params.jump = Some(Box::new(ConnectParams::new(
+            endpoint,
+            AuthMethod::Password {
+                password: Some(password.clone()),
+            },
+            TermSize::new(60, 8),
+        )));
+        let (text, _, steps) = run_shell_with("jump", params, &password, None);
+        assert!(text.contains("ssh-42-ok"), "screen:\n{text}");
+        assert_eq!(steps.first(), Some(&ConnectStep::JumpHost), "{steps:?}");
+        assert!(
+            !steps.contains(&ConnectStep::Resolving),
+            "the target is reached through the tunnel, not resolved here: {steps:?}"
+        );
+    }
+
+    #[test]
+    fn persistent_command_attaches_tmux() {
+        let Some((endpoint, password)) = test_server() else {
+            return;
+        };
+        let mut params = ConnectParams::new(
+            endpoint,
+            AuthMethod::Password {
+                password: Some(password.clone()),
+            },
+            TermSize::new(60, 8),
+        );
+        params.command = Some(ConnectParams::persistent_command());
+        // tmux restores the screen when it ends, so the proof goes to a
+        // file; the test server is this machine.
+        let marker = std::env::temp_dir().join(format!("promptly-tmux-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let input = format!(
+            "echo inside-${{TMUX:+tmux}}-ok > {}; exit\n",
+            marker.display()
+        );
+        let (text, _, _) = run_shell_with("tmux", params, &password, Some(&input));
+        assert!(
+            text.contains("[exited]"),
+            "tmux should have run; screen:\n{text}"
+        );
+        let proof = std::fs::read_to_string(&marker).unwrap_or_default();
+        let _ = std::fs::remove_file(&marker);
+        assert!(proof.contains("inside-tmux-ok"), "marker: {proof:?}");
+    }
+
+    #[test]
+    fn startup_input_runs_in_the_shell() {
+        let Some((endpoint, password)) = test_server() else {
+            return;
+        };
+        let mut params = ConnectParams::new(
+            endpoint,
+            AuthMethod::Password {
+                password: Some(password.clone()),
+            },
+            TermSize::new(60, 8),
+        );
+        params.startup_input = Some("echo started-$((40+2))\n".into());
+        let (text, _, _) = run_shell_with("startup", params, &password, Some("exit\n"));
+        assert!(text.contains("started-42"), "screen:\n{text}");
+    }
+
+    #[test]
+    fn local_forward_reaches_the_server() {
+        let Some((endpoint, password)) = test_server() else {
+            return;
+        };
+        let server_port = endpoint.port;
+        let mut params = ConnectParams::new(
+            endpoint,
+            AuthMethod::Password {
+                password: Some(password.clone()),
+            },
+            TermSize::new(60, 8),
+        );
+        params.forwards = vec![forward(crate::forward::ForwardKind::Local, server_port)];
+        let (mut transport, _reader, _) = connect_only("local-forward", params, &password);
+        let status = transport.connection().forwards();
+        assert!(status[0].active, "{:?}", status[0].error);
+        assert_ne!(status[0].bound_port, 0);
+        assert!(banner_from(status[0].bound_port).starts_with("SSH-2.0"));
+
+        // Stopped forwards stop listening.
+        crate::runtime().block_on(transport.connection().stop_forward(0));
+        assert!(std::net::TcpStream::connect(("127.0.0.1", status[0].bound_port)).is_err());
+        transport.close();
+    }
+
+    #[test]
+    fn remote_forward_reaches_this_device() {
+        let Some((endpoint, password)) = test_server() else {
+            return;
+        };
+        let server_port = endpoint.port;
+        let mut params = ConnectParams::new(
+            endpoint,
+            AuthMethod::Password {
+                password: Some(password.clone()),
+            },
+            TermSize::new(60, 8),
+        );
+        params.forwards = vec![forward(crate::forward::ForwardKind::Remote, server_port)];
+        let (mut transport, _reader, _) = connect_only("remote-forward", params, &password);
+        let status = transport.connection().forwards();
+        assert!(status[0].active, "{:?}", status[0].error);
+        // The server is this machine, so its listener is reachable here.
+        assert!(banner_from(status[0].bound_port).starts_with("SSH-2.0"));
+        transport.close();
+    }
+
+    #[test]
+    fn dynamic_forward_speaks_socks5() {
+        use std::io::{Read, Write};
+        let Some((endpoint, password)) = test_server() else {
+            return;
+        };
+        let server_port = endpoint.port;
+        let mut params = ConnectParams::new(
+            endpoint,
+            AuthMethod::Password {
+                password: Some(password.clone()),
+            },
+            TermSize::new(60, 8),
+        );
+        params.forwards = vec![forward(crate::forward::ForwardKind::Dynamic, 0)];
+        let (mut transport, _reader, _) = connect_only("socks", params, &password);
+        let status = transport.connection().forwards();
+        assert!(status[0].active, "{:?}", status[0].error);
+
+        let mut tcp = std::net::TcpStream::connect(("127.0.0.1", status[0].bound_port)).unwrap();
+        tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        tcp.write_all(&[5, 1, 0]).unwrap();
+        let mut reply = [0u8; 2];
+        tcp.read_exact(&mut reply).unwrap();
+        assert_eq!(reply, [5, 0]);
+        let [hi, lo] = server_port.to_be_bytes();
+        tcp.write_all(&[5, 1, 0, 1, 127, 0, 0, 1, hi, lo]).unwrap();
+        let mut reply = [0u8; 10];
+        tcp.read_exact(&mut reply).unwrap();
+        assert_eq!(reply[1], 0, "connect should succeed");
+        let mut buf = [0u8; 64];
+        let n = tcp.read(&mut buf).unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("SSH-2.0"));
+        transport.close();
     }
 
     #[test]

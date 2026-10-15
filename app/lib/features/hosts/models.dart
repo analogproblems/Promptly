@@ -9,6 +9,66 @@ String newRecordId() => _uuid.v7();
 
 enum AuthKind { identity, password, agent, interactive }
 
+enum ForwardKind { local, remote, dynamic }
+
+/// A port forward saved on a host. Local: this device listens and the
+/// server connects on. Remote: the server listens and this device connects
+/// on. Dynamic: a SOCKS proxy on this device.
+class PortForward {
+  const PortForward({
+    required this.kind,
+    this.bindHost = '',
+    required this.bindPort,
+    this.targetHost = '',
+    this.targetPort = 0,
+    this.auto = true,
+  });
+
+  final ForwardKind kind;
+  final String bindHost;
+  final int bindPort;
+  final String targetHost;
+  final int targetPort;
+
+  /// Start when the host connects.
+  final bool auto;
+
+  /// "8080 → db:5432", "server 9000 → 127.0.0.1:3000", "SOCKS on 1080".
+  String get describe => switch (kind) {
+        ForwardKind.local => '$bindPort → $targetHost:$targetPort',
+        ForwardKind.remote => 'server $bindPort → $targetHost:$targetPort',
+        ForwardKind.dynamic => 'SOCKS on $bindPort',
+      };
+
+  PortForward copyWith({ForwardKind? kind, String? bindHost, int? bindPort, String? targetHost, int? targetPort, bool? auto}) =>
+      PortForward(
+        kind: kind ?? this.kind,
+        bindHost: bindHost ?? this.bindHost,
+        bindPort: bindPort ?? this.bindPort,
+        targetHost: targetHost ?? this.targetHost,
+        targetPort: targetPort ?? this.targetPort,
+        auto: auto ?? this.auto,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'kind': kind.name,
+        'bind_host': bindHost,
+        'bind_port': bindPort,
+        'target_host': targetHost,
+        'target_port': targetPort,
+        'auto': auto,
+      };
+
+  factory PortForward.fromJson(Map<String, dynamic> j) => PortForward(
+        kind: ForwardKind.values.firstWhere((k) => k.name == j['kind'], orElse: () => ForwardKind.local),
+        bindHost: j['bind_host'] as String? ?? '',
+        bindPort: (j['bind_port'] as num?)?.toInt() ?? 0,
+        targetHost: j['target_host'] as String? ?? '',
+        targetPort: (j['target_port'] as num?)?.toInt() ?? 0,
+        auto: j['auto'] as bool? ?? false,
+      );
+}
+
 class HostAuth {
   const HostAuth({required this.kind, this.identityId, this.passwordSecretId});
 
@@ -47,6 +107,7 @@ class Host {
     this.startupCommand,
     this.env = const {},
     this.persistentSession = false,
+    this.agentForwarding = false,
     this.portForwards = const [],
     this.lastConnectedAt,
     this.favourite = false,
@@ -71,7 +132,8 @@ class Host {
   final String? startupCommand;
   final Map<String, String> env;
   final bool persistentSession;
-  final List<dynamic> portForwards;
+  final bool agentForwarding;
+  final List<PortForward> portForwards;
   final DateTime? lastConnectedAt;
   final bool favourite;
   final String sync;
@@ -91,6 +153,12 @@ class Host {
     int? keepaliveSeconds,
     Object? lastConnectedAt = _unset,
     bool? favourite,
+    Object? jumpHostId = _unset,
+    Object? startupCommand = _unset,
+    Map<String, String>? env,
+    bool? persistentSession,
+    bool? agentForwarding,
+    List<PortForward>? portForwards,
   }) =>
       Host(
         id: id,
@@ -104,12 +172,13 @@ class Host {
         color: color == _unset ? this.color : color as String?,
         icon: icon,
         notes: notes ?? this.notes,
-        jumpHostId: jumpHostId,
+        jumpHostId: jumpHostId == _unset ? this.jumpHostId : jumpHostId as String?,
         keepaliveSeconds: keepaliveSeconds ?? this.keepaliveSeconds,
-        startupCommand: startupCommand,
-        env: env,
-        persistentSession: persistentSession,
-        portForwards: portForwards,
+        startupCommand: startupCommand == _unset ? this.startupCommand : startupCommand as String?,
+        env: env ?? this.env,
+        persistentSession: persistentSession ?? this.persistentSession,
+        agentForwarding: agentForwarding ?? this.agentForwarding,
+        portForwards: portForwards ?? this.portForwards,
         lastConnectedAt: lastConnectedAt == _unset ? this.lastConnectedAt : lastConnectedAt as DateTime?,
         favourite: favourite ?? this.favourite,
         sync: sync,
@@ -132,7 +201,8 @@ class Host {
         'startup_command': startupCommand,
         'env': env,
         'persistent_session': persistentSession,
-        'port_forwards': portForwards,
+        'agent_forwarding': agentForwarding,
+        'port_forwards': [for (final f in portForwards) f.toJson()],
         'last_connected_at': lastConnectedAt?.toUtc().toIso8601String(),
         'favourite': favourite,
         'sync': sync,
@@ -155,7 +225,11 @@ class Host {
         startupCommand: j['startup_command'] as String?,
         env: (j['env'] as Map?)?.cast<String, String>() ?? const {},
         persistentSession: j['persistent_session'] as bool? ?? false,
-        portForwards: (j['port_forwards'] as List?) ?? const [],
+        agentForwarding: j['agent_forwarding'] as bool? ?? false,
+        portForwards: [
+          for (final f in (j['port_forwards'] as List?) ?? const [])
+            if (f is Map) PortForward.fromJson(f.cast<String, dynamic>()),
+        ],
         lastConnectedAt: j['last_connected_at'] == null ? null : DateTime.tryParse(j['last_connected_at'] as String),
         favourite: j['favourite'] as bool? ?? false,
         sync: j['sync'] as String? ?? 'vault',

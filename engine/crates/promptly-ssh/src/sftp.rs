@@ -8,12 +8,12 @@
 use std::sync::Arc;
 
 use promptly_vault::{Backend, BackendError, Entry};
-use russh::client;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::{OpenFlags, StatusCode};
 use tokio::io::AsyncWriteExt;
 
-use crate::connect::{connect_handle, ConnectError, ConnectParams, ConnectStep, Handler, Prompter};
+use crate::connect::{connect_handle, ConnectError, ConnectParams, ConnectStep, Prompter};
+use crate::forward::Connection;
 use crate::hostkey::{HostKeyInfo, HostKeyStatus, KnownHosts};
 
 #[derive(Debug, thiserror::Error)]
@@ -55,7 +55,7 @@ impl Prompter for QuietPrompter {
 
 pub struct SftpBackend {
     /// Keeps the connection open for as long as the backend lives.
-    _handle: client::Handle<Handler>,
+    _connection: Connection,
     sftp: SftpSession,
     root: String,
 }
@@ -77,8 +77,9 @@ impl SftpBackend {
         known_hosts: Arc<dyn KnownHosts>,
         root: &str,
     ) -> Result<Self, SftpError> {
-        let handle = connect_handle(params, prompter, known_hosts).await?;
-        let channel = handle
+        let connection = connect_handle(params, prompter, known_hosts).await?;
+        let channel = connection
+            .handle()
             .channel_open_session()
             .await
             .map_err(ConnectError::from)?;
@@ -89,7 +90,7 @@ impl SftpBackend {
         let sftp = SftpSession::new(channel.into_stream()).await?;
         let root = root.trim().trim_end_matches('/').to_string();
         let backend = Self {
-            _handle: handle,
+            _connection: connection,
             sftp,
             root,
         };

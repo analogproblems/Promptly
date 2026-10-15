@@ -102,6 +102,10 @@ pub struct Host {
     pub env: BTreeMap<String, String>,
     #[serde(default)]
     pub persistent_session: bool,
+    /// Let programs on the server use this device's SSH agent. Off unless
+    /// the person turns it on for the host.
+    #[serde(default)]
+    pub agent_forwarding: bool,
     #[serde(default)]
     pub port_forwards: Vec<PortForward>,
     #[serde(default, with = "time::serde::rfc3339::option")]
@@ -140,6 +144,7 @@ impl Host {
             startup_command: None,
             env: BTreeMap::new(),
             persistent_session: false,
+            agent_forwarding: false,
             port_forwards: Vec::new(),
             last_connected_at: None,
             favourite: false,

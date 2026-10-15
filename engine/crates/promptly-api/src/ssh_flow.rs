@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicU32;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use promptly_ssh::{ConnectStep, HostKeyInfo, HostKeyStatus, KeyboardPrompt, Prompter};
+use promptly_ssh::{ConnectStep, Connection, HostKeyInfo, HostKeyStatus, KeyboardPrompt, Prompter};
 use tokio::sync::oneshot;
 
 use crate::api::ssh::{
@@ -39,6 +39,27 @@ pub(crate) static ATTEMPTS: LazyLock<Mutex<HashMap<u32, Arc<Attempt>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 pub(crate) static NEXT_ATTEMPT: AtomicU32 = AtomicU32::new(1);
 
+/// The live SSH connection behind each terminal session, for forwards.
+pub(crate) static CONNECTIONS: LazyLock<Mutex<HashMap<u32, Arc<Connection>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub(crate) fn connection(session_id: u32) -> Result<Arc<Connection>, String> {
+    CONNECTIONS
+        .lock()
+        .unwrap()
+        .get(&session_id)
+        .cloned()
+        .ok_or_else(|| format!("session {session_id} has no SSH connection"))
+}
+
+pub(crate) fn remember_connection(session_id: u32, connection: Arc<Connection>) {
+    CONNECTIONS.lock().unwrap().insert(session_id, connection);
+}
+
+pub(crate) fn forget_connection(session_id: u32) {
+    CONNECTIONS.lock().unwrap().remove(&session_id);
+}
+
 pub(crate) fn attempt(id: u32) -> Result<Arc<Attempt>, String> {
     ATTEMPTS
         .lock()
@@ -56,6 +77,7 @@ impl Prompter for UiPrompter {
     fn progress(&self, step: ConnectStep) {
         let mut e = SshEvent::blank(SshEventKind::Progress);
         e.step = Some(match step {
+            ConnectStep::JumpHost => SshStep::JumpHost,
             ConnectStep::Resolving => SshStep::Resolving,
             ConnectStep::Connecting => SshStep::Connecting,
             ConnectStep::VerifyingHostKey => SshStep::VerifyingHostKey,

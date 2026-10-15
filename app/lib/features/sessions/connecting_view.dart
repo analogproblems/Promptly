@@ -59,6 +59,7 @@ class ConnectingView extends StatelessWidget {
 }
 
 String stepLabel(SshStep s) => switch (s) {
+      SshStep.jumpHost => 'Connecting to the jump host',
       SshStep.resolving => 'Resolving',
       SshStep.connecting => 'Connecting',
       SshStep.verifyingHostKey => 'Verifying host key',

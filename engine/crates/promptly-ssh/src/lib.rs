@@ -12,6 +12,7 @@
 
 pub mod connect;
 pub mod endpoint;
+pub mod forward;
 pub mod hostkey;
 pub mod keys;
 pub mod sftp;
@@ -25,6 +26,7 @@ pub use connect::{
     KeyboardPrompt, Prompter,
 };
 pub use endpoint::{Endpoint, ParseError};
+pub use forward::{Connection, ForwardKind, ForwardSpec, ForwardStatus};
 pub use hostkey::{FileKnownHosts, HostKeyInfo, HostKeyStatus, KnownHosts};
 pub use keys::{
     generate as generate_key, inspect as inspect_key, public_fingerprint, Generated, Inspected,
@@ -32,7 +34,10 @@ pub use keys::{
 };
 pub use russh::keys::PublicKey;
 pub use sftp::{QuietPrompter, SftpBackend, SftpError};
-pub use ssh_config::{load_default as load_ssh_config, parse as parse_ssh_config, ConfigHost};
+pub use ssh_config::{
+    load_default as load_ssh_config, parse as parse_ssh_config, ConfigForward, ConfigForwardKind,
+    ConfigHost,
+};
 pub use transport::{SshReader, SshTransport};
 
 /// The runtime every SSH connection runs on. Two worker threads are plenty:

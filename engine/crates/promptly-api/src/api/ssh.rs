@@ -11,12 +11,16 @@ use std::sync::{Arc, Mutex};
 
 use flutter_rust_bridge::frb;
 use promptly_session::{Session, SessionKind};
-use promptly_ssh::{connect, AuthMethod, ConnectParams, Endpoint, Prompter};
+use promptly_ssh::{
+    connect, AuthMethod, ConnectParams, Endpoint, ForwardKind, ForwardSpec, Prompter,
+};
 use promptly_term::TermSize;
 
 use crate::api::terminal::{palette_for, reattach_session, register_session, session_exists};
 use crate::frb_generated::StreamSink;
-use crate::ssh_flow::{attempt, Attempt, Pending, UiPrompter, ATTEMPTS, NEXT_ATTEMPT};
+use crate::ssh_flow::{
+    attempt, connection, remember_connection, Attempt, Pending, UiPrompter, ATTEMPTS, NEXT_ATTEMPT,
+};
 
 // ---- Types the UI sees -------------------------------------------------
 
@@ -29,6 +33,49 @@ pub enum SshAuthKind {
     Interactive,
     /// The keys in the running SSH agent, then whatever the server offers.
     Agent,
+}
+
+/// One jump host on the way to the target.
+pub struct SshHop {
+    pub user: String,
+    pub host: String,
+    pub port: u16,
+    pub auth: SshAuthKind,
+    pub password: Option<String>,
+    pub private_key: Option<String>,
+    pub passphrase: Option<String>,
+}
+
+pub enum SshForwardKind {
+    Local,
+    Remote,
+    Dynamic,
+}
+
+pub struct SshForward {
+    pub kind: SshForwardKind,
+    pub bind_host: String,
+    pub bind_port: u16,
+    pub target_host: String,
+    pub target_port: u16,
+    /// Start when the session connects.
+    pub auto: bool,
+}
+
+pub struct SshEnvVar {
+    pub name: String,
+    pub value: String,
+}
+
+/// One forward of a live session, in the order the request listed them.
+pub struct SshForwardStatus {
+    pub index: u32,
+    pub forward: SshForward,
+    pub active: bool,
+    /// The port in use while active (the one asked for, or the one picked
+    /// for 0).
+    pub bound_port: u16,
+    pub error: Option<String>,
 }
 
 pub struct SshConnectRequest {
@@ -50,9 +97,21 @@ pub struct SshConnectRequest {
     /// it gets the new connection and keeps its screen, and `Connected`
     /// carries its id. If it no longer exists a new session is made.
     pub reattach_session_id: Option<u32>,
+    /// Jump hosts in the order they are reached: the first is connected
+    /// to from this device, the last opens the tunnel to the target.
+    pub jumps: Vec<SshHop>,
+    /// Attach to the tmux session Promptly keeps on the server instead of
+    /// a plain shell, so the work survives the connection.
+    pub persistent: bool,
+    /// Typed into the shell once it opens.
+    pub startup_command: Option<String>,
+    pub env: Vec<SshEnvVar>,
+    pub agent_forward: bool,
+    pub forwards: Vec<SshForward>,
 }
 
 pub enum SshStep {
+    JumpHost,
     Resolving,
     Connecting,
     VerifyingHostKey,
@@ -151,22 +210,8 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
         host: request.host.clone(),
         port: request.port,
     };
-    let auth = match request.auth {
-        SshAuthKind::Password => AuthMethod::Password {
-            password: request.password.clone(),
-        },
-        SshAuthKind::Key => AuthMethod::Key {
-            private_key: request.private_key.clone().unwrap_or_default(),
-            passphrase: request.passphrase.clone(),
-        },
-        SshAuthKind::Interactive => AuthMethod::Interactive,
-        SshAuthKind::Agent => AuthMethod::Agent,
-    };
     let size = TermSize::new(request.cols, request.rows);
-    let mut params = ConnectParams::new(endpoint.clone(), auth, size);
-    if request.keepalive_seconds > 0 {
-        params.keepalive = std::time::Duration::from_secs(u64::from(request.keepalive_seconds));
-    }
+    let params = params_for(&request, endpoint.clone(), size);
     let label = request
         .label
         .clone()
@@ -181,6 +226,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
         let result = connect(params, prompter, known_hosts).await;
         match result {
             Ok((transport, reader)) => {
+                let connection = transport.connection();
                 let session_id = match reattach {
                     Some(id) if session_exists(id) => {
                         // The session is still open: give it the new connection.
@@ -197,6 +243,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
                         register_session(session, Box::new(reader))
                     }
                 };
+                remember_connection(session_id, connection);
                 let mut e = SshEvent::blank(SshEventKind::Connected);
                 e.session_id = Some(session_id);
                 attempt.emit(e);
@@ -210,6 +257,133 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
         ATTEMPTS.lock().unwrap().remove(&attempt_id);
     });
     Ok(())
+}
+
+fn auth_for(
+    kind: &SshAuthKind,
+    password: &Option<String>,
+    private_key: &Option<String>,
+    passphrase: &Option<String>,
+) -> AuthMethod {
+    match kind {
+        SshAuthKind::Password => AuthMethod::Password {
+            password: password.clone(),
+        },
+        SshAuthKind::Key => AuthMethod::Key {
+            private_key: private_key.clone().unwrap_or_default(),
+            passphrase: passphrase.clone(),
+        },
+        SshAuthKind::Interactive => AuthMethod::Interactive,
+        SshAuthKind::Agent => AuthMethod::Agent,
+    }
+}
+
+fn forward_spec(f: &SshForward) -> ForwardSpec {
+    ForwardSpec {
+        kind: match f.kind {
+            SshForwardKind::Local => ForwardKind::Local,
+            SshForwardKind::Remote => ForwardKind::Remote,
+            SshForwardKind::Dynamic => ForwardKind::Dynamic,
+        },
+        bind_host: f.bind_host.clone(),
+        bind_port: f.bind_port,
+        target_host: f.target_host.clone(),
+        target_port: f.target_port,
+        auto: f.auto,
+    }
+}
+
+/// The engine's connection parameters for a request, jump chain included.
+fn params_for(request: &SshConnectRequest, endpoint: Endpoint, size: TermSize) -> ConnectParams {
+    let keepalive = std::time::Duration::from_secs(u64::from(request.keepalive_seconds));
+    let mut jump: Option<Box<ConnectParams>> = None;
+    for hop in &request.jumps {
+        let mut p = ConnectParams::new(
+            Endpoint {
+                user: hop.user.clone(),
+                host: hop.host.clone(),
+                port: hop.port,
+            },
+            auth_for(&hop.auth, &hop.password, &hop.private_key, &hop.passphrase),
+            size,
+        );
+        if request.keepalive_seconds > 0 {
+            p.keepalive = keepalive;
+        }
+        p.jump = jump;
+        jump = Some(Box::new(p));
+    }
+    let auth = auth_for(
+        &request.auth,
+        &request.password,
+        &request.private_key,
+        &request.passphrase,
+    );
+    let mut params = ConnectParams::new(endpoint, auth, size);
+    if request.keepalive_seconds > 0 {
+        params.keepalive = keepalive;
+    }
+    params.jump = jump;
+    if request.persistent {
+        params.command = Some(ConnectParams::persistent_command());
+    }
+    params.startup_input = request
+        .startup_command
+        .as_ref()
+        .map(|c| c.trim())
+        .filter(|c| !c.is_empty())
+        .map(|c| format!("{c}\n"));
+    params.env = request
+        .env
+        .iter()
+        .map(|v| (v.name.clone(), v.value.clone()))
+        .collect();
+    params.agent_forward = request.agent_forward;
+    params.forwards = request.forwards.iter().map(forward_spec).collect();
+    params
+}
+
+/// The forwards of a live SSH session and whether each is running.
+#[frb(sync)]
+pub fn ssh_forwards(session_id: u32) -> Result<Vec<SshForwardStatus>, String> {
+    let connection = connection(session_id)?;
+    Ok(connection
+        .forwards()
+        .into_iter()
+        .enumerate()
+        .map(|(i, f)| SshForwardStatus {
+            index: i as u32,
+            forward: SshForward {
+                kind: match f.spec.kind {
+                    ForwardKind::Local => SshForwardKind::Local,
+                    ForwardKind::Remote => SshForwardKind::Remote,
+                    ForwardKind::Dynamic => SshForwardKind::Dynamic,
+                },
+                bind_host: f.spec.bind_host,
+                bind_port: f.spec.bind_port,
+                target_host: f.spec.target_host,
+                target_port: f.spec.target_port,
+                auto: f.spec.auto,
+            },
+            active: f.active,
+            bound_port: f.bound_port,
+            error: f.error,
+        })
+        .collect())
+}
+
+/// Start or stop one forward of a live session. Returns the port in use
+/// when starting.
+pub fn ssh_forward_set(session_id: u32, index: u32, enabled: bool) -> Result<u16, String> {
+    let connection = connection(session_id)?;
+    promptly_ssh::runtime().block_on(async move {
+        if enabled {
+            connection.start_forward(index as usize).await
+        } else {
+            connection.stop_forward(index as usize).await;
+            Ok(0)
+        }
+    })
 }
 
 #[frb(sync)]

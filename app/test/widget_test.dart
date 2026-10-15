@@ -163,6 +163,25 @@ class FakeEngine implements Engine {
   @override
   void sshCancel(int attemptId) {}
 
+  /// Forward statuses reported for live sessions, and every toggle asked for.
+  List<SshForwardStatus> forwards = [];
+  final List<String> forwardCalls = [];
+
+  @override
+  List<SshForwardStatus> sshForwards(int sessionId) => forwards;
+
+  @override
+  Future<int> sshForwardSet(int sessionId, int index, bool enabled) async {
+    forwardCalls.add('$sessionId $index $enabled');
+    forwards = [
+      for (final f in forwards)
+        f.index == index
+            ? SshForwardStatus(index: f.index, forward: f.forward, active: enabled, boundPort: enabled ? f.forward.bindPort : 0, error: null)
+            : f,
+    ];
+    return 0;
+  }
+
   @override
   List<StoreRecord> recordsList(String collection) => [
         for (final e in (records[collection] ?? {}).entries) StoreRecord(id: e.key, json: e.value),
@@ -758,6 +777,90 @@ void main() {
     expect(request.user, 'ops-default');
     expect(request.auth, SshAuthKind.key);
     expect(request.privateKey, contains('PRIVATE KEY'));
+  });
+
+  testWidgets('the host editor saves a jump host, tmux persistence and a port forward', (tester) async {
+    final engine = FakeEngine();
+    engine.records['hosts'] = {'b1': hostJson('b1', 'bastion'), 'a1': hostJson('a1', 'app-1')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Host actions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit host'), findsOneWidget);
+
+    await scrollTap(tester, find.byKey(const Key('host-jump')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('bastion').last);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('host-persistent')));
+    await scrollTap(tester, find.byKey(const Key('forward-add')));
+    await tester.pumpAndSettle();
+    await scrollTo(tester, find.byKey(const Key('forward-auto-0')));
+    await tester.enterText(find.byKey(const Key('forward-port-0')), '8080');
+    await tester.enterText(find.byKey(const Key('forward-target-host-0')), 'db');
+    await tester.enterText(find.byKey(const Key('forward-target-port-0')), '5432');
+    await tester.tap(find.byKey(const Key('host-save')));
+    await tester.pumpAndSettle();
+
+    final saved = engine.records['hosts']!['a1']!;
+    expect(saved, contains('"jump_host_id":"b1"'));
+    expect(saved, contains('"persistent_session":true'));
+    expect(saved, contains('"agent_forwarding":false'));
+    expect(saved, contains('"kind":"local","bind_host":"","bind_port":8080,"target_host":"db","target_port":5432,"auto":true'));
+  });
+
+  testWidgets('connecting through a jump host sends the chain, tmux and the forwards, which the session can toggle', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.secrets['p1'] = 'hunter2';
+    engine.records['hosts'] = {
+      'b1': hostJson('b1', 'bastion', auth: '{"kind":"password","password_secret_id":"p1"}'),
+      'a1': hostJson('a1', 'app-1')
+          .replaceFirst('"jump_host_id":null', '"jump_host_id":"b1"')
+          .replaceFirst('"persistent_session":false', '"persistent_session":true')
+          .replaceFirst(
+            '"port_forwards":[]',
+            '"port_forwards":[{"kind":"local","bind_host":"","bind_port":8080,"target_host":"db","target_port":5432,"auto":true}]',
+          ),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-a1')));
+    await tester.pumpAndSettle();
+    final r = engine.requests.single;
+    expect(r.host, 'app-1.example');
+    expect(r.jumps.single.host, 'bastion.example');
+    expect(r.jumps.single.auth, SshAuthKind.password);
+    expect(r.jumps.single.password, 'hunter2', reason: 'the jump host logs in with its own stored password');
+    expect(r.persistent, isTrue);
+    expect(r.forwards.single.bindPort, 8080);
+
+    engine.forwards = [SshForwardStatus(index: 0, forward: r.forwards.single, active: true, boundPort: 8080, error: null)];
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('session-forwards')));
+    await tester.pumpAndSettle();
+    expect(find.text('8080 → db:5432'), findsOneWidget);
+    expect(find.text('Listening on port 8080 here'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('forward-switch-0')));
+    await tester.pumpAndSettle();
+    expect(engine.forwardCalls, ['7 0 false']);
+    expect(find.text('Off'), findsOneWidget);
+  });
+
+  testWidgets('jump hosts that go round in a circle are refused with a plain message', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {
+      'b1': hostJson('b1', 'bastion').replaceFirst('"jump_host_id":null', '"jump_host_id":"a1"'),
+      'a1': hostJson('a1', 'app-1').replaceFirst('"jump_host_id":null', '"jump_host_id":"b1"'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-a1')));
+    await tester.pumpAndSettle();
+    expect(engine.requests, isEmpty);
+    expect(find.textContaining('go round in a circle'), findsOneWidget);
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

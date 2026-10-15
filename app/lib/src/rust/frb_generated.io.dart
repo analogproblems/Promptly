@@ -106,6 +106,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SshConfigHost> dco_decode_list_ssh_config_host(dynamic raw);
 
   @protected
+  List<SshEnvVar> dco_decode_list_ssh_env_var(dynamic raw);
+
+  @protected
+  List<SshForward> dco_decode_list_ssh_forward(dynamic raw);
+
+  @protected
+  List<SshForwardStatus> dco_decode_list_ssh_forward_status(dynamic raw);
+
+  @protected
+  List<SshHop> dco_decode_list_ssh_hop(dynamic raw);
+
+  @protected
   List<SshKbPrompt> dco_decode_list_ssh_kb_prompt(dynamic raw);
 
   @protected
@@ -166,10 +178,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SshConnectRequest dco_decode_ssh_connect_request(dynamic raw);
 
   @protected
+  SshEnvVar dco_decode_ssh_env_var(dynamic raw);
+
+  @protected
   SshEvent dco_decode_ssh_event(dynamic raw);
 
   @protected
   SshEventKind dco_decode_ssh_event_kind(dynamic raw);
+
+  @protected
+  SshForward dco_decode_ssh_forward(dynamic raw);
+
+  @protected
+  SshForwardKind dco_decode_ssh_forward_kind(dynamic raw);
+
+  @protected
+  SshForwardStatus dco_decode_ssh_forward_status(dynamic raw);
+
+  @protected
+  SshHop dco_decode_ssh_hop(dynamic raw);
 
   @protected
   SshHostKey dco_decode_ssh_host_key(dynamic raw);
@@ -327,6 +354,20 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<SshEnvVar> sse_decode_list_ssh_env_var(SseDeserializer deserializer);
+
+  @protected
+  List<SshForward> sse_decode_list_ssh_forward(SseDeserializer deserializer);
+
+  @protected
+  List<SshForwardStatus> sse_decode_list_ssh_forward_status(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<SshHop> sse_decode_list_ssh_hop(SseDeserializer deserializer);
+
+  @protected
   List<SshKbPrompt> sse_decode_list_ssh_kb_prompt(SseDeserializer deserializer);
 
   @protected
@@ -399,10 +440,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SshEnvVar sse_decode_ssh_env_var(SseDeserializer deserializer);
+
+  @protected
   SshEvent sse_decode_ssh_event(SseDeserializer deserializer);
 
   @protected
   SshEventKind sse_decode_ssh_event_kind(SseDeserializer deserializer);
+
+  @protected
+  SshForward sse_decode_ssh_forward(SseDeserializer deserializer);
+
+  @protected
+  SshForwardKind sse_decode_ssh_forward_kind(SseDeserializer deserializer);
+
+  @protected
+  SshForwardStatus sse_decode_ssh_forward_status(SseDeserializer deserializer);
+
+  @protected
+  SshHop sse_decode_ssh_hop(SseDeserializer deserializer);
 
   @protected
   SshHostKey sse_decode_ssh_host_key(SseDeserializer deserializer);
@@ -594,6 +650,27 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_ssh_env_var(
+    List<SshEnvVar> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_ssh_forward(
+    List<SshForward> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_ssh_forward_status(
+    List<SshForwardStatus> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_ssh_hop(List<SshHop> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_ssh_kb_prompt(
     List<SshKbPrompt> self,
     SseSerializer serializer,
@@ -693,10 +770,31 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_ssh_env_var(SshEnvVar self, SseSerializer serializer);
+
+  @protected
   void sse_encode_ssh_event(SshEvent self, SseSerializer serializer);
 
   @protected
   void sse_encode_ssh_event_kind(SshEventKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_forward(SshForward self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_forward_kind(
+    SshForwardKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ssh_forward_status(
+    SshForwardStatus self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ssh_hop(SshHop self, SseSerializer serializer);
 
   @protected
   void sse_encode_ssh_host_key(SshHostKey self, SseSerializer serializer);

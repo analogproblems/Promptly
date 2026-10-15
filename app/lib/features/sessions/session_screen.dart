@@ -8,6 +8,7 @@ import '../hosts/host_colors.dart';
 import '../settings/settings_providers.dart';
 import '../terminal/terminal_view.dart';
 import 'connecting_view.dart';
+import 'forwards_sheet.dart';
 import 'session_manager.dart';
 
 /// A single session: slim top bar, then nothing but terminal. While an SSH
@@ -87,6 +88,13 @@ class SessionScreen extends ConsumerWidget {
                     Text(
                       '${c.grid.cols}×${c.grid.rows}',
                       style: monoStyle(context, size: 11, color: t.muted),
+                    ),
+                  if (live && (entry.flow?.request.forwards.isNotEmpty ?? false))
+                    IconButton(
+                      key: const Key('session-forwards'),
+                      tooltip: 'Port forwards',
+                      onPressed: () => showForwardsSheet(context, ref, c.id),
+                      icon: const Icon(Icons.alt_route),
                     ),
                   const SizedBox(width: 8),
                   IconButton(

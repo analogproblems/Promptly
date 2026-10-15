@@ -8,10 +8,20 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 
 ## Status
 
-**Milestone 2 under way: the vault.** Set up sync from Settings: pick a folder (one that Syncthing, Dropbox, iCloud Drive or any sync client mirrors), choose a passphrase, write down the recovery code. Every other device joins with the passphrase and gets the same hosts, keys and snippets, encrypted end to end, with nothing but files on storage you already own. A host added on one machine shows up on the other within half a minute. Or keep the vault on a server you already have: pick a saved host and a folder, and Promptly syncs over SFTP with that host's stored login. The `promptly` command-line tool reads the same vault: inspect, export to JSON, import, sync, and write an OpenSSH config. Going the other way, Settings imports the hosts in your `~/.ssh/config` along with the keys they name, and a host can log in with the keys in your SSH agent. A server trusted on one device is trusted on all of them.
+**Milestone 3 under way: power.** Hosts can connect through a jump host (or a chain of them), each with its own login. Port forwards are saved on the host: local ones open a port on your device, remote ones a port on the server, and a SOCKS proxy lets any program pick its destination through the server. They start with the session when you say so and switch on and off from the session bar. A persistent session attaches to tmux on the server, so the work survives a dropped connection or a phone going to sleep. Agent forwarding, a startup command and environment variables are per host too, and the `~/.ssh/config` import brings all of that in.
+
+**Milestone 2 built: the vault.** Set up sync from Settings: pick a folder (one that Syncthing, Dropbox, iCloud Drive or any sync client mirrors), choose a passphrase, write down the recovery code. Every other device joins with the passphrase and gets the same hosts, keys and snippets, encrypted end to end, with nothing but files on storage you already own. A host added on one machine shows up on the other within half a minute. Or keep the vault on a server you already have: pick a saved host and a folder, and Promptly syncs over SFTP with that host's stored login. The `promptly` command-line tool reads the same vault: inspect, export to JSON, import, sync, and write an OpenSSH config. Going the other way, Settings imports the hosts in your `~/.ssh/config` along with the keys they name, and a host can log in with the keys in your SSH agent. A server trusted on one device is trusted on all of them.
 
 **Milestone 1 built, now in daily use on Linux.** Save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Select text with the mouse and copy it with Ctrl+Shift+C or the right-click menu. The Sessions tab shows a live thumbnail of every open session. A dropped connection comes back by itself, with the screen intact. The milestone is done when it has replaced the old terminal for a week; the touch gestures wait for the Android build. Linux comes first, then Windows, Android, macOS and iOS.
 
+<p>
+  <img src="docs/screenshots/m3-jump-host.png" alt="Connecting through a jump host, trusting its key on the way" width="640">
+  <img src="docs/screenshots/m3-tmux-session.png" alt="A persistent session inside tmux, reached through the jump host" width="640">
+</p>
+<p>
+  <img src="docs/screenshots/m3-port-forwards.png" alt="The port forwards of a live session, each with a switch" width="640">
+  <img src="docs/screenshots/m3-host-connection.png" alt="The host editor's connection section: jump host, persistent session, agent forwarding, startup command" width="640">
+</p>
 <p>
   <img src="docs/screenshots/m2-sync-place.png" alt="Choosing where the vault lives" width="640">
   <img src="docs/screenshots/m2-sync-recovery.png" alt="The recovery code shown once after creating a vault" width="640">

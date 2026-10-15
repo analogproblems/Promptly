@@ -49,7 +49,9 @@ class ConnectFlow extends ChangeNotifier {
   void _onEvent(SshEvent e) {
     switch (e.kind) {
       case SshEventKind.progress:
-        if (step != null && !completed.contains(step)) completed.add(step!);
+        // The same step again (a jump host reporting its own progress) is
+        // still in progress, not done.
+        if (step != null && step != e.step && !completed.contains(step)) completed.add(step!);
         step = e.step;
       case SshEventKind.hostKey:
         hostKey = e.hostKey;

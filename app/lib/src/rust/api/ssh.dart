@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `blank`
+// These functions are ignored because they are not marked as `pub`: `auth_for`, `blank`, `forward_spec`, `params_for`
 
 /// Register a connection attempt. Nothing happens until `ssh_connect_events`
 /// is subscribed.
@@ -17,6 +17,22 @@ int sshConnectBegin({required SshConnectRequest request}) =>
 /// Subscribe to an attempt's events; this starts the connection.
 Stream<SshEvent> sshConnectEvents({required int attemptId}) =>
     RustLib.instance.api.crateApiSshSshConnectEvents(attemptId: attemptId);
+
+/// The forwards of a live SSH session and whether each is running.
+List<SshForwardStatus> sshForwards({required int sessionId}) =>
+    RustLib.instance.api.crateApiSshSshForwards(sessionId: sessionId);
+
+/// Start or stop one forward of a live session. Returns the port in use
+/// when starting.
+Future<int> sshForwardSet({
+  required int sessionId,
+  required int index,
+  required bool enabled,
+}) => RustLib.instance.api.crateApiSshSshForwardSet(
+  sessionId: sessionId,
+  index: index,
+  enabled: enabled,
+);
 
 void sshAnswerHostKey({required int attemptId, required bool trust}) => RustLib
     .instance
@@ -77,6 +93,20 @@ class SshConnectRequest {
   /// carries its id. If it no longer exists a new session is made.
   final int? reattachSessionId;
 
+  /// Jump hosts in the order they are reached: the first is connected
+  /// to from this device, the last opens the tunnel to the target.
+  final List<SshHop> jumps;
+
+  /// Attach to the tmux session Promptly keeps on the server instead of
+  /// a plain shell, so the work survives the connection.
+  final bool persistent;
+
+  /// Typed into the shell once it opens.
+  final String? startupCommand;
+  final List<SshEnvVar> env;
+  final bool agentForward;
+  final List<SshForward> forwards;
+
   const SshConnectRequest({
     required this.user,
     required this.host,
@@ -91,6 +121,12 @@ class SshConnectRequest {
     this.label,
     required this.keepaliveSeconds,
     this.reattachSessionId,
+    required this.jumps,
+    required this.persistent,
+    this.startupCommand,
+    required this.env,
+    required this.agentForward,
+    required this.forwards,
   });
 
   @override
@@ -107,7 +143,13 @@ class SshConnectRequest {
       theme.hashCode ^
       label.hashCode ^
       keepaliveSeconds.hashCode ^
-      reattachSessionId.hashCode;
+      reattachSessionId.hashCode ^
+      jumps.hashCode ^
+      persistent.hashCode ^
+      startupCommand.hashCode ^
+      env.hashCode ^
+      agentForward.hashCode ^
+      forwards.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -126,7 +168,31 @@ class SshConnectRequest {
           theme == other.theme &&
           label == other.label &&
           keepaliveSeconds == other.keepaliveSeconds &&
-          reattachSessionId == other.reattachSessionId;
+          reattachSessionId == other.reattachSessionId &&
+          jumps == other.jumps &&
+          persistent == other.persistent &&
+          startupCommand == other.startupCommand &&
+          env == other.env &&
+          agentForward == other.agentForward &&
+          forwards == other.forwards;
+}
+
+class SshEnvVar {
+  final String name;
+  final String value;
+
+  const SshEnvVar({required this.name, required this.value});
+
+  @override
+  int get hashCode => name.hashCode ^ value.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SshEnvVar &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          value == other.value;
 }
 
 /// One event from a connection attempt. The fields for other kinds are None.
@@ -188,6 +254,132 @@ enum SshEventKind {
   keyboardInteractive,
   connected,
   failed,
+}
+
+class SshForward {
+  final SshForwardKind kind;
+  final String bindHost;
+  final int bindPort;
+  final String targetHost;
+  final int targetPort;
+
+  /// Start when the session connects.
+  final bool auto;
+
+  const SshForward({
+    required this.kind,
+    required this.bindHost,
+    required this.bindPort,
+    required this.targetHost,
+    required this.targetPort,
+    required this.auto,
+  });
+
+  @override
+  int get hashCode =>
+      kind.hashCode ^
+      bindHost.hashCode ^
+      bindPort.hashCode ^
+      targetHost.hashCode ^
+      targetPort.hashCode ^
+      auto.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SshForward &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          bindHost == other.bindHost &&
+          bindPort == other.bindPort &&
+          targetHost == other.targetHost &&
+          targetPort == other.targetPort &&
+          auto == other.auto;
+}
+
+enum SshForwardKind { local, remote, dynamic_ }
+
+/// One forward of a live session, in the order the request listed them.
+class SshForwardStatus {
+  final int index;
+  final SshForward forward;
+  final bool active;
+
+  /// The port in use while active (the one asked for, or the one picked
+  /// for 0).
+  final int boundPort;
+  final String? error;
+
+  const SshForwardStatus({
+    required this.index,
+    required this.forward,
+    required this.active,
+    required this.boundPort,
+    this.error,
+  });
+
+  @override
+  int get hashCode =>
+      index.hashCode ^
+      forward.hashCode ^
+      active.hashCode ^
+      boundPort.hashCode ^
+      error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SshForwardStatus &&
+          runtimeType == other.runtimeType &&
+          index == other.index &&
+          forward == other.forward &&
+          active == other.active &&
+          boundPort == other.boundPort &&
+          error == other.error;
+}
+
+/// One jump host on the way to the target.
+class SshHop {
+  final String user;
+  final String host;
+  final int port;
+  final SshAuthKind auth;
+  final String? password;
+  final String? privateKey;
+  final String? passphrase;
+
+  const SshHop({
+    required this.user,
+    required this.host,
+    required this.port,
+    required this.auth,
+    this.password,
+    this.privateKey,
+    this.passphrase,
+  });
+
+  @override
+  int get hashCode =>
+      user.hashCode ^
+      host.hashCode ^
+      port.hashCode ^
+      auth.hashCode ^
+      password.hashCode ^
+      privateKey.hashCode ^
+      passphrase.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SshHop &&
+          runtimeType == other.runtimeType &&
+          user == other.user &&
+          host == other.host &&
+          port == other.port &&
+          auth == other.auth &&
+          password == other.password &&
+          privateKey == other.privateKey &&
+          passphrase == other.passphrase;
 }
 
 class SshHostKey {
@@ -258,6 +450,7 @@ class SshKbPrompt {
 }
 
 enum SshStep {
+  jumpHost,
   resolving,
   connecting,
   verifyingHostKey,

@@ -6,11 +6,11 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use promptly_session::Transport;
 use promptly_term::TermSize;
-use russh::client::{Handle, Msg};
-use russh::{ChannelMsg, Disconnect};
+use russh::client::Msg;
+use russh::ChannelMsg;
 use tokio::sync::mpsc as tmpsc;
 
-use crate::connect::Handler;
+use crate::forward::Connection;
 use crate::runtime;
 
 enum Cmd {
@@ -22,6 +22,7 @@ enum Cmd {
 pub struct SshTransport {
     cmd: tmpsc::UnboundedSender<Cmd>,
     exit: Arc<Mutex<Option<i32>>>,
+    connection: Arc<Connection>,
 }
 
 /// Output from the server, readable with blocking reads. Returns 0 (EOF)
@@ -34,7 +35,7 @@ pub struct SshReader {
 
 impl SshTransport {
     pub(crate) fn start(
-        handle: Handle<Handler>,
+        connection: Arc<Connection>,
         mut read_half: russh::ChannelReadHalf,
         write_half: russh::ChannelWriteHalf<Msg>,
     ) -> (Self, SshReader) {
@@ -62,8 +63,8 @@ impl SshTransport {
             // Dropping data_tx is what makes the reader return EOF.
         });
 
+        let conn = connection.clone();
         runtime().spawn(async move {
-            let handle = handle;
             while let Some(cmd) = cmd_rx.recv().await {
                 match cmd {
                     Cmd::Data(bytes) => {
@@ -79,9 +80,7 @@ impl SshTransport {
                     Cmd::Close => {
                         let _ = write_half.eof().await;
                         let _ = write_half.close().await;
-                        let _ = handle
-                            .disconnect(Disconnect::ByApplication, "closed by user", "en")
-                            .await;
+                        conn.disconnect().await;
                         break;
                     }
                 }
@@ -89,13 +88,24 @@ impl SshTransport {
         });
 
         (
-            Self { cmd: cmd_tx, exit },
+            Self {
+                cmd: cmd_tx,
+                exit,
+                connection,
+            },
             SshReader {
                 rx: data_rx,
                 pending: Vec::new(),
                 pos: 0,
             },
         )
+    }
+}
+
+impl SshTransport {
+    /// The connection underneath, for forwards and the like.
+    pub fn connection(&self) -> Arc<Connection> {
+        self.connection.clone()
     }
 }
 

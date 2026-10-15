@@ -57,6 +57,12 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
       label: null,
       keepaliveSeconds: 30,
       reattachSessionId: null,
+      jumps: const [],
+      persistent: false,
+      startupCommand: null,
+      env: const [],
+      agentForward: false,
+      forwards: const [],
     ));
     context.go('/sessions/${entry.id}');
   }

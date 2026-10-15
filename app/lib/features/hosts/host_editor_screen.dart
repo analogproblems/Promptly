@@ -32,7 +32,13 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
   late final TextEditingController _password;
   late final TextEditingController _notes;
   late final TextEditingController _keepalive;
+  late final TextEditingController _startup;
+  late final TextEditingController _env;
   late _AuthChoice _auth;
+  String? _jumpHostId;
+  late bool _persistent;
+  late bool _agentForwarding;
+  late List<PortForward> _forwards;
   late bool _rememberPassword;
   String? _identityId;
   String? _groupId;
@@ -53,6 +59,12 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     _password = TextEditingController();
     _notes = TextEditingController(text: _original.notes);
     _keepalive = TextEditingController(text: '${_original.keepaliveSeconds}');
+    _startup = TextEditingController(text: _original.startupCommand ?? '');
+    _env = TextEditingController(text: [for (final e in _original.env.entries) '${e.key}=${e.value}'].join('\n'));
+    _jumpHostId = _original.jumpHostId;
+    _persistent = _original.persistentSession;
+    _agentForwarding = _original.agentForwarding;
+    _forwards = [..._original.portForwards];
     _auth = switch (_original.auth.kind) {
       AuthKind.identity => _AuthChoice.key,
       AuthKind.password => _AuthChoice.password,
@@ -68,7 +80,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
 
   @override
   void dispose() {
-    for (final c in [_label, _hostname, _port, _username, _password, _notes, _keepalive]) {
+    for (final c in [_label, _hostname, _port, _username, _password, _notes, _keepalive, _startup, _env]) {
       c.dispose();
     }
     super.dispose();
@@ -119,6 +131,12 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
       notes: _notes.text,
       keepaliveSeconds: int.tryParse(_keepalive.text.trim()) ?? 30,
       favourite: _favourite,
+      jumpHostId: _jumpHostId,
+      persistentSession: _persistent,
+      agentForwarding: _agentForwarding,
+      startupCommand: _startup.text.trim().isEmpty ? null : _startup.text.trim(),
+      env: _parseEnv(_env.text),
+      portForwards: [for (final f in _forwards) if (f.bindPort > 0) f],
     );
     try {
       ref.read(hostsProvider.notifier).save(host);
@@ -127,6 +145,19 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
       return;
     }
     context.go('/hosts');
+  }
+
+  /// "NAME=value" lines; blank lines and lines without "=" are skipped.
+  static Map<String, String> _parseEnv(String text) {
+    final out = <String, String>{};
+    for (final line in text.split('\n')) {
+      final eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      final name = line.substring(0, eq).trim();
+      if (name.isEmpty) continue;
+      out[name] = line.substring(eq + 1).trim();
+    }
+    return out;
   }
 
   Future<void> _newGroup() async {
@@ -181,6 +212,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     final t = context.tokens;
     final identities = ref.watch(identitiesProvider);
     final groups = ref.watch(groupsProvider);
+    final otherHosts = [for (final h in ref.watch(hostsProvider)) if (h.id != _original.id) h];
     final brightness = Theme.of(context).brightness;
 
     return Column(
@@ -385,8 +417,65 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                 ),
                 const SizedBox(height: 16),
                 _Section(
-                  title: 'Advanced',
+                  title: 'Connection',
                   children: [
+                    DropdownButtonFormField<String?>(
+                      key: const Key('host-jump'),
+                      initialValue: otherHosts.any((h) => h.id == _jumpHostId) ? _jumpHostId : null,
+                      decoration: const InputDecoration(
+                        labelText: 'Jump host',
+                        helperText: 'Connect through this host first. It can have a jump host of its own.',
+                      ),
+                      items: [
+                        const DropdownMenuItem<String?>(value: null, child: Text('None, connect directly')),
+                        for (final h in otherHosts) DropdownMenuItem(value: h.id, child: Text(h.label)),
+                      ],
+                      onChanged: (v) => setState(() => _jumpHostId = v),
+                    ),
+                    SwitchListTile(
+                      key: const Key('host-persistent'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Persistent session'),
+                      subtitle: const Text(
+                        'Attach to a tmux session on the server, so your work survives a dropped connection or a phone going to sleep.',
+                      ),
+                      value: _persistent,
+                      onChanged: (v) => setState(() => _persistent = v),
+                    ),
+                    SwitchListTile(
+                      key: const Key('host-agent-forwarding'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Agent forwarding'),
+                      subtitle: const Text(
+                        'Let programs on the server use the SSH agent on this device. Only for servers you trust.',
+                      ),
+                      value: _agentForwarding,
+                      onChanged: (v) => setState(() => _agentForwarding = v),
+                    ),
+                    const SizedBox(height: 6),
+                    TextFormField(
+                      key: const Key('host-startup'),
+                      controller: _startup,
+                      style: monoStyle(context, size: 14),
+                      decoration: const InputDecoration(
+                        labelText: 'Startup command',
+                        hintText: 'cd /srv/app && git status',
+                        helperText: 'Typed into the shell when the session opens.',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    TextFormField(
+                      key: const Key('host-env'),
+                      controller: _env,
+                      maxLines: 3,
+                      style: monoStyle(context, size: 14),
+                      decoration: const InputDecoration(
+                        labelText: 'Environment',
+                        hintText: 'NAME=value, one per line',
+                        helperText: 'Sent to the server, which only accepts the names its AcceptEnv lists.',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     TextFormField(
                       controller: _keepalive,
                       keyboardType: TextInputType.number,
@@ -394,6 +483,37 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                       decoration: const InputDecoration(
                         labelText: 'Keep-alive, seconds',
                         helperText: 'How often to ping the server so idle connections stay open. 0 turns it off.',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                _Section(
+                  title: 'Port forwards',
+                  children: [
+                    if (_forwards.isEmpty)
+                      Text(
+                        'Reach a database or web app behind the server from this device, expose a local port on the server, or run a SOCKS proxy through it.',
+                        style: TextStyle(color: t.muted, fontSize: 13),
+                      ),
+                    for (var i = 0; i < _forwards.length; i++)
+                      _ForwardEditor(
+                        key: ValueKey('forward-$i'),
+                        index: i,
+                        forward: _forwards[i],
+                        onChanged: (f) => setState(() => _forwards[i] = f),
+                        onRemove: () => setState(() => _forwards.removeAt(i)),
+                      ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        key: const Key('forward-add'),
+                        onPressed: () => setState(
+                          () => _forwards.add(const PortForward(kind: ForwardKind.local, bindPort: 0, targetHost: 'localhost')),
+                        ),
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add forward'),
                       ),
                     ),
                   ],
@@ -427,6 +547,145 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// One port forward's fields. Keeps its own text controllers; the parent
+/// holds the value.
+class _ForwardEditor extends StatefulWidget {
+  const _ForwardEditor({
+    super.key,
+    required this.index,
+    required this.forward,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  final int index;
+  final PortForward forward;
+  final ValueChanged<PortForward> onChanged;
+  final VoidCallback onRemove;
+
+  @override
+  State<_ForwardEditor> createState() => _ForwardEditorState();
+}
+
+class _ForwardEditorState extends State<_ForwardEditor> {
+  late final TextEditingController _port;
+  late final TextEditingController _targetHost;
+  late final TextEditingController _targetPort;
+
+  @override
+  void initState() {
+    super.initState();
+    final f = widget.forward;
+    _port = TextEditingController(text: f.bindPort == 0 ? '' : '${f.bindPort}');
+    _targetHost = TextEditingController(text: f.targetHost);
+    _targetPort = TextEditingController(text: f.targetPort == 0 ? '' : '${f.targetPort}');
+  }
+
+  @override
+  void dispose() {
+    _port.dispose();
+    _targetHost.dispose();
+    _targetPort.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final f = widget.forward;
+    final i = widget.index;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: t.border),
+        borderRadius: BorderRadius.circular(PromptlyTokens.controlRadius),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: SegmentedButton<ForwardKind>(
+                  key: Key('forward-kind-$i'),
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: ForwardKind.local, label: Text('Local')),
+                    ButtonSegment(value: ForwardKind.remote, label: Text('Remote')),
+                    ButtonSegment(value: ForwardKind.dynamic, label: Text('SOCKS')),
+                  ],
+                  selected: {f.kind},
+                  onSelectionChanged: (s) => widget.onChanged(f.copyWith(kind: s.first)),
+                ),
+              ),
+              IconButton(
+                key: Key('forward-remove-$i'),
+                tooltip: 'Remove forward',
+                onPressed: widget.onRemove,
+                icon: Icon(Icons.delete_outline, color: t.muted),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 110,
+                child: TextFormField(
+                  key: Key('forward-port-$i'),
+                  controller: _port,
+                  keyboardType: TextInputType.number,
+                  style: monoStyle(context, size: 14),
+                  decoration: InputDecoration(labelText: f.kind == ForwardKind.remote ? 'Server port' : 'Port here'),
+                  onChanged: (v) => widget.onChanged(f.copyWith(bindPort: int.tryParse(v.trim()) ?? 0)),
+                ),
+              ),
+              if (f.kind != ForwardKind.dynamic) ...[
+                const SizedBox(width: 10),
+                Icon(Icons.arrow_forward, size: 16, color: t.muted),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextFormField(
+                    key: Key('forward-target-host-$i'),
+                    controller: _targetHost,
+                    style: monoStyle(context, size: 14),
+                    decoration: InputDecoration(
+                      labelText: f.kind == ForwardKind.local ? 'Host, as the server sees it' : 'Host, as this device sees it',
+                    ),
+                    onChanged: (v) => widget.onChanged(f.copyWith(targetHost: v.trim())),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 96,
+                  child: TextFormField(
+                    key: Key('forward-target-port-$i'),
+                    controller: _targetPort,
+                    keyboardType: TextInputType.number,
+                    style: monoStyle(context, size: 14),
+                    decoration: const InputDecoration(labelText: 'Port'),
+                    onChanged: (v) => widget.onChanged(f.copyWith(targetPort: int.tryParse(v.trim()) ?? 0)),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          SwitchListTile(
+            key: Key('forward-auto-$i'),
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Start when the host connects'),
+            value: f.auto,
+            onChanged: (v) => widget.onChanged(f.copyWith(auto: v)),
+          ),
+        ],
+      ),
     );
   }
 }
