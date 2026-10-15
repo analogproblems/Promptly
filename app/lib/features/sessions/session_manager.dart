@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,8 +10,9 @@ import '../hosts/repositories.dart';
 import '../terminal/terminal_controller.dart';
 import 'connect_flow.dart';
 
-/// One session as the app sees it: connecting, live, failed or exited.
-/// Notifies when it changes state; the controller notifies on every frame.
+/// One session as the app sees it: connecting, live, reconnecting, failed
+/// or exited. Notifies when it changes state; the controller notifies on
+/// every frame and the entry passes that on.
 class SessionEntry extends ChangeNotifier {
   SessionEntry({required this.id, required this.label, required this.isLocal, this.hostId, this.color});
 
@@ -58,8 +62,52 @@ class SessionEntry extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ---- Reconnecting ----------------------------------------------------
+
+  /// Which try this is, or 0 when not reconnecting.
+  int reconnectAttempt = 0;
+
+  /// When the next try starts, or null while a try is in progress.
+  DateTime? reconnectAt;
+  Timer? _countdown;
+
+  bool get reconnecting => reconnectAttempt > 0;
+
+  /// "Retrying in 4 s · try 3", or "Reconnecting · try 3" during a try.
+  String get reconnectStatus {
+    final at = reconnectAt;
+    if (at != null) {
+      final left = at.difference(DateTime.now()).inSeconds;
+      if (left > 0) return 'Retrying in $left s · try $reconnectAttempt';
+    }
+    return 'Reconnecting · try $reconnectAttempt';
+  }
+
+  void setReconnect(int attempt, DateTime? at) {
+    reconnectAttempt = attempt;
+    reconnectAt = at;
+    _countdown?.cancel();
+    if (at != null) {
+      // Keep the countdown text fresh.
+      _countdown = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (reconnectAt == null || !DateTime.now().isBefore(reconnectAt!)) timer.cancel();
+        notifyListeners();
+      });
+    }
+    notifyListeners();
+  }
+
+  void clearReconnect() {
+    _countdown?.cancel();
+    _countdown = null;
+    reconnectAttempt = 0;
+    reconnectAt = null;
+    notifyListeners();
+  }
+
   @override
   void dispose() {
+    _countdown?.cancel();
     _controller?.dispose();
     _flow?.dispose();
     super.dispose();
@@ -70,6 +118,11 @@ class SessionEntry extends ChangeNotifier {
 /// terminal view is disposable, the entry is not.
 class SessionManager extends Notifier<List<SessionEntry>> {
   int _nextId = 1;
+  final Map<int, Timer> _retryTimers = {};
+
+  /// Seconds to wait before each try; the last value repeats.
+  static const retryDelays = [1, 2, 4, 8, 16, 30];
+  static const maxRetries = 10;
 
   @override
   List<SessionEntry> build() => [];
@@ -149,6 +202,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       theme: theme,
       label: host.label,
       keepaliveSeconds: host.keepaliveSeconds,
+      reattachSessionId: null,
     );
     _startFlow(entry, engine, request);
     state = [...state, entry];
@@ -163,32 +217,12 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     }
   }
 
-  /// Try the same connection again after a failure.
+  /// Try the same connection again after a failure to connect.
   void retry(int id) {
     final entry = byId(id);
     final request = entry?.flow?.request;
     if (entry == null || request == null) return;
     _startFlow(entry, ref.read(engineProvider), request);
-  }
-
-  void _startFlow(SessionEntry entry, Engine engine, SshConnectRequest request) {
-    final flow = ConnectFlow(engine: engine, request: request);
-    entry.setFlow(flow);
-    flow.addListener(() {
-      if (flow.sessionId != null && entry.controller == null) {
-        entry.setController(TerminalController(engine: engine, id: flow.sessionId!, label: entry.label)..start());
-        if (entry.hostId != null) {
-          try {
-            ref.read(hostsProvider.notifier).markConnected(entry.hostId!);
-          } catch (_) {}
-        }
-      } else if (flow.error != null && entry.error == null) {
-        entry.setError(flow.error);
-      } else if (flow.cancelled && entry.error == null) {
-        entry.setError('Cancelled.');
-      }
-    });
-    flow.start();
   }
 
   /// Recolour every live session, for a theme change or a gallery preview.
@@ -198,6 +232,127 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       if (c != null && !c.exited) c.setTheme(theme);
     }
   }
+
+  void _startFlow(SessionEntry entry, Engine engine, SshConnectRequest request) {
+    final flow = ConnectFlow(engine: engine, request: request);
+    entry.setFlow(flow);
+    flow.addListener(() => _onFlow(entry, engine, flow));
+    flow.start();
+  }
+
+  void _onFlow(SessionEntry entry, Engine engine, ConnectFlow flow) {
+    if (entry.flow != flow) return; // a newer attempt replaced this one
+    final sessionId = flow.sessionId;
+    if (sessionId != null) {
+      final existing = entry.controller;
+      if (existing == null) {
+        _attach(entry, engine, sessionId);
+      } else if (entry.reconnecting) {
+        if (existing.id == sessionId) {
+          existing.revive();
+        } else {
+          // The old session was gone by the time we got back; take the new one.
+          existing.dispose();
+          _attach(entry, engine, sessionId);
+        }
+        entry.clearReconnect();
+      }
+      if (entry.hostId != null) {
+        try {
+          ref.read(hostsProvider.notifier).markConnected(entry.hostId!);
+        } catch (_) {}
+      }
+    } else if (flow.error != null) {
+      if (entry.reconnecting) {
+        _reconnectFailed(entry, flow.error!);
+      } else if (entry.error == null) {
+        entry.setError(flow.error);
+      }
+    } else if (flow.cancelled && entry.error == null && !entry.reconnecting) {
+      entry.setError('Cancelled.');
+    }
+  }
+
+  void _attach(SessionEntry entry, Engine engine, int sessionId) {
+    final c = TerminalController(engine: engine, id: sessionId, label: entry.label)..start();
+    entry.setController(c);
+    if (!entry.isLocal) c.addListener(() => _watchForDrop(entry, c));
+  }
+
+  // ---- Automatic reconnect -----------------------------------------------
+
+  /// An SSH session that ends without an exit status lost its connection
+  /// rather than being told to exit: start getting it back.
+  void _watchForDrop(SessionEntry entry, TerminalController c) {
+    if (!c.exited || c.exitCode != null || entry.reconnecting) return;
+    if (entry.controller != c || entry.flow?.request == null) return;
+    if (_retryTimers.containsKey(entry.id)) return;
+    _scheduleReconnect(entry, attempt: 1);
+  }
+
+  void _scheduleReconnect(SessionEntry entry, {required int attempt, bool now = false}) {
+    final seconds = now ? 0 : retryDelays[math.min(attempt - 1, retryDelays.length - 1)];
+    final delay = Duration(seconds: seconds);
+    entry.setReconnect(attempt, seconds == 0 ? null : DateTime.now().add(delay));
+    final c = entry.controller;
+    if (c != null) {
+      final when = seconds == 0 ? 'now' : 'in $seconds s';
+      final what = attempt == 1 ? 'Connection dropped. Reconnecting $when' : 'Try $attempt $when';
+      c.notice('\r\n\x1b[33m$what…\x1b[0m\r\n');
+    }
+    _retryTimers[entry.id]?.cancel();
+    _retryTimers[entry.id] = Timer(delay, () {
+      _retryTimers.remove(entry.id);
+      if (byId(entry.id) != entry || !entry.reconnecting) return;
+      entry.setReconnect(attempt, null);
+      final old = entry.flow!.request;
+      final c = entry.controller;
+      _startFlow(entry, ref.read(engineProvider), _reattachRequest(old, c));
+    });
+  }
+
+  void _reconnectFailed(SessionEntry entry, String error) {
+    final attempt = entry.reconnectAttempt;
+    if (attempt >= maxRetries) {
+      entry.clearReconnect();
+      entry.setError('Could not reconnect after $attempt tries: $error');
+      return;
+    }
+    _scheduleReconnect(entry, attempt: attempt + 1);
+  }
+
+  /// Reconnect straight away, keeping the screen; for the button on an
+  /// ended SSH session.
+  void reconnectNow(int id) {
+    final entry = byId(id);
+    if (entry == null || entry.isLocal || entry.flow?.request == null) return;
+    _scheduleReconnect(entry, attempt: 1, now: true);
+  }
+
+  /// Stop trying. The session stays on screen as ended, with its output.
+  void stopReconnect(int id) {
+    final entry = byId(id);
+    if (entry == null) return;
+    _retryTimers.remove(id)?.cancel();
+    entry.flow?.cancel();
+    entry.clearReconnect();
+  }
+
+  SshConnectRequest _reattachRequest(SshConnectRequest r, TerminalController? c) => SshConnectRequest(
+        user: r.user,
+        host: r.host,
+        port: r.port,
+        auth: r.auth,
+        password: r.password,
+        privateKey: r.privateKey,
+        passphrase: r.passphrase,
+        cols: c != null && c.grid.cols > 0 ? c.grid.cols : r.cols,
+        rows: c != null && c.grid.rows > 0 ? c.grid.rows : r.rows,
+        theme: r.theme,
+        label: r.label,
+        keepaliveSeconds: r.keepaliveSeconds,
+        reattachSessionId: c?.id,
+      );
 
   SessionEntry? byId(int id) {
     for (final e in state) {
@@ -210,6 +365,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final entry = byId(id);
     if (entry == null) return;
     final engine = ref.read(engineProvider);
+    _retryTimers.remove(id)?.cancel();
     entry.flow?.cancel();
     final engineId = entry.controller?.id;
     entry.dispose();

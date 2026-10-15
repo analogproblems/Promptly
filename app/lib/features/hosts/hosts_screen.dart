@@ -54,6 +54,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
       theme: terminalThemeFor(ref, context),
       label: null,
       keepaliveSeconds: 30,
+      reattachSessionId: null,
     ));
     context.go('/sessions/${entry.id}');
   }

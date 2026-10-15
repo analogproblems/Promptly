@@ -69,6 +69,11 @@ class SshConnectRequest {
   final String? label;
   final int keepaliveSeconds;
 
+  /// When reconnecting: the session whose connection dropped. On success
+  /// it gets the new connection and keeps its screen, and `Connected`
+  /// carries its id. If it no longer exists a new session is made.
+  final int? reattachSessionId;
+
   const SshConnectRequest({
     required this.user,
     required this.host,
@@ -82,6 +87,7 @@ class SshConnectRequest {
     required this.theme,
     this.label,
     required this.keepaliveSeconds,
+    this.reattachSessionId,
   });
 
   @override
@@ -97,7 +103,8 @@ class SshConnectRequest {
       rows.hashCode ^
       theme.hashCode ^
       label.hashCode ^
-      keepaliveSeconds.hashCode;
+      keepaliveSeconds.hashCode ^
+      reattachSessionId.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -115,7 +122,8 @@ class SshConnectRequest {
           rows == other.rows &&
           theme == other.theme &&
           label == other.label &&
-          keepaliveSeconds == other.keepaliveSeconds;
+          keepaliveSeconds == other.keepaliveSeconds &&
+          reattachSessionId == other.reattachSessionId;
 }
 
 /// One event from a connection attempt. The fields for other kinds are None.

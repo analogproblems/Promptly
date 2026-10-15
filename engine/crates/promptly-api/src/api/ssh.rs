@@ -14,7 +14,7 @@ use promptly_session::{Session, SessionKind};
 use promptly_ssh::{connect, AuthMethod, ConnectParams, Endpoint, FileKnownHosts, Prompter};
 use promptly_term::TermSize;
 
-use crate::api::terminal::{palette_for, register_session};
+use crate::api::terminal::{palette_for, reattach_session, register_session, session_exists};
 use crate::frb_generated::StreamSink;
 use crate::ssh_flow::{attempt, Attempt, Pending, UiPrompter, ATTEMPTS, NEXT_ATTEMPT};
 
@@ -44,6 +44,10 @@ pub struct SshConnectRequest {
     /// What to call the session; defaults to `user@host`.
     pub label: Option<String>,
     pub keepalive_seconds: u32,
+    /// When reconnecting: the session whose connection dropped. On success
+    /// it gets the new connection and keeps its screen, and `Connected`
+    /// carries its id. If it no longer exists a new session is made.
+    pub reattach_session_id: Option<u32>,
 }
 
 pub enum SshStep {
@@ -165,6 +169,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
         .clone()
         .unwrap_or_else(|| endpoint.to_string());
     let palette = palette_for(&request.theme);
+    let reattach = request.reattach_session_id;
 
     let known_hosts = Arc::new(FileKnownHosts::default_paths(
         &crate::api::engine::data_dir(),
@@ -175,13 +180,22 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
         let result = connect(params, prompter, known_hosts).await;
         match result {
             Ok((transport, reader)) => {
-                let session = Arc::new(Session::new(
-                    SessionKind::Ssh { host: label },
-                    size,
-                    palette,
-                    Box::new(transport),
-                ));
-                let session_id = register_session(session, Box::new(reader));
+                let session_id = match reattach {
+                    Some(id) if session_exists(id) => {
+                        // The session is still open: give it the new connection.
+                        let _ = reattach_session(id, Box::new(transport), Box::new(reader));
+                        id
+                    }
+                    _ => {
+                        let session = Arc::new(Session::new(
+                            SessionKind::Ssh { host: label },
+                            size,
+                            palette,
+                            Box::new(transport),
+                        ));
+                        register_session(session, Box::new(reader))
+                    }
+                };
                 let mut e = SshEvent::blank(SshEventKind::Connected);
                 e.session_id = Some(session_id);
                 attempt.emit(e);

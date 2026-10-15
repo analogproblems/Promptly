@@ -8,7 +8,7 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 
 ## Status
 
-**Milestone 1 in progress.** On Linux you can save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Select text with the mouse and copy it with Ctrl+Shift+C or the right-click menu. The Sessions tab shows a live thumbnail of every open session. Automatic reconnect is what remains in this milestone. Linux comes first, then Windows, Android, macOS and iOS.
+**Milestone 1 built, now in daily use on Linux.** Save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Select text with the mouse and copy it with Ctrl+Shift+C or the right-click menu. The Sessions tab shows a live thumbnail of every open session. A dropped connection comes back by itself, with the screen intact. The milestone is done when it has replaced the old terminal for a week; the touch gestures wait for the Android build. Linux comes first, then Windows, Android, macOS and iOS.
 
 <p>
   <img src="docs/screenshots/m1-hosts-list.png" alt="The saved hosts list on Linux, dark theme" width="640">
@@ -20,6 +20,10 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 </p>
 <p>
   <img src="docs/screenshots/m1-sessions-thumbnails.png" alt="The Sessions tab with live thumbnails of an SSH session and a local shell" width="640">
+</p>
+<p>
+  <img src="docs/screenshots/m1-reconnect-dropped.png" alt="An SSH session whose connection just dropped, reconnecting by itself" width="640">
+  <img src="docs/screenshots/m1-reconnect-back.png" alt="The same session after reconnecting, with the earlier output still on screen" width="640">
 </p>
 <p>
   <img src="docs/screenshots/m1-themes-gallery.png" alt="The terminal theme gallery with Dracula selected" width="640">

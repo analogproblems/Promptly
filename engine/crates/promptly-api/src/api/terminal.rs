@@ -12,7 +12,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use flutter_rust_bridge::frb;
 
 use crate::frb_generated::StreamSink;
-use promptly_session::{pump, LocalShell, Session, SessionEvent, SessionKind};
+use promptly_session::{pump, LocalShell, Session, SessionEvent, SessionKind, Transport};
 use promptly_term::{CursorShape, Frame, Palette, SelectKind, TermSize};
 
 struct Entry {
@@ -218,6 +218,30 @@ pub(crate) fn register_session(
     id
 }
 
+pub(crate) fn session_exists(id: u32) -> bool {
+    SESSIONS.lock().unwrap().contains_key(&id)
+}
+
+/// Give an existing session a new transport, for reconnecting without
+/// losing the screen. Frames resume on the session's existing stream.
+pub(crate) fn reattach_session(
+    id: u32,
+    transport: Box<dyn Transport>,
+    reader: Box<dyn std::io::Read + Send>,
+) -> Result<(), String> {
+    let entry = entry(id)?;
+    entry.session.replace_transport(transport);
+    if entry.sink.lock().unwrap().is_some() {
+        let emitter = entry.clone();
+        pump(entry.session.clone(), reader, move |event| {
+            emitter.emit(event.into())
+        });
+    } else {
+        *entry.reader.lock().unwrap() = Some(reader);
+    }
+    Ok(())
+}
+
 // ---- Functions ---------------------------------------------------------
 
 /// Start the user's shell (or `program`) in a new session. Frames begin once
@@ -367,6 +391,17 @@ pub fn terminal_select_clear(id: u32) -> Result<(), String> {
 #[frb(sync)]
 pub fn terminal_selection_text(id: u32) -> Result<Option<String>, String> {
     Ok(entry(id)?.session.selection_text())
+}
+
+/// Show a message from Promptly in the terminal, such as "connection
+/// dropped". Use `\r\n` for line breaks; nothing is sent to the program.
+#[frb(sync)]
+pub fn terminal_notice(id: u32, text: String) -> Result<(), String> {
+    let entry = entry(id)?;
+    entry
+        .session
+        .notice(&text, |f| entry.emit(TerminalEvent::frame(f.into())));
+    Ok(())
 }
 
 /// Ask for a complete frame, for example after the view was recreated.

@@ -100,7 +100,7 @@ class _Summary extends StatelessWidget {
           final c = s.controller;
           if (c != null && !c.exited) {
             live++;
-          } else if (s.isConnecting) {
+          } else if (s.isConnecting || s.reconnecting) {
             connecting++;
           } else {
             ended++;
@@ -136,7 +136,10 @@ class SessionCard extends StatelessWidget {
         final live = c != null && !c.exited;
         final String status;
         final Color dot;
-        if (c == null) {
+        if (entry.reconnecting) {
+          status = entry.reconnectStatus;
+          dot = t.warning;
+        } else if (c == null) {
           status = entry.error != null ? 'Failed: ${entry.error}' : 'Connecting…';
           dot = entry.error != null ? t.danger : t.warning;
         } else if (c.exited) {

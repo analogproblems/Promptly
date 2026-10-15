@@ -19,6 +19,14 @@ class FakeEngine implements Engine {
   final List<String> openedThemes = [];
   final List<String> themeCalls = [];
 
+  /// Notices shown in sessions, and every SSH request begun.
+  final List<String> notices = [];
+  final List<SshConnectRequest> requests = [];
+
+  /// When true, a session's stream ends with a drop (exit without a code)
+  /// right after its first frame.
+  bool dropAfterFrame = false;
+
   @override
   String version() => '9.9.9-test';
 
@@ -74,6 +82,8 @@ class FakeEngine implements Engine {
         clipboard: null,
         exitCode: null,
       ),
+      if (dropAfterFrame)
+        const TerminalEvent(kind: TerminalEventKind.exited, frame: null, clipboard: null, exitCode: null),
     ]);
   }
   @override
@@ -90,6 +100,8 @@ class FakeEngine implements Engine {
   void terminalSetTheme(int id, String theme) => themeCalls.add('$id $theme');
   @override
   void terminalRefresh(int id) {}
+  @override
+  void terminalNotice(int id, String text) => notices.add(text);
   @override
   void terminalSelectBegin(int id, int col, int line, bool sideRight, TerminalSelectKind kind) {}
   @override
@@ -128,7 +140,10 @@ class FakeEngine implements Engine {
   int frameRows = 37;
 
   @override
-  int sshConnectBegin(SshConnectRequest request) => 1;
+  int sshConnectBegin(SshConnectRequest request) {
+    requests.add(request);
+    return requests.length;
+  }
   @override
   Stream<SshEvent> sshConnectEvents(int attemptId) {
     final id = connectedSessionId;
@@ -380,6 +395,57 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('host-colour-bar')), findsOneWidget);
     expect(find.text('deploy@web-1: ~'), findsOneWidget, reason: 'the session is live');
+  });
+
+  testWidgets('a dropped SSH connection reconnects by itself, keeping the session', (tester) async {
+    final engine = FakeEngine()
+      ..connectedSessionId = 7
+      ..dropAfterFrame = true;
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'deploy@web-1');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(engine.requests.length, 1);
+    expect(find.text('Connection dropped'), findsOneWidget);
+    expect(find.textContaining('try 1'), findsOneWidget);
+    expect(engine.notices.single, contains('Connection dropped'));
+
+    // The first try comes after a second, and asks for the same session back.
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(engine.requests.length, 2);
+    expect(engine.requests.last.reattachSessionId, 7);
+    expect(engine.requests.last.cols, 142, reason: 'the new connection gets the live size');
+    await tester.pumpAndSettle();
+    expect(find.text('Connection dropped'), findsNothing, reason: 'reconnected');
+    expect(find.text('deploy@web-1: ~'), findsOneWidget, reason: 'same session, same title');
+  });
+
+  testWidgets('Stop ends the reconnect attempts and leaves the session on screen', (tester) async {
+    final engine = FakeEngine()
+      ..connectedSessionId = 7
+      ..dropAfterFrame = true;
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'deploy@web-1');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    await tester.tap(find.text('Stop'));
+    await tester.pumpAndSettle();
+    expect(find.text('Connection dropped'), findsNothing);
+    expect(find.text('The connection ended.'), findsOneWidget);
+    expect(engine.requests.length, 1, reason: 'no further tries');
+    // Reconnect from the ended overlay goes straight for the same session.
+    await tester.tap(find.text('Reconnect'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(engine.requests.length, 2);
+    expect(engine.requests.last.reattachSessionId, 7);
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

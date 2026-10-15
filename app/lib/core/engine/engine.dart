@@ -54,6 +54,10 @@ abstract class Engine {
   void terminalSetTheme(int id, String theme);
   void terminalRefresh(int id);
 
+  /// Show a message from Promptly itself in the terminal, such as
+  /// "connection dropped". Use `\r\n` for line breaks.
+  void terminalNotice(int id, String text);
+
   /// Text selection in viewport cells; `line` 0 is the top row and may run
   /// past either edge while dragging. `sideRight` is the right half of a cell.
   void terminalSelectBegin(int id, int col, int line, bool sideRight, rust_term.TerminalSelectKind kind);
@@ -162,6 +166,9 @@ class RustEngine implements Engine {
 
   @override
   void terminalRefresh(int id) => rust_term.terminalRefresh(id: id);
+
+  @override
+  void terminalNotice(int id, String text) => rust_term.terminalNotice(id: id, text: text);
 
   @override
   void terminalSelectBegin(int id, int col, int line, bool sideRight, rust_term.TerminalSelectKind kind) =>

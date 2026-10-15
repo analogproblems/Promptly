@@ -168,6 +168,29 @@ impl Session {
         self.transport.lock().unwrap().close();
     }
 
+    /// Give the session a new transport after the old one went away, keeping
+    /// the screen and scrollback. The new end is told the current size.
+    /// Call [`pump`] again afterwards with the new reader.
+    pub fn replace_transport(&self, mut transport: Box<dyn Transport>) {
+        let size = self.emulator.lock().unwrap().size();
+        let _ = transport.resize(size);
+        {
+            let mut old = self.transport.lock().unwrap();
+            old.close();
+            *old = transport;
+        }
+        *self.exited.lock().unwrap() = None;
+    }
+
+    /// Show a message from Promptly itself in the terminal, such as
+    /// "connection dropped". It goes through the emulator like program
+    /// output and is never sent to the other end.
+    pub fn notice(&self, text: &str, emit: impl FnOnce(Frame)) {
+        let mut emu = self.emulator.lock().unwrap();
+        let _ = emu.feed(text.as_bytes());
+        emit(emu.frame());
+    }
+
     fn mark_exited(&self, code: Option<i32>) {
         *self.exited.lock().unwrap() = Some(code);
     }
@@ -295,5 +318,58 @@ mod tests {
             }
         }
         assert_eq!(session.exited(), Some(Some(7)));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_session_can_take_a_new_transport_and_keep_its_screen() {
+        let size = TermSize::new(40, 6);
+        let (shell, reader) =
+            LocalShell::spawn(size, Some("/bin/sh".into()), None).expect("spawn /bin/sh");
+        let session = Arc::new(Session::new(
+            SessionKind::LocalShell {
+                program: "/bin/sh".into(),
+            },
+            size,
+            Palette::promptly_dark(),
+            Box::new(shell),
+        ));
+        let (tx, rx) = mpsc::channel();
+        let emit = move |e| {
+            let _ = tx.send(e);
+        };
+        let _h = pump(session.clone(), reader, emit.clone());
+        session.write(b"echo first-$((1+1)); exit\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(SessionEvent::Exited { .. }) => break,
+                Ok(_) => {}
+                Err(_) => assert!(Instant::now() < deadline, "first shell never exited"),
+            }
+        }
+        assert!(session.exited().is_some());
+        assert!(session.screen_text().contains("first-2"));
+
+        session.notice("\r\n[dropped]\r\n", |_| {});
+        let (shell, reader) =
+            LocalShell::spawn(size, Some("/bin/sh".into()), None).expect("spawn /bin/sh");
+        session.replace_transport(Box::new(shell));
+        assert_eq!(session.exited(), None, "a fresh transport means not exited");
+        let _h = pump(session.clone(), reader, emit);
+        session.write(b"echo second-$((2+2))\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !session.screen_text().contains("second-4") {
+            let _ = rx.recv_timeout(Duration::from_millis(200));
+            assert!(
+                Instant::now() < deadline,
+                "second shell never answered:\n{}",
+                session.screen_text()
+            );
+        }
+        let text = session.screen_text();
+        assert!(text.contains("first-2"), "old output kept:\n{text}");
+        assert!(text.contains("[dropped]"), "notice shown:\n{text}");
+        session.write(b"exit\n").unwrap();
     }
 }

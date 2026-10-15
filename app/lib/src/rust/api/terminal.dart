@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit`, `entry`, `frame`, `palette_for`, `register_session`
+// These functions are ignored because they are not marked as `pub`: `emit`, `entry`, `frame`, `palette_for`, `reattach_session`, `register_session`, `session_exists`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Entry`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`
 
@@ -92,6 +92,11 @@ void terminalSelectClear({required int id}) =>
 /// The selected text, or `None` when nothing is selected.
 String? terminalSelectionText({required int id}) =>
     RustLib.instance.api.crateApiTerminalTerminalSelectionText(id: id);
+
+/// Show a message from Promptly in the terminal, such as "connection
+/// dropped". Use `\r\n` for line breaks; nothing is sent to the program.
+void terminalNotice({required int id, required String text}) =>
+    RustLib.instance.api.crateApiTerminalTerminalNotice(id: id, text: text);
 
 /// Ask for a complete frame, for example after the view was recreated.
 void terminalRefresh({required int id}) =>

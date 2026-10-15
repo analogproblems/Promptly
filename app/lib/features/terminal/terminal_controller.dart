@@ -76,6 +76,16 @@ class TerminalController extends ChangeNotifier {
 
   void refresh() => _guard(() => engine.terminalRefresh(id));
 
+  /// Show a message from Promptly in the terminal; nothing goes to the program.
+  void notice(String text) => _guard(() => engine.terminalNotice(id, text));
+
+  /// The session got a new connection after it dropped: it is live again.
+  void revive() {
+    exited = false;
+    exitCode = null;
+    notifyListeners();
+  }
+
   bool _selecting = false;
 
   /// Start a selection at a viewport cell. A plain click starts an empty

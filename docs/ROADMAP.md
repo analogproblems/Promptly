@@ -23,8 +23,8 @@ Goal: you can use it daily on your Linux desktop, for local shells and SSH, and 
 - Local shell on desktop (pty on Linux and macOS, ConPTY on Windows), so the terminal is usable before SSH lands. **Done on Linux.**
 - Terminal renderer: glyph cache painter, cursor styles, styles and colours, mouse selection with copy and paste. **Done** (touch handles and links still to come).
 - Hardware keyboard mapping (Ctrl, Alt, arrows, function keys, app-cursor mode). **Done.** The mobile accessory bar comes with the Android build.
-- Gestures: two-finger session switch, pinch zoom, double tap to select a word.
-- `promptly-ssh`: connect, password, key and keyboard-interactive auth, shell channel, resize, keep-alive. **Done** (auto-reconnect still to come).
+- Gestures: two-finger session switch, pinch zoom, double tap to select a word. Comes with the Android build.
+- `promptly-ssh`: connect, password, key and keyboard-interactive auth, shell channel, resize, keep-alive, automatic reconnect with backoff that keeps the screen. **Done.**
 - Host key verification flow and known-host storage. **Done** (OpenSSH files; moves into the vault in M2).
 - Hosts list, search and quick connect, host editor (basics and auth), flat groups. **Done.**
 - Identities: generate, import by paste, copy the public key. **Done** (import from file and the biometric gate come with the mobile builds).

@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1457145707;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 948453578;
 
 // Section: executor
 
@@ -865,6 +865,37 @@ fn wire__crate__api__terminal__terminal_list_impl(
         },
     )
 }
+fn wire__crate__api__terminal__terminal_notice_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "terminal_notice",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_id = <u32>::sse_decode(&mut deserializer);
+            let api_text = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::terminal::terminal_notice(api_id, api_text)?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__terminal__terminal_open_local_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -1684,6 +1715,7 @@ impl SseDecode for crate::api::ssh::SshConnectRequest {
         let mut var_theme = <String>::sse_decode(deserializer);
         let mut var_label = <Option<String>>::sse_decode(deserializer);
         let mut var_keepaliveSeconds = <u32>::sse_decode(deserializer);
+        let mut var_reattachSessionId = <Option<u32>>::sse_decode(deserializer);
         return crate::api::ssh::SshConnectRequest {
             user: var_user,
             host: var_host,
@@ -1697,6 +1729,7 @@ impl SseDecode for crate::api::ssh::SshConnectRequest {
             theme: var_theme,
             label: var_label,
             keepalive_seconds: var_keepaliveSeconds,
+            reattach_session_id: var_reattachSessionId,
         };
     }
 }
@@ -2065,22 +2098,23 @@ fn pde_ffi_dispatcher_sync_impl(
         22 => wire__crate__api__ssh__ssh_connect_begin_impl(ptr, rust_vec_len, data_len),
         24 => wire__crate__api__terminal__terminal_close_impl(ptr, rust_vec_len, data_len),
         26 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
-        29 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
-        33 => {
+        27 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
+        34 => {
             wire__crate__api__terminal__terminal_scroll_to_bottom_impl(ptr, rust_vec_len, data_len)
         }
-        34 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2210,6 +2244,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::ssh::SshConnectRequest {
             self.theme.into_into_dart().into_dart(),
             self.label.into_into_dart().into_dart(),
             self.keepalive_seconds.into_into_dart().into_dart(),
+            self.reattach_session_id.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -2894,6 +2929,7 @@ impl SseEncode for crate::api::ssh::SshConnectRequest {
         <String>::sse_encode(self.theme, serializer);
         <Option<String>>::sse_encode(self.label, serializer);
         <u32>::sse_encode(self.keepalive_seconds, serializer);
+        <Option<u32>>::sse_encode(self.reattach_session_id, serializer);
     }
 }
 

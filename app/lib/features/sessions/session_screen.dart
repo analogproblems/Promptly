@@ -112,10 +112,16 @@ class SessionScreen extends ConsumerWidget {
                       fit: StackFit.expand,
                       children: [
                         TerminalView(controller: c),
-                        if (c.exited)
+                        if (entry.reconnecting)
+                          _ReconnectOverlay(
+                            entry: entry,
+                            onStop: () => ref.read(sessionManagerProvider.notifier).stopReconnect(id),
+                          )
+                        else if (c.exited)
                           _ExitedOverlay(
                             code: c.exitCode,
                             isLocal: entry.isLocal,
+                            detail: entry.error,
                             onClose: closeAndLeave,
                             onAgain: () {
                               final manager = ref.read(sessionManagerProvider.notifier);
@@ -124,15 +130,11 @@ class SessionScreen extends ConsumerWidget {
                                 manager.close(id);
                                 final fresh = manager.openLocalShell(theme: theme);
                                 context.go('/sessions/${fresh.id}');
+                              } else if (entry.flow?.request != null) {
+                                manager.reconnectNow(id);
                               } else {
-                                final request = entry.flow?.request;
                                 manager.close(id);
-                                if (request != null) {
-                                  final fresh = manager.connectSsh(request);
-                                  context.go('/sessions/${fresh.id}');
-                                } else {
-                                  context.go('/sessions');
-                                }
+                                context.go('/sessions');
                               }
                             },
                           ),
@@ -146,18 +148,82 @@ class SessionScreen extends ConsumerWidget {
   }
 }
 
+/// Over a session whose connection dropped: what is happening, a way to
+/// stop, and any question the new connection asks (a changed host key, a
+/// password that is not saved).
+class _ReconnectOverlay extends StatelessWidget {
+  const _ReconnectOverlay({required this.entry, required this.onStop});
+
+  final SessionEntry entry;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final flow = entry.flow;
+    final inProgress = flow != null && entry.reconnectAt == null;
+    return Container(
+      color: Colors.black.withValues(alpha: 0.45),
+      alignment: Alignment.center,
+      padding: const EdgeInsets.all(20),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 520),
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.sync_problem, color: t.warning),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Connection dropped',
+                        style: TextStyle(color: t.text, fontWeight: FontWeight.w600, fontSize: 16),
+                      ),
+                    ),
+                    TextButton(onPressed: onStop, child: const Text('Stop')),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(entry.reconnectStatus, style: TextStyle(color: t.muted, fontSize: 13)),
+                if (inProgress) ...[
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(PromptlyTokens.controlRadius),
+                      child: ConnectingView(flow: flow, onCancel: onStop, onRetry: () {}),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ExitedOverlay extends StatelessWidget {
   const _ExitedOverlay({
     required this.code,
     required this.isLocal,
     required this.onClose,
     required this.onAgain,
+    this.detail,
   });
 
   final int? code;
   final bool isLocal;
   final VoidCallback onClose;
   final VoidCallback onAgain;
+
+  /// Why, when there is more to say (for example a reconnect that gave up).
+  final String? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -176,6 +242,13 @@ class _ExitedOverlay extends StatelessWidget {
                 code == null || code == 0 ? '$what ended.' : '$what ended with code $code.',
                 style: TextStyle(color: t.text, fontWeight: FontWeight.w600),
               ),
+              if (detail != null) ...[
+                const SizedBox(height: 6),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Text(detail!, textAlign: TextAlign.center, style: TextStyle(color: t.muted, fontSize: 13)),
+                ),
+              ],
               const SizedBox(height: 14),
               Row(
                 mainAxisSize: MainAxisSize.min,

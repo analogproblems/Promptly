@@ -43,6 +43,8 @@ class RecordingEngine implements Engine {
   @override
   void terminalRefresh(int id) => calls.add('refresh');
   @override
+  void terminalNotice(int id, String text) => calls.add('notice');
+  @override
   void terminalSelectBegin(int id, int col, int line, bool sideRight, TerminalSelectKind kind) =>
       calls.add('select ${kind.name} $col,$line');
   @override
