@@ -189,6 +189,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SshEventKind dco_decode_ssh_event_kind(dynamic raw);
 
   @protected
+  SshExecResult dco_decode_ssh_exec_result(dynamic raw);
+
+  @protected
   SshForward dco_decode_ssh_forward(dynamic raw);
 
   @protected
@@ -449,6 +452,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SshEventKind sse_decode_ssh_event_kind(SseDeserializer deserializer);
+
+  @protected
+  SshExecResult sse_decode_ssh_exec_result(SseDeserializer deserializer);
 
   @protected
   SshForward sse_decode_ssh_forward(SseDeserializer deserializer);
@@ -779,6 +785,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_ssh_event_kind(SshEventKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_exec_result(SshExecResult self, SseSerializer serializer);
 
   @protected
   void sse_encode_ssh_forward(SshForward self, SseSerializer serializer);

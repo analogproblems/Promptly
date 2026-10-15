@@ -10,6 +10,7 @@ import '../terminal/terminal_view.dart';
 import 'connecting_view.dart';
 import 'forwards_sheet.dart';
 import 'session_manager.dart';
+import 'snippets_drawer.dart';
 
 /// A single session: slim top bar, then nothing but terminal. While an SSH
 /// connection is being made, the terminal area shows the progress and any
@@ -88,6 +89,13 @@ class SessionScreen extends ConsumerWidget {
                     Text(
                       '${c.grid.cols}×${c.grid.rows}',
                       style: monoStyle(context, size: 11, color: t.muted),
+                    ),
+                  if (live)
+                    IconButton(
+                      key: const Key('session-snippets'),
+                      tooltip: 'Snippets',
+                      onPressed: () => showSnippetsDrawer(context, ref, entry),
+                      icon: const Icon(Icons.code),
                     ),
                   if (live && (entry.flow?.request.forwards.isNotEmpty ?? false))
                     IconButton(

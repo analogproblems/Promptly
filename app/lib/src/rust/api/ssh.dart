@@ -18,6 +18,19 @@ int sshConnectBegin({required SshConnectRequest request}) =>
 Stream<SshEvent> sshConnectEvents({required int attemptId}) =>
     RustLib.instance.api.crateApiSshSshConnectEvents(attemptId: attemptId);
 
+/// Connect with the request's stored login, run `command` without a
+/// terminal, and return what it printed. Unattended: a host key not yet
+/// trusted, or a login that needs typing, is an error that says what to do.
+Future<SshExecResult> sshExec({
+  required SshConnectRequest request,
+  required String command,
+  required int timeoutSeconds,
+}) => RustLib.instance.api.crateApiSshSshExec(
+  request: request,
+  command: command,
+  timeoutSeconds: timeoutSeconds,
+);
+
 /// The forwards of a live SSH session and whether each is running.
 List<SshForwardStatus> sshForwards({required int sessionId}) =>
     RustLib.instance.api.crateApiSshSshForwards(sessionId: sessionId);
@@ -254,6 +267,37 @@ enum SshEventKind {
   keyboardInteractive,
   connected,
   failed,
+}
+
+/// What one command printed on one host, for snippets run on many hosts.
+class SshExecResult {
+  final String output;
+  final int? exitCode;
+  final bool timedOut;
+
+  /// Why it could not run at all; `output` is empty then.
+  final String? error;
+
+  const SshExecResult({
+    required this.output,
+    this.exitCode,
+    required this.timedOut,
+    this.error,
+  });
+
+  @override
+  int get hashCode =>
+      output.hashCode ^ exitCode.hashCode ^ timedOut.hashCode ^ error.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is SshExecResult &&
+          runtimeType == other.runtimeType &&
+          output == other.output &&
+          exitCode == other.exitCode &&
+          timedOut == other.timedOut &&
+          error == other.error;
 }
 
 class SshForward {

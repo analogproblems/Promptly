@@ -12,6 +12,7 @@
 
 pub mod connect;
 pub mod endpoint;
+pub mod exec;
 pub mod forward;
 pub mod hostkey;
 pub mod keys;
@@ -26,6 +27,7 @@ pub use connect::{
     KeyboardPrompt, Prompter,
 };
 pub use endpoint::{Endpoint, ParseError};
+pub use exec::{exec, ExecOutput};
 pub use forward::{Connection, ForwardKind, ForwardSpec, ForwardStatus};
 pub use hostkey::{FileKnownHosts, HostKeyInfo, HostKeyStatus, KnownHosts};
 pub use keys::{

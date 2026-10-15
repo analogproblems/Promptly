@@ -12,7 +12,8 @@ use std::sync::{Arc, Mutex};
 use flutter_rust_bridge::frb;
 use promptly_session::{Session, SessionKind};
 use promptly_ssh::{
-    connect, AuthMethod, ConnectParams, Endpoint, ForwardKind, ForwardSpec, Prompter,
+    connect, AuthMethod, ConnectError, ConnectParams, Endpoint, ForwardKind, ForwardSpec, Prompter,
+    QuietPrompter,
 };
 use promptly_term::TermSize;
 
@@ -341,6 +342,70 @@ fn params_for(request: &SshConnectRequest, endpoint: Endpoint, size: TermSize) -
     params.agent_forward = request.agent_forward;
     params.forwards = request.forwards.iter().map(forward_spec).collect();
     params
+}
+
+/// What one command printed on one host, for snippets run on many hosts.
+pub struct SshExecResult {
+    pub output: String,
+    pub exit_code: Option<i32>,
+    pub timed_out: bool,
+    /// Why it could not run at all; `output` is empty then.
+    pub error: Option<String>,
+}
+
+/// Connect with the request's stored login, run `command` without a
+/// terminal, and return what it printed. Unattended: a host key not yet
+/// trusted, or a login that needs typing, is an error that says what to do.
+pub fn ssh_exec(
+    request: SshConnectRequest,
+    command: String,
+    timeout_seconds: u32,
+) -> SshExecResult {
+    let endpoint = Endpoint {
+        user: request.user.clone(),
+        host: request.host.clone(),
+        port: request.port,
+    };
+    let label = request
+        .label
+        .clone()
+        .unwrap_or_else(|| endpoint.to_string());
+    let params = params_for(&request, endpoint, TermSize::default());
+    let known_hosts = Arc::new(crate::sync_engine::VaultKnownHosts::new());
+    let prompter: Arc<dyn Prompter> = Arc::new(QuietPrompter);
+    let timeout = std::time::Duration::from_secs(u64::from(timeout_seconds.max(1)));
+    let result = promptly_ssh::runtime().block_on(promptly_ssh::exec(
+        &params,
+        prompter,
+        known_hosts,
+        &command,
+        timeout,
+    ));
+    match result {
+        Ok(out) => SshExecResult {
+            output: out.output,
+            exit_code: out.exit_code,
+            timed_out: out.timed_out,
+            error: None,
+        },
+        Err(e) => SshExecResult {
+            output: String::new(),
+            exit_code: None,
+            timed_out: false,
+            error: Some(match e {
+                ConnectError::HostKeyRejected => format!(
+                    "Connect to {label} in the terminal once first, so its host key is trusted."
+                ),
+                ConnectError::Cancelled => format!(
+                    "{label} asks for a login each time. Save a password or pick a key to run snippets on it."
+                ),
+                ConnectError::AuthFailed(_) => format!(
+                    "The saved login for {label} did not work. Check the password or key on the host."
+                ),
+                other => other.to_string(),
+            }),
+        },
+    }
 }
 
 /// The forwards of a live SSH session and whether each is running.

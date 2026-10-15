@@ -76,6 +76,9 @@ class RecordingEngine implements Engine {
   @override
   Future<int> sshForwardSet(int sessionId, int index, bool enabled) async => 0;
   @override
+  Future<SshExecResult> sshExec(SshConnectRequest request, String command, int timeoutSeconds) async =>
+      const SshExecResult(output: '', exitCode: 0, timedOut: false, error: null);
+  @override
   List<StoreRecord> recordsList(String collection) => const [];
   @override
   StoreRecord? recordGet(String collection, String id) => null;

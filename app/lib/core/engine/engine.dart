@@ -21,6 +21,7 @@ export '../../src/rust/api/ssh.dart'
         SshEnvVar,
         SshEvent,
         SshEventKind,
+        SshExecResult,
         SshForward,
         SshForwardKind,
         SshForwardStatus,
@@ -95,6 +96,9 @@ abstract class Engine {
 
   /// Start or stop one forward; returns the port in use when starting.
   Future<int> sshForwardSet(int sessionId, int index, bool enabled);
+
+  /// Run one command on a host with its stored login and no terminal.
+  Future<rust_ssh.SshExecResult> sshExec(rust_ssh.SshConnectRequest request, String command, int timeoutSeconds);
 
   /// Records in the local store, as JSON in the vault's format.
   List<rust_store.StoreRecord> recordsList(String collection);
@@ -258,6 +262,10 @@ class RustEngine implements Engine {
   @override
   Future<int> sshForwardSet(int sessionId, int index, bool enabled) =>
       rust_ssh.sshForwardSet(sessionId: sessionId, index: index, enabled: enabled);
+
+  @override
+  Future<rust_ssh.SshExecResult> sshExec(rust_ssh.SshConnectRequest request, String command, int timeoutSeconds) =>
+      rust_ssh.sshExec(request: request, command: command, timeoutSeconds: timeoutSeconds);
 
   @override
   List<rust_store.StoreRecord> recordsList(String collection) =>

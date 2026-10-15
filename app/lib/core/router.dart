@@ -11,6 +11,8 @@ import '../features/settings/settings_screen.dart';
 import '../features/settings/themes_screen.dart';
 import '../features/sync/sync_screen.dart';
 import '../features/shell/shell_scaffold.dart';
+import '../features/snippets/run_on_hosts_screen.dart';
+import '../features/snippets/snippet_editor_screen.dart';
 import '../features/snippets/snippets_screen.dart';
 
 final _rootKey = GlobalKey<NavigatorState>(debugLabel: 'root');
@@ -50,7 +52,23 @@ final routerProvider = Provider<GoRouter>((ref) {
             ),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/snippets', builder: (_, _) => const SnippetsScreen()),
+            GoRoute(
+              path: '/snippets',
+              builder: (_, _) => const SnippetsScreen(),
+              routes: [
+                GoRoute(path: 'new', builder: (_, _) => const SnippetEditorScreen()),
+                GoRoute(
+                  path: ':id',
+                  builder: (_, state) => SnippetEditorScreen(snippetId: state.pathParameters['id']),
+                  routes: [
+                    GoRoute(
+                      path: 'run',
+                      builder: (_, state) => RunOnHostsScreen(snippetId: state.pathParameters['id']!),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ]),
           StatefulShellBranch(routes: [
             GoRoute(path: '/keys', builder: (_, _) => const KeysScreen()),

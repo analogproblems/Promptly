@@ -51,7 +51,7 @@ Done when: a host added on your Linux desktop appears on your Windows machine wi
 
 Goal: parity with the paid apps on the features people actually use.
 
-- Snippets with variables, run on many hosts, the snippets drawer.
+- Snippets with variables, run on many hosts, the snippets drawer. **Done.** `{{name}}` in a command becomes a prompt with a default; a snippet runs in a live session from the drawer in the session bar, or on any set of hosts with their stored logins and a result card per host. The drawer on the mobile keyboard bar comes with the Android build.
 - SFTP browser, share-sheet upload, dual pane on tablet and desktop.
 - Port forwarding (local, remote, dynamic) and jump hosts. **Done.** Forwards are saved per host, start on connect when marked so, and toggle from the session bar; jump hosts chain, each with its own login. Agent forwarding, a startup command and environment variables came with it, and `~/.ssh/config` import picks up `ProxyJump`, the forward lines and `ForwardAgent`.
 - Persistent sessions via tmux. **Done.** A per-host switch attaches to `tmux new-session -A -s promptly`, falling back to a plain login shell where tmux is missing.

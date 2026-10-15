@@ -87,10 +87,14 @@ class FakeEngine implements Engine {
         const TerminalEvent(kind: TerminalEventKind.exited, frame: null, clipboard: null, exitCode: null),
     ]);
   }
+  /// Everything typed or pasted into sessions.
+  final List<List<int>> written = [];
+  final List<String> pasted = [];
+
   @override
-  void terminalWrite(int id, List<int> data) {}
+  void terminalWrite(int id, List<int> data) => written.add(data);
   @override
-  void terminalPaste(int id, String text) {}
+  void terminalPaste(int id, String text) => pasted.add(text);
   @override
   void terminalResize(int id, int cols, int rows) {}
   @override
@@ -162,6 +166,17 @@ class FakeEngine implements Engine {
   void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers) {}
   @override
   void sshCancel(int attemptId) {}
+
+  /// Canned results for snippets run on hosts, by hostname, and the calls made.
+  final Map<String, SshExecResult> execResults = {};
+  final List<String> execCalls = [];
+
+  @override
+  Future<SshExecResult> sshExec(SshConnectRequest request, String command, int timeoutSeconds) async {
+    execCalls.add('${request.host} $command');
+    return execResults[request.host] ??
+        SshExecResult(output: '', exitCode: null, timedOut: false, error: 'no result for ${request.host}');
+  }
 
   /// Forward statuses reported for live sessions, and every toggle asked for.
   List<SshForwardStatus> forwards = [];
@@ -384,6 +399,9 @@ String hostJson(String id, String label, {String? group, String? color, String a
     '"color":${color == null ? 'null' : '"$color"'},'
     '"icon":null,"notes":"","jump_host_id":null,"keepalive_seconds":30,"startup_command":null,"env":{},'
     '"persistent_session":false,"port_forwards":[],"last_connected_at":null,"favourite":false,"sync":"vault"}';
+
+String snippetJson(String id, String label, String command, {String variables = '[]'}) =>
+    '{"id":"$id","label":"$label","command":"$command","tags":[],"variables":$variables}';
 
 void main() {
   testWidgets('shell shows the five tabs and starts on Hosts', (tester) async {
@@ -861,6 +879,84 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.requests, isEmpty);
     expect(find.textContaining('go round in a circle'), findsOneWidget);
+  });
+
+  testWidgets('a snippet is saved with the variables found in its command', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Snippets').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Add snippet'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('snippet-label')), 'Disk');
+    await tester.enterText(find.byKey(const Key('snippet-command')), 'df -h {{path}}');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('var-default-path')), findsOneWidget, reason: 'the variable is picked up as typed');
+    await tester.enterText(find.byKey(const Key('var-default-path')), '/');
+    await tester.tap(find.byKey(const Key('snippet-save')));
+    await tester.pumpAndSettle();
+    expect(engine.records['snippets']!.values.single, contains('"variables":[{"name":"path","default":"/","prompt":""}]'));
+    expect(find.text('Disk'), findsOneWidget);
+    expect(find.text('df -h {{path}}'), findsOneWidget);
+  });
+
+  testWidgets('a snippet run from a live session asks for its variables and types the command', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['snippets'] = {
+      's1': snippetJson('s1', 'Disk', 'df -h {{path}}', variables: '[{"name":"path","default":"/","prompt":"Which folder?"}]'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'deploy@web-1');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('session-snippets')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('drawer-snippet-s1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Which folder?'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('var-path')), '/srv');
+    await tester.tap(find.byKey(const Key('snippet-run-go')));
+    await tester.pumpAndSettle();
+    expect(engine.pasted, ['df -h /srv']);
+    expect(engine.written.last, [13], reason: 'Enter runs it');
+  });
+
+  testWidgets('a snippet run on several hosts shows what each one printed', (tester) async {
+    final engine = FakeEngine();
+    engine.secrets['p1'] = 'hunter2';
+    engine.records['hosts'] = {
+      'h1': hostJson('h1', 'web-1', auth: '{"kind":"password","password_secret_id":"p1"}'),
+      'h2': hostJson('h2', 'web-2', auth: '{"kind":"password","password_secret_id":"p1"}'),
+    };
+    engine.records['snippets'] = {'s1': snippetJson('s1', 'Uptime', 'uptime')};
+    engine.execResults['web-1.example'] = const SshExecResult(output: ' up 3 days', exitCode: 0, timedOut: false, error: null);
+    engine.execResults['web-2.example'] = const SshExecResult(
+      output: '',
+      exitCode: null,
+      timedOut: false,
+      error: 'Connect to web-2 in the terminal once first, so its host key is trusted.',
+    );
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Snippets').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Snippet actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Run on hosts…'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('run-select-all')));
+    await tester.pumpAndSettle();
+    expect(find.text('Run on 2'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('run-on-hosts-go')));
+    await tester.pumpAndSettle();
+    expect(engine.execCalls, ['web-1.example uptime', 'web-2.example uptime']);
+    expect(find.textContaining('up 3 days'), findsOneWidget);
+    expect(find.text('Exit 0'), findsOneWidget);
+    expect(find.textContaining('host key is trusted'), findsOneWidget);
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

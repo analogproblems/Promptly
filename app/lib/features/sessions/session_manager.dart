@@ -165,6 +165,21 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       hostId: host.id,
       color: host.color ?? defaultColorFor(host.label),
     );
+    final plan = requestFor(host, theme: theme);
+    if (plan.request == null) {
+      entry.setError(plan.problem ?? 'This host cannot be used.');
+      state = [...state, entry];
+      return entry;
+    }
+    _startFlow(entry, engine, plan.request!);
+    state = [...state, entry];
+    return entry;
+  }
+
+  /// Everything the engine needs to reach a saved host: its login, its
+  /// jump hosts (nearest first), forwards and the rest. The problem says
+  /// why not, in words for the person.
+  ({SshConnectRequest? request, String? problem}) requestFor(Host host, {required String theme}) {
     final login = _loginFor(host);
     var problem = login.problem;
 
@@ -202,11 +217,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       next = _jumpHostIdFor(hop);
     }
 
-    if (problem != null) {
-      entry.setError(problem);
-      state = [...state, entry];
-      return entry;
-    }
+    if (problem != null) return (request: null, problem: problem);
     final request = SshConnectRequest(
       user: login.username,
       host: host.hostname,
@@ -228,9 +239,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       agentForward: host.agentForwarding,
       forwards: [for (final f in host.portForwards) _forward(f)],
     );
-    _startFlow(entry, engine, request);
-    state = [...state, entry];
-    return entry;
+    return (request: request, problem: null);
   }
 
   static SshForward _forward(PortForward f) => SshForward(
