@@ -138,6 +138,9 @@ jobs:
   macos:
     name: macOS disk image
     runs-on: macos-latest
+    # A good build takes about 15 minutes. The Flutter tool has crashed and
+    # then hung on the Mac runner, so stop well before GitHub's six hours.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
