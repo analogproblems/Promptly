@@ -9,6 +9,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../hosts/models.dart';
+import '../hosts/repositories.dart';
 import '../shell/empty_state.dart';
 import 'sync_providers.dart';
 
@@ -56,7 +58,7 @@ class SyncScreen extends ConsumerWidget {
 
 enum _Place { folder, sftp, none }
 
-enum _Step { place, folder, create, join }
+enum _Step { place, folder, server, create, join }
 
 class SetupWizard extends ConsumerStatefulWidget {
   const SetupWizard({super.key});
@@ -73,6 +75,8 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
   final _pass = TextEditingController();
   final _confirm = TextEditingController();
   final _code = TextEditingController();
+  final _remote = TextEditingController(text: 'Promptly Vault');
+  String? _hostId;
   bool _useCode = false;
   bool _busy = false;
   String? _error;
@@ -97,6 +101,7 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
     _pass.dispose();
     _confirm.dispose();
     _code.dispose();
+    _remote.dispose();
     super.dispose();
   }
 
@@ -105,7 +110,7 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
       case _Place.folder:
         setState(() => _step = _Step.folder);
       case _Place.sftp:
-        notYet(context, 'Sync to your own server lands next.');
+        setState(() => _step = _Step.server);
       case _Place.none:
         context.go('/settings');
     }
@@ -124,6 +129,30 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
     });
   }
 
+  Future<void> _continueFromServer() async {
+    final hostId = _hostId;
+    if (hostId == null) {
+      setState(() => _error = 'Pick a host.');
+      return;
+    }
+    if (_remote.text.trim().isEmpty) {
+      setState(() => _error = 'Name a folder on the server.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final exists = await ref.read(engineProvider).syncSftpFolderHasVault(hostId, _remote.text.trim());
+      setState(() => _step = exists ? _Step.join : _Step.create);
+    } catch (e) {
+      setState(() => _error = e is String ? e : e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _create() async {
     if (_pass.text.length < 8) {
       setState(() => _error = 'Use a passphrase of at least eight characters.');
@@ -138,9 +167,10 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
       _error = null;
     });
     try {
-      final result = await ref
-          .read(engineProvider)
-          .syncCreateLocalFolder(_path.text.trim(), _pass.text, _name.text.trim());
+      final engine = ref.read(engineProvider);
+      final result = _place == _Place.sftp
+          ? await engine.syncCreateSftp(_hostId!, _remote.text.trim(), _pass.text, _name.text.trim())
+          : await engine.syncCreateLocalFolder(_path.text.trim(), _pass.text, _name.text.trim());
       // Shown by the screen above, so it survives the status flipping to configured.
       ref.read(pendingRecoveryProvider.notifier).set(result);
     } catch (e) {
@@ -156,12 +186,23 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
       _error = null;
     });
     try {
-      await ref.read(engineProvider).syncJoinLocalFolder(
-            _path.text.trim(),
-            passphrase: _useCode ? null : _pass.text,
-            recoveryCode: _useCode ? _code.text : null,
-            deviceName: _name.text.trim(),
-          );
+      final engine = ref.read(engineProvider);
+      if (_place == _Place.sftp) {
+        await engine.syncJoinSftp(
+          _hostId!,
+          _remote.text.trim(),
+          passphrase: _useCode ? null : _pass.text,
+          recoveryCode: _useCode ? _code.text : null,
+          deviceName: _name.text.trim(),
+        );
+      } else {
+        await engine.syncJoinLocalFolder(
+          _path.text.trim(),
+          passphrase: _useCode ? null : _pass.text,
+          recoveryCode: _useCode ? _code.text : null,
+          deviceName: _name.text.trim(),
+        );
+      }
       // The status stream flips the screen to the configured view.
     } catch (e) {
       setState(() => _error = e is String ? e : e.toString());
@@ -183,6 +224,7 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
             ...switch (_step) {
               _Step.place => _placeStep(t),
               _Step.folder => _folderStep(t),
+              _Step.server => _serverStep(t),
               _Step.create => _createStep(t),
               _Step.join => _joinStep(t),
             },
@@ -219,7 +261,7 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
           key: const Key('sync-option-sftp'),
           icon: Icons.dns_outlined,
           name: 'Your own server',
-          description: 'SFTP to a host you already have in Promptly. Zero new accounts. Coming next.',
+          description: 'SFTP to a host you already have in Promptly, with its saved password or key. Zero new accounts.',
           selected: _place == _Place.sftp,
           onTap: () => setState(() => _place = _Place.sftp),
         ),
@@ -288,6 +330,71 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
         ),
       ];
 
+  List<Widget> _serverStep(PromptlyTokens t) {
+    final hosts = ref
+        .watch(hostsProvider)
+        .where((h) =>
+            h.auth.kind == AuthKind.identity ||
+            (h.auth.kind == AuthKind.password && h.auth.passwordSecretId != null))
+        .toList();
+    return [
+      const _Heading('Which server?'),
+      const SizedBox(height: 8),
+      Text(
+        'A host you have saved with a password or a key. Promptly keeps the vault in a folder in that login\'s home over SFTP, and uses the saved login for every sync. Connect to it in the terminal once first, so its host key is trusted.',
+        style: TextStyle(color: t.muted, height: 1.45),
+      ),
+      const SizedBox(height: 16),
+      const _Label('Host'),
+      if (hosts.isEmpty)
+        Text(
+          'No saved host has a stored password or key yet. Add one on the Hosts tab, with "remember" ticked or a key picked.',
+          style: TextStyle(color: t.warning, fontSize: 13),
+        )
+      else
+        DropdownButtonFormField<String>(
+          key: const Key('sync-host'),
+          initialValue: _hostId,
+          hint: const Text('Pick a host'),
+          items: [
+            for (final h in hosts)
+              DropdownMenuItem(
+                value: h.id,
+                child: Text('${h.label}  ·  ${h.username}@${h.hostname}', style: monoStyle(context, size: 13)),
+              ),
+          ],
+          onChanged: (v) => setState(() => _hostId = v),
+        ),
+      const SizedBox(height: 12),
+      const _Label('Folder on the server'),
+      TextField(
+        key: const Key('sync-remote'),
+        controller: _remote,
+        style: monoStyle(context, size: 13),
+        decoration: const InputDecoration(hintText: 'Promptly Vault'),
+      ),
+      const SizedBox(height: 12),
+      const _Label('This device is called'),
+      TextField(
+        key: const Key('sync-device-name'),
+        controller: _name,
+        decoration: const InputDecoration(hintText: 'Work laptop'),
+      ),
+      const SizedBox(height: 16),
+      Row(
+        children: [
+          OutlinedButton(onPressed: _busy ? null : () => setState(() => _step = _Step.place), child: const Text('Back')),
+          const SizedBox(width: 8),
+          FilledButton(
+            key: const Key('sync-server-continue'),
+            onPressed: _busy || hosts.isEmpty ? null : _continueFromServer,
+            child: Text(_busy ? 'Connecting…' : 'Continue'),
+          ),
+        ],
+      ),
+    ];
+  }
+
   List<Widget> _createStep(PromptlyTokens t) => [
         _Heading('Choose a passphrase'),
         const SizedBox(height: 8),
@@ -309,7 +416,7 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
         const SizedBox(height: 16),
         Row(
           children: [
-            OutlinedButton(onPressed: _busy ? null : () => setState(() => _step = _Step.folder), child: const Text('Back')),
+            OutlinedButton(onPressed: _busy ? null : () => setState(() => _step = _place == _Place.sftp ? _Step.server : _Step.folder), child: const Text('Back')),
             const SizedBox(width: 8),
             FilledButton(
               key: const Key('sync-create'),
@@ -357,7 +464,7 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
         const SizedBox(height: 8),
         Row(
           children: [
-            OutlinedButton(onPressed: _busy ? null : () => setState(() => _step = _Step.folder), child: const Text('Back')),
+            OutlinedButton(onPressed: _busy ? null : () => setState(() => _step = _place == _Place.sftp ? _Step.server : _Step.folder), child: const Text('Back')),
             const SizedBox(width: 8),
             FilledButton(
               key: const Key('sync-join'),

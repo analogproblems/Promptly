@@ -108,6 +108,11 @@ abstract class Engine {
   String syncDefaultDeviceName();
   Future<rust_sync.SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName);
   Future<void> syncJoinLocalFolder(String path, {String? passphrase, String? recoveryCode, required String deviceName});
+  Future<bool> syncSftpFolderHasVault(String hostId, String remoteDir);
+  Future<rust_sync.SyncSetupResult> syncCreateSftp(
+      String hostId, String remoteDir, String passphrase, String deviceName);
+  Future<void> syncJoinSftp(String hostId, String remoteDir,
+      {String? passphrase, String? recoveryCode, required String deviceName});
   Future<rust_sync.SyncStatus> syncNow();
   void syncDisconnect();
   Future<void> syncRemoveDevice(String deviceRecordId);
@@ -294,6 +299,26 @@ class RustEngine implements Engine {
           {String? passphrase, String? recoveryCode, required String deviceName}) =>
       rust_sync.syncJoinLocalFolder(
           path: path, passphrase: passphrase, recoveryCode: recoveryCode, deviceName: deviceName);
+
+  @override
+  Future<bool> syncSftpFolderHasVault(String hostId, String remoteDir) =>
+      rust_sync.syncSftpFolderHasVault(hostId: hostId, remoteDir: remoteDir);
+
+  @override
+  Future<rust_sync.SyncSetupResult> syncCreateSftp(
+          String hostId, String remoteDir, String passphrase, String deviceName) =>
+      rust_sync.syncCreateSftp(
+          hostId: hostId, remoteDir: remoteDir, passphrase: passphrase, deviceName: deviceName);
+
+  @override
+  Future<void> syncJoinSftp(String hostId, String remoteDir,
+          {String? passphrase, String? recoveryCode, required String deviceName}) =>
+      rust_sync.syncJoinSftp(
+          hostId: hostId,
+          remoteDir: remoteDir,
+          passphrase: passphrase,
+          recoveryCode: recoveryCode,
+          deviceName: deviceName);
 
   @override
   Future<rust_sync.SyncStatus> syncNow() => rust_sync.syncNow();

@@ -282,6 +282,25 @@ class FakeEngine implements Engine {
   }
 
   @override
+  Future<bool> syncSftpFolderHasVault(String hostId, String remoteDir) async {
+    syncCalls.add('probe-sftp $hostId $remoteDir');
+    return foldersWithVaults.contains('$hostId:$remoteDir');
+  }
+
+  @override
+  Future<SyncSetupResult> syncCreateSftp(String hostId, String remoteDir, String passphrase, String deviceName) async {
+    syncCalls.add('create-sftp $hostId $remoteDir $deviceName');
+    _configured('test server · $remoteDir', deviceName);
+    return const SyncSetupResult(vaultId: 'vault-2', recoveryCode: 'AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH');
+  }
+
+  @override
+  Future<void> syncJoinSftp(String hostId, String remoteDir, {String? passphrase, String? recoveryCode, required String deviceName}) async {
+    syncCalls.add('join-sftp $hostId $remoteDir pass=$passphrase');
+    _configured('test server · $remoteDir', deviceName);
+  }
+
+  @override
   Future<SyncStatus> syncNow() async {
     syncCalls.add('sync-now');
     return sync;
@@ -312,9 +331,9 @@ Widget app([FakeEngine? engine]) => ProviderScope(
       child: const PromptlyApp(),
     );
 
-String hostJson(String id, String label, {String? group, String? color}) =>
+String hostJson(String id, String label, {String? group, String? color, String auth = '{"kind":"interactive"}'}) =>
     '{"id":"$id","label":"$label","hostname":"$label.example","port":22,"username":"ops",'
-    '"auth":{"kind":"interactive"},"group_id":${group == null ? 'null' : '"$group"'},"tags":[],'
+    '"auth":$auth,"group_id":${group == null ? 'null' : '"$group"'},"tags":[],'
     '"color":${color == null ? 'null' : '"$color"'},'
     '"icon":null,"notes":"","jump_host_id":null,"keepalive_seconds":30,"startup_command":null,"env":{},'
     '"persistent_session":false,"port_forwards":[],"last_connected_at":null,"favourite":false,"sync":"vault"}';
@@ -612,6 +631,40 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.syncCalls.last, 'join /shared/vault pass=right code=null');
     expect(find.byKey(const Key('sync-summary')), findsOneWidget, reason: 'joined: the status view is up');
+  });
+
+  testWidgets('a vault on a saved host goes through the server step', (tester) async {
+    final engine = FakeEngine();
+    engine.records['hosts'] = {
+      'h1': hostJson('h1', 'web-1', auth: '{"kind":"password","password_secret_id":"0192f3a0-0000-7000-8000-000000000002"}'),
+      'h2': hostJson('h2', 'nas'), // no stored login: must not be offered
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Set up'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sync-option-sftp')));
+    await tapVisible(tester, find.byKey(const Key('sync-continue')));
+    await tester.pumpAndSettle();
+    expect(find.text('Which server?'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('sync-host')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('nas'), findsNothing, reason: 'hosts without a stored login are left out');
+    await tester.tap(find.textContaining('web-1').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('sync-remote')), 'vaults/promptly');
+    await tapVisible(tester, find.byKey(const Key('sync-server-continue')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['probe-sftp h1 vaults/promptly']);
+    expect(find.text('Choose a passphrase'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('sync-passphrase')), 'correct horse battery');
+    await tester.enterText(find.byKey(const Key('sync-passphrase-confirm')), 'correct horse battery');
+    await tapVisible(tester, find.byKey(const Key('sync-create')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls.last, 'create-sftp h1 vaults/promptly test-box (Linux)');
+    expect(find.text('AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH'), findsOneWidget);
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

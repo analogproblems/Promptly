@@ -9,6 +9,7 @@ use promptly_vault::{KdfParams, RecoveryCode, Vault};
 use crate::frb_generated::StreamSink;
 use crate::sync_engine::{self, VaultConfig};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SyncBackendKind {
     LocalFolder,
     Sftp,
@@ -119,6 +120,7 @@ pub fn sync_create_local_folder(
         vault_id: vault.vault_id().to_string(),
         device_name,
         recovery_hint: Some(recovery.hint()),
+        host_id: None,
     };
     sync_engine::finish_setup(config, vault.dek(), &vault, true)?;
     Ok(SyncSetupResult {
@@ -155,6 +157,78 @@ pub fn sync_join_local_folder(
         vault_id: vault.vault_id().to_string(),
         device_name,
         recovery_hint: manifest.recovery_hint().map(str::to_string),
+        host_id: None,
+    };
+    sync_engine::finish_setup(config, vault.dek(), &vault, true)
+}
+
+/// Whether a folder on a saved host already holds a vault. Connects, so
+/// this takes a moment and can fail like any connection.
+pub fn sync_sftp_folder_has_vault(host_id: String, remote_dir: String) -> Result<bool, String> {
+    let backend = sync_engine::connect_sftp(&host_id, &remote_dir)?;
+    Ok(Vault::read_manifest(&*backend).is_ok())
+}
+
+/// Create a new vault in a folder on a saved host, over SFTP, and enrol
+/// this device. The host must have a stored password or key and a trusted
+/// host key.
+pub fn sync_create_sftp(
+    host_id: String,
+    remote_dir: String,
+    passphrase: String,
+    device_name: String,
+) -> Result<SyncSetupResult, String> {
+    if passphrase.chars().count() < 8 {
+        return Err("Use a passphrase of at least eight characters.".into());
+    }
+    let store = crate::api::store::store()?;
+    let backend = sync_engine::connect_sftp(&host_id, &remote_dir)?;
+    let (vault, recovery) = Vault::create(&*backend, store.device_id().clone(), &passphrase, kdf())
+        .map_err(|e| e.to_string())?;
+    let config = VaultConfig {
+        kind: "sftp".into(),
+        path: remote_dir,
+        vault_id: vault.vault_id().to_string(),
+        device_name,
+        recovery_hint: Some(recovery.hint()),
+        host_id: Some(host_id),
+    };
+    sync_engine::finish_setup(config, vault.dek(), &vault, true)?;
+    Ok(SyncSetupResult {
+        vault_id: vault.vault_id().to_string(),
+        recovery_code: recovery.as_str().to_string(),
+    })
+}
+
+/// Join a vault that already exists on a saved host.
+pub fn sync_join_sftp(
+    host_id: String,
+    remote_dir: String,
+    passphrase: Option<String>,
+    recovery_code: Option<String>,
+    device_name: String,
+) -> Result<(), String> {
+    let store = crate::api::store::store()?;
+    let backend = sync_engine::connect_sftp(&host_id, &remote_dir)?;
+    let device = store.device_id().clone();
+    let manifest = Vault::read_manifest(&*backend).map_err(|e| e.to_string())?;
+    let vault = match (passphrase, recovery_code) {
+        (Some(p), _) => Vault::open(&*backend, device, &p).map_err(|e| e.to_string())?,
+        (None, Some(code)) => {
+            let code = RecoveryCode::parse(&code).ok_or(
+                "That is not a recovery code: expect eight groups of four letters and digits.",
+            )?;
+            Vault::open_with_recovery(&*backend, device, &code).map_err(|e| e.to_string())?
+        }
+        (None, None) => return Err("A passphrase or a recovery code is needed.".into()),
+    };
+    let config = VaultConfig {
+        kind: "sftp".into(),
+        path: remote_dir,
+        vault_id: vault.vault_id().to_string(),
+        device_name,
+        recovery_hint: manifest.recovery_hint().map(str::to_string),
+        host_id: Some(host_id),
     };
     sync_engine::finish_setup(config, vault.dek(), &vault, true)
 }
@@ -198,7 +272,7 @@ pub fn sync_remove_device(device_record_id: String) -> Result<(), String> {
     };
     let backend = sync_engine::backend_for(&config)?;
     let vault = Vault::with_dek(
-        backend.as_ref(),
+        &*backend,
         store.device_id().clone(),
         config.vault_id.clone(),
         dek,

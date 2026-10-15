@@ -39,7 +39,7 @@ Done when: you have replaced your current terminal and SSH client on Linux for a
 Goal: the same hosts on all your devices, for free.
 
 - `promptly-vault`: data model, operation log, merge, snapshots, envelope encryption, manifest, enrolment. **Done.** The local store keeps the merged state with a timestamp per field, so it works the same with or without a backend.
-- Backends: local folder (**done**; also how Syncthing, Dropbox and the desktop sync clients work), SFTP, Google Drive, iCloud Drive (the last one lands when macOS does).
+- Backends: local folder (**done**; also how Syncthing, Dropbox and the desktop sync clients work), SFTP to a saved host (**done**), Google Drive, iCloud Drive (the last one lands when macOS does).
 - Sync setup screen, status line, device list, QR enrolment, recovery key. **Done** (the QR is shown on desktop; scanning comes with the phone builds).
 - `promptly-cli` with `inspect`, `export`, `import`, `sync`, `ssh-config`, `change-passphrase`. **Done.**
 - Import from `~/.ssh/config` and `known_hosts` on desktop.

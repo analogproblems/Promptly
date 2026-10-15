@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 184387922;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1949710119;
 
 // Section: executor
 
@@ -807,6 +807,47 @@ fn wire__crate__api__sync__sync_create_local_folder_impl(
         },
     )
 }
+fn wire__crate__api__sync__sync_create_sftp_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sync_create_sftp",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_host_id = <String>::sse_decode(&mut deserializer);
+            let api_remote_dir = <String>::sse_decode(&mut deserializer);
+            let api_passphrase = <String>::sse_decode(&mut deserializer);
+            let api_device_name = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::sync::sync_create_sftp(
+                        api_host_id,
+                        api_remote_dir,
+                        api_passphrase,
+                        api_device_name,
+                    )?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__sync__sync_default_device_name_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -974,6 +1015,49 @@ fn wire__crate__api__sync__sync_join_local_folder_impl(
         },
     )
 }
+fn wire__crate__api__sync__sync_join_sftp_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sync_join_sftp",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_host_id = <String>::sse_decode(&mut deserializer);
+            let api_remote_dir = <String>::sse_decode(&mut deserializer);
+            let api_passphrase = <Option<String>>::sse_decode(&mut deserializer);
+            let api_recovery_code = <Option<String>>::sse_decode(&mut deserializer);
+            let api_device_name = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::sync::sync_join_sftp(
+                        api_host_id,
+                        api_remote_dir,
+                        api_passphrase,
+                        api_recovery_code,
+                        api_device_name,
+                    )?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__sync__sync_now_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -1062,6 +1146,41 @@ fn wire__crate__api__sync__sync_remove_device_impl(
             move |context| {
                 transform_result_sse::<_, String>((move || {
                     let output_ok = crate::api::sync::sync_remove_device(api_device_record_id)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
+fn wire__crate__api__sync__sync_sftp_folder_has_vault_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sync_sftp_folder_has_vault",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_host_id = <String>::sse_decode(&mut deserializer);
+            let api_remote_dir = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok =
+                        crate::api::sync::sync_sftp_folder_has_vault(api_host_id, api_remote_dir)?;
                     std::result::Result::Ok(output_ok)
                 })())
             }
@@ -2508,13 +2627,21 @@ fn pde_ffi_dispatcher_primary_impl(
         24 => {
             wire__crate__api__sync__sync_create_local_folder_impl(port, ptr, rust_vec_len, data_len)
         }
-        27 => wire__crate__api__sync__sync_events_impl(port, ptr, rust_vec_len, data_len),
-        29 => {
+        25 => wire__crate__api__sync__sync_create_sftp_impl(port, ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__sync__sync_events_impl(port, ptr, rust_vec_len, data_len),
+        30 => {
             wire__crate__api__sync__sync_join_local_folder_impl(port, ptr, rust_vec_len, data_len)
         }
-        30 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__sync__sync_remove_device_impl(port, ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__terminal__terminal_events_impl(port, ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__sync__sync_join_sftp_impl(port, ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__sync__sync_remove_device_impl(port, ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__sync__sync_sftp_folder_has_vault_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        38 => wire__crate__api__terminal__terminal_events_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2550,30 +2677,30 @@ fn pde_ffi_dispatcher_sync_impl(
         20 => wire__crate__api__ssh__ssh_answer_secret_impl(ptr, rust_vec_len, data_len),
         21 => wire__crate__api__ssh__ssh_cancel_impl(ptr, rust_vec_len, data_len),
         22 => wire__crate__api__ssh__ssh_connect_begin_impl(ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__sync__sync_default_device_name_impl(ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__sync__sync_disconnect_impl(ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__sync__sync_folder_has_vault_impl(ptr, rust_vec_len, data_len),
-        31 => wire__crate__api__sync__sync_qr_payload_impl(ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__sync__sync_status_impl(ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__terminal__terminal_close_impl(ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
-        38 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
-        44 => {
+        26 => wire__crate__api__sync__sync_default_device_name_impl(ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__sync__sync_disconnect_impl(ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__sync__sync_folder_has_vault_impl(ptr, rust_vec_len, data_len),
+        33 => wire__crate__api__sync__sync_qr_payload_impl(ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__sync__sync_status_impl(ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__terminal__terminal_close_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
+        47 => {
             wire__crate__api__terminal__terminal_scroll_to_bottom_impl(ptr, rust_vec_len, data_len)
         }
-        45 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
-        47 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
-        48 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
+        49 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
+        54 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

@@ -14,12 +14,14 @@ pub mod connect;
 pub mod endpoint;
 pub mod hostkey;
 pub mod keys;
+pub mod sftp;
 pub mod transport;
 
 use std::sync::LazyLock;
 
 pub use connect::{
-    connect, AuthMethod, ConnectError, ConnectParams, ConnectStep, KeyboardPrompt, Prompter,
+    connect, connect_handle, AuthMethod, ConnectError, ConnectParams, ConnectStep, Handler,
+    KeyboardPrompt, Prompter,
 };
 pub use endpoint::{Endpoint, ParseError};
 pub use hostkey::{FileKnownHosts, HostKeyInfo, HostKeyStatus, KnownHosts};
@@ -27,6 +29,7 @@ pub use keys::{
     generate as generate_key, inspect as inspect_key, public_fingerprint, Generated, Inspected,
     KeyKind,
 };
+pub use sftp::{QuietPrompter, SftpBackend, SftpError};
 pub use transport::{SshReader, SshTransport};
 
 /// The runtime every SSH connection runs on. Two worker threads are plenty:

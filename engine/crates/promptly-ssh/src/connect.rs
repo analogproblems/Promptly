@@ -155,6 +155,35 @@ pub async fn connect(
     prompter: Arc<dyn Prompter>,
     known_hosts: Arc<dyn KnownHosts>,
 ) -> Result<(SshTransport, SshReader), ConnectError> {
+    let handle = connect_handle(&params, prompter.clone(), known_hosts).await?;
+
+    prompter.progress(ConnectStep::OpeningShell);
+    let channel = handle.channel_open_session().await?;
+    let (read_half, write_half) = channel.split();
+    write_half
+        .request_pty(
+            true,
+            &params.term,
+            u32::from(params.size.cols),
+            u32::from(params.size.rows),
+            0,
+            0,
+            &[],
+        )
+        .await?;
+    write_half.request_shell(true).await?;
+    prompter.progress(ConnectStep::Connected);
+
+    Ok(SshTransport::start(handle, read_half, write_half))
+}
+
+/// Resolve, connect, verify the host key and authenticate: everything up to
+/// an open session, for a shell or for SFTP.
+pub async fn connect_handle(
+    params: &ConnectParams,
+    prompter: Arc<dyn Prompter>,
+    known_hosts: Arc<dyn KnownHosts>,
+) -> Result<client::Handle<Handler>, ConnectError> {
     let host = params.endpoint.host.clone();
     let port = params.endpoint.port;
 
@@ -203,26 +232,8 @@ pub async fn connect(
     };
 
     prompter.progress(ConnectStep::Authenticating);
-    authenticate(&mut handle, &params, &prompter).await?;
-
-    prompter.progress(ConnectStep::OpeningShell);
-    let channel = handle.channel_open_session().await?;
-    let (read_half, write_half) = channel.split();
-    write_half
-        .request_pty(
-            true,
-            &params.term,
-            u32::from(params.size.cols),
-            u32::from(params.size.rows),
-            0,
-            0,
-            &[],
-        )
-        .await?;
-    write_half.request_shell(true).await?;
-    prompter.progress(ConnectStep::Connected);
-
-    Ok(SshTransport::start(handle, read_half, write_half))
+    authenticate(&mut handle, params, &prompter).await?;
+    Ok(handle)
 }
 
 fn friendly_io(e: &io::Error) -> String {

@@ -110,6 +110,15 @@ class RecordingEngine implements Engine {
   Future<void> syncJoinLocalFolder(String path, {String? passphrase, String? recoveryCode, required String deviceName}) =>
       throw UnimplementedError();
   @override
+  Future<bool> syncSftpFolderHasVault(String hostId, String remoteDir) async => false;
+  @override
+  Future<SyncSetupResult> syncCreateSftp(String hostId, String remoteDir, String passphrase, String deviceName) =>
+      throw UnimplementedError();
+  @override
+  Future<void> syncJoinSftp(String hostId, String remoteDir,
+          {String? passphrase, String? recoveryCode, required String deviceName}) =>
+      throw UnimplementedError();
+  @override
   Future<SyncStatus> syncNow() => throw UnimplementedError();
   @override
   void syncDisconnect() {}

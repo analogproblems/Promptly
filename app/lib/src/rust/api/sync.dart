@@ -8,6 +8,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `kdf`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`
 
 SyncStatus syncStatus() => RustLib.instance.api.crateApiSyncSyncStatus();
 
@@ -43,6 +44,46 @@ Future<void> syncJoinLocalFolder({
   required String deviceName,
 }) => RustLib.instance.api.crateApiSyncSyncJoinLocalFolder(
   path: path,
+  passphrase: passphrase,
+  recoveryCode: recoveryCode,
+  deviceName: deviceName,
+);
+
+/// Whether a folder on a saved host already holds a vault. Connects, so
+/// this takes a moment and can fail like any connection.
+Future<bool> syncSftpFolderHasVault({
+  required String hostId,
+  required String remoteDir,
+}) => RustLib.instance.api.crateApiSyncSyncSftpFolderHasVault(
+  hostId: hostId,
+  remoteDir: remoteDir,
+);
+
+/// Create a new vault in a folder on a saved host, over SFTP, and enrol
+/// this device. The host must have a stored password or key and a trusted
+/// host key.
+Future<SyncSetupResult> syncCreateSftp({
+  required String hostId,
+  required String remoteDir,
+  required String passphrase,
+  required String deviceName,
+}) => RustLib.instance.api.crateApiSyncSyncCreateSftp(
+  hostId: hostId,
+  remoteDir: remoteDir,
+  passphrase: passphrase,
+  deviceName: deviceName,
+);
+
+/// Join a vault that already exists on a saved host.
+Future<void> syncJoinSftp({
+  required String hostId,
+  required String remoteDir,
+  String? passphrase,
+  String? recoveryCode,
+  required String deviceName,
+}) => RustLib.instance.api.crateApiSyncSyncJoinSftp(
+  hostId: hostId,
+  remoteDir: remoteDir,
   passphrase: passphrase,
   recoveryCode: recoveryCode,
   deviceName: deviceName,

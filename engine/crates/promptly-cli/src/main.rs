@@ -70,7 +70,14 @@ enum Command {
     ChangePassphrase(VaultArgs),
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("error: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<()> {
     match Cli::parse().command {
         Command::Version => println!("promptly engine {}", env!("CARGO_PKG_VERSION")),
         Command::Parse { endpoint } => match promptly_ssh::Endpoint::parse(&endpoint) {

@@ -9,9 +9,14 @@ use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
+use promptly_ssh::{
+    AuthMethod, ConnectError, ConnectParams, Endpoint, FileKnownHosts, QuietPrompter, SftpBackend,
+    SftpError,
+};
 use promptly_store::{Collection, SecretStore, Store};
+use promptly_term::TermSize;
 use promptly_vault::backend::LocalFolder;
-use promptly_vault::model::Device;
+use promptly_vault::model::{Auth, Device, Host, Identity};
 use promptly_vault::{crypto, Backend, Dek, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +43,9 @@ pub struct VaultConfig {
     pub device_name: String,
     #[serde(default)]
     pub recovery_hint: Option<String>,
+    /// For SFTP: the saved host the vault lives on.
+    #[serde(default)]
+    pub host_id: Option<String>,
 }
 
 impl VaultConfig {
@@ -108,10 +116,131 @@ pub fn dek() -> Result<Dek, String> {
     Dek::from_slice(&raw).ok_or_else(|| "the vault key on this device is not valid".to_string())
 }
 
-pub fn backend_for(config: &VaultConfig) -> Result<Box<dyn Backend>, String> {
+/// One SFTP connection is kept between runs and dropped after a failure,
+/// so the next run reconnects.
+static SFTP_CACHE: Mutex<Option<(String, Arc<SftpBackend>)>> = Mutex::new(None);
+
+pub fn backend_for(config: &VaultConfig) -> Result<Arc<dyn Backend>, String> {
     match config.kind() {
-        SyncBackendKind::LocalFolder => Ok(Box::new(LocalFolder::new(&config.path))),
-        SyncBackendKind::Sftp => Err("SFTP sync is not available yet".into()),
+        SyncBackendKind::LocalFolder => Ok(Arc::new(LocalFolder::new(&config.path))),
+        SyncBackendKind::Sftp => {
+            let host_id = config.host_id.clone().ok_or("the SFTP setup has no host")?;
+            Ok(connect_sftp(&host_id, &config.path)?)
+        }
+    }
+}
+
+pub fn forget_sftp() {
+    *SFTP_CACHE.lock().unwrap() = None;
+}
+
+/// The saved host as connection parameters, using its stored password or
+/// key. Unattended, so anything that would need a prompt is an error that
+/// says what to do.
+pub fn sftp_params(store: &Store, host_id: &str) -> Result<(ConnectParams, String), String> {
+    let record = store
+        .get(Collection::Hosts, host_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("that host is no longer saved")?;
+    let host: Host = serde_json::from_str(&record.json).map_err(|e| e.to_string())?;
+    let auth = match &host.auth {
+        Auth::Identity { identity_id } => {
+            let identity = store
+                .get(Collection::Identities, &identity_id.to_string())
+                .map_err(|e| e.to_string())?
+                .and_then(|r| serde_json::from_str::<Identity>(&r.json).ok())
+                .ok_or_else(|| format!("the key for {} is missing", host.label))?;
+            let secret_id = identity.private_key_secret_id.ok_or_else(|| {
+                format!(
+                    "the key for {} has no private half on this device",
+                    host.label
+                )
+            })?;
+            let private_key = secrets()
+                .get(&secret_id.to_string())
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("the key for {} is missing on this device", host.label))?;
+            AuthMethod::Key {
+                private_key: String::from_utf8_lossy(&private_key).into_owned(),
+                passphrase: None,
+            }
+        }
+        Auth::Password { password_secret_id } => {
+            let password = secrets()
+                .get(&password_secret_id.to_string())
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("the saved password for {} is missing", host.label))?;
+            AuthMethod::Password {
+                password: Some(String::from_utf8_lossy(&password).into_owned()),
+            }
+        }
+        Auth::Agent | Auth::Interactive => {
+            return Err(format!(
+                "Sync needs a stored login: edit {} and save a password or pick a key.",
+                host.label
+            ))
+        }
+    };
+    let endpoint = Endpoint {
+        user: host.username.clone(),
+        host: host.hostname.clone(),
+        port: host.port,
+    };
+    let mut params = ConnectParams::new(endpoint, auth, TermSize::default());
+    if host.keepalive_seconds > 0 {
+        params.keepalive = Duration::from_secs(u64::from(host.keepalive_seconds));
+    }
+    Ok((params, host.label))
+}
+
+/// Connect to the saved host over SFTP, reusing a live connection.
+pub fn connect_sftp(host_id: &str, remote_dir: &str) -> Result<Arc<SftpBackend>, String> {
+    let key = format!("{host_id}\n{remote_dir}");
+    if let Some((k, b)) = SFTP_CACHE.lock().unwrap().as_ref() {
+        if *k == key {
+            return Ok(b.clone());
+        }
+    }
+    let store = store()?;
+    let (params, label) = sftp_params(&store, host_id)?;
+    let known_hosts = Arc::new(FileKnownHosts::default_paths(
+        &crate::api::engine::data_dir(),
+    ));
+    let backend = SftpBackend::connect_blocking(
+        &params,
+        Arc::new(QuietPrompter),
+        known_hosts,
+        remote_dir,
+    )
+    .map_err(|e| match e {
+        SftpError::Connect(ConnectError::HostKeyRejected) => {
+            format!("Connect to {label} in the terminal once first, so its host key is trusted.")
+        }
+        SftpError::Connect(ConnectError::Cancelled)
+        | SftpError::Connect(ConnectError::AuthFailed(_)) => format!(
+            "The saved login for {label} did not work. Check the password or key on the host."
+        ),
+        other => format!("{label}: {other}"),
+    })?;
+    let backend = Arc::new(backend);
+    *SFTP_CACHE.lock().unwrap() = Some((key, backend.clone()));
+    Ok(backend)
+}
+
+/// A label for where the vault lives, for the status line.
+pub fn location_for(config: &VaultConfig) -> String {
+    match config.kind() {
+        SyncBackendKind::LocalFolder => config.path.clone(),
+        SyncBackendKind::Sftp => {
+            let label = config
+                .host_id
+                .as_ref()
+                .and_then(|id| store().ok()?.get(Collection::Hosts, id).ok().flatten())
+                .and_then(|r| serde_json::from_str::<Host>(&r.json).ok())
+                .map(|h| h.label)
+                .unwrap_or_else(|| "a server".into());
+            format!("{label} · {}", config.path)
+        }
     }
 }
 
@@ -163,7 +292,13 @@ pub fn finish_setup(
             continue;
         }
         if let Some(value) = secrets().get(&id).map_err(|e| e.to_string())? {
-            put_secret_record(&store, dek, &id, "private_key", &value)?;
+            // The files do not record what they hold; keys announce themselves.
+            let kind = if value.starts_with(b"-----BEGIN") || value.starts_with(b"PuTTY-User-Key") {
+                "private_key"
+            } else {
+                "password"
+            };
+            put_secret_record(&store, dek, &id, kind, &value)?;
         }
     }
     {
@@ -330,7 +465,7 @@ pub fn sync_once() -> Result<(), String> {
         let dek = dek()?;
         let backend = backend_for(&config)?;
         let vault = Vault::with_dek(
-            backend.as_ref(),
+            &*backend,
             store.device_id().clone(),
             config.vault_id.clone(),
             dek.clone(),
@@ -350,7 +485,10 @@ pub fn sync_once() -> Result<(), String> {
             st.warnings.extend(warnings.iter().cloned());
             st.changes = st.changes.wrapping_add(*applied as u32);
         }
-        Err(e) => st.last_error = Some(e.clone()),
+        Err(e) => {
+            st.last_error = Some(e.clone());
+            forget_sftp();
+        }
     }
     drop(st);
     emit();
@@ -427,6 +565,7 @@ pub fn disconnect() -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     store.reset_sync_state().map_err(|e| e.to_string())?;
     secrets().delete(DEK_SECRET_ID).map_err(|e| e.to_string())?;
+    forget_sftp();
     // The loop notices the missing config on its next wake.
     if let Some(tx) = ENGINE.wake.lock().unwrap().as_ref() {
         let _ = tx.send(Wake::Now);
@@ -480,24 +619,29 @@ pub fn status() -> Result<SyncStatus, String> {
             .then(a.name.cmp(&b.name))
     });
     let vault_bytes = match &config {
-        Some(c) => backend_for(c)
-            .ok()
-            .and_then(|b| {
-                let v = Vault::with_dek(
-                    b.as_ref(),
-                    store.device_id().clone(),
-                    c.vault_id.clone(),
-                    Dek([0; 32]),
-                );
-                v.total_bytes().ok()
-            })
-            .unwrap_or(0),
-        None => 0,
+        // Only a cheap listing: a folder on disk, or an SFTP connection already open.
+        Some(c)
+            if c.kind() == SyncBackendKind::LocalFolder || SFTP_CACHE.lock().unwrap().is_some() =>
+        {
+            backend_for(c)
+                .ok()
+                .and_then(|b| {
+                    let v = Vault::with_dek(
+                        &*b,
+                        store.device_id().clone(),
+                        c.vault_id.clone(),
+                        Dek([0; 32]),
+                    );
+                    v.total_bytes().ok()
+                })
+                .unwrap_or(0)
+        }
+        _ => 0,
     };
     Ok(SyncStatus {
         configured: config.is_some(),
         kind: config.as_ref().map(|c| c.kind()),
-        location: config.as_ref().map(|c| c.path.clone()),
+        location: config.as_ref().map(location_for),
         vault_id: config.as_ref().map(|c| c.vault_id.clone()),
         device_id: this,
         device_name: config

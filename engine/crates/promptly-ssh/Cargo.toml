@@ -12,8 +12,13 @@ promptly-term = { workspace = true }
 promptly-session = { workspace = true }
 # ring rather than aws-lc: pure-ish Rust, cross-compiles to Android and Windows without cmake.
 russh = { version = "0.63.1", default-features = false, features = ["flate2", "ring", "rsa"] }
+russh-sftp = "3"
+promptly-vault = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "time", "macros"] }
 rand = "0.10"
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
