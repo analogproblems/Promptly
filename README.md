@@ -6,14 +6,39 @@ Promptly is a terminal emulator and SSH client for phone, tablet and desktop. It
 
 Everything you set up in Promptly lives in an encrypted **vault**: a small folder of files that Promptly keeps wherever you already keep files. iCloud Drive, Google Drive, Dropbox, OneDrive, a WebDAV share, an S3 bucket, or an SSH server you already own. Promptly runs no servers, needs no account, and has nothing to charge you for every month.
 
+## Keyboard shortcuts on desktop
+
+| Keys | What |
+|---|---|
+| Ctrl+Shift+P | Command palette: hosts, snippets, themes, every action |
+| Ctrl+Shift+T / Ctrl+Shift+W | New tab / close pane (the tab closes with its last pane) |
+| Ctrl+Tab / Ctrl+Shift+Tab, Alt+1…9 | Next, previous, or a particular tab |
+| Ctrl+Shift+D / Ctrl+Shift+E | Split the pane right / down |
+| Alt+Arrows | Move between panes |
+| Ctrl+Shift+B | Hosts panel, for dragging hosts onto panes |
+| Ctrl+Shift+F | Find in the session; Enter walks up, Shift+Enter down |
+| Ctrl+Shift+C / Ctrl+Shift+V | Copy / paste |
+| Ctrl+= / Ctrl+- / Ctrl+0 | Bigger, smaller, normal text |
+| Ctrl+click | Open a link in the output |
+
+Plain Ctrl+D, Ctrl+W, Ctrl+T, Ctrl+B and Ctrl+K go to the program in the terminal, as they should.
+
 ## Status
 
-**Milestone 3 under way: power.** Search the screen and scrollback with Ctrl+Shift+F: every match lights up, Enter walks through them, and the one you are on is selected and ready to copy. Links in the output, whether a program marked them or just printed a URL, are underlined; Ctrl+click opens one, right-click copies it. Snippets save the commands you type all the time; write `{{name}}` for the parts that change and Promptly asks for them when it runs. Run one in the session you are in, from the drawer in the session bar, or on a dozen hosts at once and read what each printed. Hosts can connect through a jump host (or a chain of them), each with its own login. Port forwards are saved on the host: local ones open a port on your device, remote ones a port on the server, and a SOCKS proxy lets any program pick its destination through the server. They start with the session when you say so and switch on and off from the session bar. A persistent session attaches to tmux on the server, so the work survives a dropped connection or a phone going to sleep. Agent forwarding, a startup command and environment variables are per host too, and the `~/.ssh/config` import brings all of that in.
+**Milestone 3 under way: power.** On a desktop-sized window the Sessions tab becomes a workspace: tabs across the top, panes split right or down, a hosts panel to drag hosts from, a menu bar, and a command palette on Ctrl+Shift+P that connects to a host, runs a snippet or switches the theme from a few typed letters. Search the screen and scrollback with Ctrl+Shift+F: every match lights up, Enter walks through them, and the one you are on is selected and ready to copy. Links in the output, whether a program marked them or just printed a URL, are underlined; Ctrl+click opens one, right-click copies it. Snippets save the commands you type all the time; write `{{name}}` for the parts that change and Promptly asks for them when it runs. Run one in the session you are in, from the drawer in the session bar, or on a dozen hosts at once and read what each printed. Hosts can connect through a jump host (or a chain of them), each with its own login. Port forwards are saved on the host: local ones open a port on your device, remote ones a port on the server, and a SOCKS proxy lets any program pick its destination through the server. They start with the session when you say so and switch on and off from the session bar. A persistent session attaches to tmux on the server, so the work survives a dropped connection or a phone going to sleep. Agent forwarding, a startup command and environment variables are per host too, and the `~/.ssh/config` import brings all of that in.
 
 **Milestone 2 built: the vault.** Set up sync from Settings: pick a folder (one that Syncthing, Dropbox, iCloud Drive or any sync client mirrors), choose a passphrase, write down the recovery code. Every other device joins with the passphrase and gets the same hosts, keys and snippets, encrypted end to end, with nothing but files on storage you already own. A host added on one machine shows up on the other within half a minute. Or keep the vault on a server you already have: pick a saved host and a folder, and Promptly syncs over SFTP with that host's stored login. The `promptly` command-line tool reads the same vault: inspect, export to JSON, import, sync, and write an OpenSSH config. Going the other way, Settings imports the hosts in your `~/.ssh/config` along with the keys they name, and a host can log in with the keys in your SSH agent. A server trusted on one device is trusted on all of them.
 
 **Milestone 1 built, now in daily use on Linux.** Save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Select text with the mouse and copy it with Ctrl+Shift+C or the right-click menu. The Sessions tab shows a live thumbnail of every open session. A dropped connection comes back by itself, with the screen intact. The milestone is done when it has replaced the old terminal for a week; the touch gestures wait for the Android build. Linux comes first, then Windows, Android, macOS and iOS.
 
+<p>
+  <img src="docs/screenshots/m3-desktop-panes.png" alt="The desktop workspace: a tab with two panes and the hosts panel" width="640">
+  <img src="docs/screenshots/m3-desktop-drag.png" alt="Dragging a host from the panel onto an empty pane" width="640">
+</p>
+<p>
+  <img src="docs/screenshots/m3-command-palette.png" alt="The command palette filtering to a terminal theme" width="640">
+  <img src="docs/screenshots/m3-menu-bar.png" alt="The File menu with its shortcuts" width="640">
+</p>
 <p>
   <img src="docs/screenshots/m3-search-matches.png" alt="Searching the scrollback: every match highlighted, the current one selected" width="640">
   <img src="docs/screenshots/m3-link-menu.png" alt="Right-clicking a link in the output: open it or copy it" width="640">

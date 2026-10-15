@@ -7,7 +7,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/app.dart';
 import 'package:promptly/core/engine/engine.dart';
+import 'package:promptly/features/sessions/session_body.dart';
 import 'package:promptly/features/sessions/session_thumbnail.dart';
+import 'package:promptly/features/workspace/workspace.dart';
+import 'package:promptly/features/workspace/workspace_screen.dart';
 
 /// A stand-in for the Rust engine so widget tests need no native library.
 /// Records and secrets live in maps so the hosts and keys screens work.
@@ -419,6 +422,31 @@ String hostJson(String id, String label, {String? group, String? color, String a
     '"color":${color == null ? 'null' : '"$color"'},'
     '"icon":null,"notes":"","jump_host_id":null,"keepalive_seconds":30,"startup_command":null,"env":{},'
     '"persistent_session":false,"port_forwards":[],"last_connected_at":null,"favourite":false,"sync":"vault"}';
+
+/// A desktop-sized window, so the Sessions tab shows the workspace and the
+/// menu bar appears. Reset after the test.
+void desktopWindow(WidgetTester tester) {
+  tester.view.physicalSize = const Size(1400, 900);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(() {
+    tester.view.resetPhysicalSize();
+    tester.view.resetDevicePixelRatio();
+  });
+}
+
+Future<void> chord(WidgetTester tester, LogicalKeyboardKey key, {bool control = true, bool shift = true, bool alt = false}) async {
+  if (control) await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+  if (shift) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+  if (alt) await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+  await tester.sendKeyEvent(key);
+  if (alt) await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+  if (shift) await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+  if (control) await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+  await tester.pumpAndSettle();
+}
+
+WorkspaceState workspaceOf(WidgetTester tester) =>
+    ProviderScope.containerOf(tester.element(find.byType(WorkspaceScreen))).read(workspaceProvider);
 
 String snippetJson(String id, String label, String command, {String variables = '[]'}) =>
     '{"id":"$id","label":"$label","command":"$command","tags":[],"variables":$variables}';
@@ -1006,6 +1034,108 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('search-field')), findsNothing);
     expect(engine.searchCalls.last, 'search null', reason: 'closing drops the highlights');
+  });
+
+  testWidgets('on a desktop window sessions open in tabs and panes, and an empty pane connects a host', (tester) async {
+    desktopWindow(tester);
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1'), 'h2': hostJson('h2', 'web-2')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.text('File'), findsOneWidget, reason: 'the menu bar is there on desktop');
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(find.byType(WorkspaceScreen), findsOneWidget);
+    expect(find.byType(SessionBody), findsOneWidget);
+    expect(find.byTooltip('Close tab'), findsOneWidget);
+    expect(find.text('deploy@web-1: ~'), findsWidgets, reason: 'the pane and the tab both show the title');
+
+    await chord(tester, LogicalKeyboardKey.keyD);
+    expect(find.text('Drop a host here'), findsOneWidget, reason: 'Ctrl+Shift+D splits off an empty pane');
+    expect(workspaceOf(tester).currentTab!.leaves.length, 2);
+    await tester.tap(find.byKey(const Key('pane-host-h2')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(engine.requests.length, 2);
+    expect(find.byType(SessionBody), findsNWidgets(2));
+    expect(find.text('Drop a host here'), findsNothing);
+
+    await chord(tester, LogicalKeyboardKey.keyW);
+    expect(find.byType(SessionBody), findsOneWidget, reason: 'Ctrl+Shift+W closes the focused pane');
+    expect(workspaceOf(tester).currentTab!.leaves.length, 1);
+  });
+
+  testWidgets('tabs open, cycle and close with the keyboard', (tester) async {
+    desktopWindow(tester);
+    final engine = FakeEngine();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sessions').first);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Close tab'), findsOneWidget);
+    await chord(tester, LogicalKeyboardKey.keyT);
+    expect(find.byTooltip('Close tab'), findsNWidgets(2));
+    expect(workspaceOf(tester).current, 1);
+    await chord(tester, LogicalKeyboardKey.tab, shift: false);
+    expect(workspaceOf(tester).current, 0, reason: 'Ctrl+Tab wraps round');
+    await chord(tester, LogicalKeyboardKey.digit2, control: false, shift: false, alt: true);
+    expect(workspaceOf(tester).current, 1, reason: 'Alt+2 picks the second tab');
+    await tester.tap(find.byTooltip('Close tab').last);
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Close tab'), findsOneWidget);
+    expect(find.text('Drop a host here'), findsOneWidget, reason: 'the last tab is never removed, only emptied');
+  });
+
+  testWidgets('the command palette connects to a host and switches the terminal theme', (tester) async {
+    desktopWindow(tester);
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await chord(tester, LogicalKeyboardKey.keyP);
+    expect(find.byKey(const Key('palette-field')), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('palette-field')), 'web');
+    await tester.pumpAndSettle();
+    expect(find.text('Connect to web-1'), findsOneWidget);
+    expect(find.text('New tab'), findsNothing, reason: 'filtered out');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(engine.requests.length, 1);
+    expect(find.byKey(const Key('palette-field')), findsNothing);
+
+    await chord(tester, LogicalKeyboardKey.keyP);
+    await tester.enterText(find.byKey(const Key('palette-field')), 'theme drac');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('palette-theme-dracula')));
+    await tester.pumpAndSettle();
+    expect(engine.settings['terminal_theme'], '"dracula"');
+  });
+
+  testWidgets('a host dragged from the hosts panel onto an empty pane connects there', (tester) async {
+    desktopWindow(tester);
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sessions').first);
+    await tester.pumpAndSettle();
+    await chord(tester, LogicalKeyboardKey.keyB);
+    expect(find.byKey(const Key('panel-host-h1')), findsOneWidget, reason: 'Ctrl+Shift+B shows the hosts panel');
+    final from = tester.getCenter(find.byKey(const Key('panel-host-h1')));
+    final to = tester.getCenter(find.text('Drop a host here'));
+    final gesture = await tester.startGesture(from);
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.moveTo(from + const Offset(40, 0));
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.moveTo(to);
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(engine.requests.length, 1);
+    expect(find.byType(SessionBody), findsOneWidget);
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

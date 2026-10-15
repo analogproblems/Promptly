@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/engine/engine.dart' show TerminalSelectKind;
+import '../workspace/app_shortcuts.dart';
 import 'key_mapper.dart';
 import 'terminal_controller.dart';
 import 'terminal_grid.dart';
@@ -75,6 +76,8 @@ class _TerminalViewState extends State<TerminalView> {
       widget.controller.addListener(_onController);
       widget.controller.start();
     }
+    // A pane that just became the focused one takes the keyboard.
+    if (widget.autofocus && !old.autofocus) _focus.requestFocus();
   }
 
   @override
@@ -122,6 +125,8 @@ class _TerminalViewState extends State<TerminalView> {
     final shift = hw.isShiftPressed;
     final meta = hw.isMetaPressed;
     if (event is KeyUpEvent) return KeyEventResult.ignored;
+    // The window's own shortcuts (tabs, panes, the palette) pass through.
+    if (AppShortcuts.isReserved(event)) return KeyEventResult.ignored;
 
     // App shortcuts first.
     final key = event.logicalKey;

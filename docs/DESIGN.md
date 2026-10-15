@@ -339,7 +339,7 @@ The accent is a phosphor green nod to terminal heritage, desaturated enough not 
 
 ### 7.4 Desktop
 
-A sidebar on the left (hosts, groups, snippets, keys, collapsible), tabs across the top, panes split by Cmd or Ctrl+D (vertical) and Shift+D (horizontal). Command palette on Cmd or Ctrl+K. Dragging a host onto a pane connects it there. A thin status bar shows the active host, latency and the sync state. Standard menus with standard shortcuts; nothing custom to learn.
+A hosts panel on the left (toggled with Ctrl+Shift+B), tabs across the top, panes split by Ctrl+Shift+D (right) and Ctrl+Shift+E (down). Command palette on Ctrl+Shift+P. Dragging a host onto a pane connects it there. Standard menus with the shortcuts shown beside each item; nothing custom to learn. The shortcuts carry Shift or Alt on purpose: plain Ctrl+D, Ctrl+W, Ctrl+T, Ctrl+B and Ctrl+K mean something to a shell or to tmux and stay theirs. (Decided in M3; the original draft said Ctrl+D and Ctrl+K.)
 
 ### 7.5 Micro-interactions
 

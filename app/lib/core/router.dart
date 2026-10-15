@@ -5,8 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../features/hosts/host_editor_screen.dart';
 import '../features/hosts/hosts_screen.dart';
 import '../features/keys/keys_screen.dart';
-import '../features/sessions/session_screen.dart';
-import '../features/sessions/sessions_screen.dart';
+import '../features/sessions/sessions_root.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/settings/themes_screen.dart';
 import '../features/sync/sync_screen.dart';
@@ -41,12 +40,12 @@ final routerProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(routes: [
             GoRoute(
               path: '/sessions',
-              builder: (_, _) => const SessionsScreen(),
+              builder: (_, _) => const SessionsRoot(),
               routes: [
                 GoRoute(
                   path: ':id',
                   builder: (_, state) =>
-                      SessionScreen(id: int.tryParse(state.pathParameters['id'] ?? '') ?? -1),
+                      SessionsRoot(sessionId: int.tryParse(state.pathParameters['id'] ?? '') ?? -1),
                 ),
               ],
             ),
