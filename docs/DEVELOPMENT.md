@@ -151,6 +151,16 @@ text from the system keyboard and shows a bar of the keys phones lack
 `aarch64-apple-ios` and `aarch64-apple-ios-sim`. The podspecs in
 `app/rust_builder/{ios,macos}` link the static library `libpromptly_api.a`.
 
+## The docs site
+
+`python3 tools/site/build.py site` turns the README, the files in `docs/`
+and the changelog into a small static site in `site/` (one stylesheet, no
+scripts; needs `pip install markdown`). The Docs site workflow publishes
+it with GitHub Pages on every push to `main` that touches the docs, once
+Pages is switched on in the repository settings (Source: GitHub Actions).
+The privacy policy lives at `/privacy/`, the address the app's About page
+and the Play listing point at.
+
 ## Releasing
 
 1. Write the release's section in `CHANGELOG.md` (`## 1.0.1`, plain words).

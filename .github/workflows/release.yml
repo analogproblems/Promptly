@@ -84,9 +84,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-      - uses: android-actions/setup-android@v3
       - name: Android NDK and platform
-        run: sdkmanager "ndk;28.2.13676358" "platforms;android-36" "build-tools;36.0.0"
+        # The runner image carries the SDK; add the versions Flutter's Gradle
+        # plugin asks for. cargokit builds the Rust engine with this NDK.
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "ndk;28.2.13676358" "platforms;android-36" "build-tools;36.0.0" > /dev/null
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android

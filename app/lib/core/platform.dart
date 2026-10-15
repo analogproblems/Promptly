@@ -7,5 +7,9 @@ import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 bool? touchPlatformOverride;
 
 /// Phones and tablets: a soft keyboard and touch, with no Ctrl, Alt or
-/// Escape of their own.
-bool get isTouchPlatform => touchPlatformOverride ?? (!kIsWeb && (Platform.isAndroid || Platform.isIOS));
+/// Escape of their own. `PROMPTLY_TOUCH=1` in the environment makes a
+/// desktop build behave like one, for trying the phone layout and taking
+/// its screenshots.
+bool get isTouchPlatform =>
+    touchPlatformOverride ??
+    (!kIsWeb && (Platform.isAndroid || Platform.isIOS || Platform.environment['PROMPTLY_TOUCH'] == '1'));

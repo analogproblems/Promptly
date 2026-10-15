@@ -330,30 +330,46 @@ void main() {
     );
     await tester.pump();
     expect(tester.testTextInput.hasAnyClients, isTrue, reason: 'focus attaches the IME');
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
 
-    void ime(String text) => tester.testTextInput.updateEditingValue(
-      TextEditingValue(
-        text: text,
-        selection: TextSelection.collapsed(offset: text.length),
+    // Deltas, as the platform sends them: what was inserted or deleted.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' ',
+        textInserted: 'ls',
+        insertionOffset: 1,
+        selection: TextSelection.collapsed(offset: 3),
+        composing: TextRange.empty,
       ),
-    );
-
-    ime(' ls');
-    await tester.pump();
+    ]);
     expect(engine.written.last, 'ls'.codeUnits);
     await tester.testTextInput.receiveAction(TextInputAction.newline);
     await tester.pump();
     expect(engine.written.last, [13]);
 
-    // Backspace in the IME erases what was typed.
-    ime(' ab');
-    await tester.pump();
-    expect(engine.written.last, 'ab'.codeUnits);
-    // The buffer is reset to its one-space sentinel after each commit, so a
-    // backspace empties it, and that is how it reaches the program.
-    ime('');
-    await tester.pump();
+    // Backspace is a deletion delta, whatever the buffer holds.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaDeletion(
+        oldText: ' ls',
+        deletedRange: TextRange(start: 2, end: 3),
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange.empty,
+      ),
+    ]);
     expect(engine.written.last, [0x7f]);
+
+    // A key that the platform applied to a buffer we had already reset
+    // still arrives as its own insertion: nothing is doubled or lost.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' lx',
+        textInserted: 's',
+        insertionOffset: 3,
+        selection: TextSelection.collapsed(offset: 4),
+        composing: TextRange.empty,
+      ),
+    ]);
+    expect(engine.written.last, 's'.codeUnits);
 
     // A hardware key for a printable character is left to the IME (no double input).
     final before = engine.written.length;
@@ -364,9 +380,27 @@ void main() {
     await tester.pump();
     expect(engine.written.last, [0x1b, 0x5b, 0x41], reason: 'keys the IME lacks still come from key events');
 
-    controller.setSticky(ctrl: true);
-    ime(' c');
+    // Whole-value updates (a platform without deltas, or a test) work too.
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(text: ' lxs', selection: TextSelection.collapsed(offset: 4)),
+    );
     await tester.pump();
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(text: ' lxsa', selection: TextSelection.collapsed(offset: 5)),
+    );
+    await tester.pump();
+    expect(engine.written.last, 'a'.codeUnits);
+
+    controller.setSticky(ctrl: true);
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' lxsa',
+        textInserted: 'c',
+        insertionOffset: 5,
+        selection: TextSelection.collapsed(offset: 6),
+        composing: TextRange.empty,
+      ),
+    ]);
     expect(engine.written.last, [3]);
     expect(controller.stickyCtrl, isFalse, reason: 'sticky modifiers are one-shot');
     controller.dispose();

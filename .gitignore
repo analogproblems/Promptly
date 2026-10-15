@@ -34,3 +34,6 @@ app/rust_builder/**/target/
 
 # Release packages made locally
 dist/
+
+# The docs site, built by tools/site/build.py
+site/

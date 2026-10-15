@@ -57,13 +57,18 @@ class TerminalView extends StatefulWidget {
 /// the pointer is dragged past an edge; the engine clamps it.
 typedef _Cell = ({int col, int line, bool right});
 
-class _TerminalViewState extends State<TerminalView> with TextInputClient {
+class _TerminalViewState extends State<TerminalView> with TextInputClient, DeltaTextInputClient {
   TextInputConnection? _ime;
 
   /// The IME's little buffer starts with one space, so that a backspace on
-  /// an otherwise empty buffer still reaches us as a change.
+  /// an otherwise empty buffer still reaches us as a change. The platform
+  /// reports edits as deltas (what was inserted or deleted), so a key that
+  /// lands while the buffer is being reset is still read right.
   static const _imeBase = TextEditingValue(text: ' ', selection: TextSelection.collapsed(offset: 1));
   TextEditingValue _imeValue = _imeBase;
+
+  /// Trim the buffer once it holds this much, between compositions.
+  static const _imeBufferLimit = 64;
 
   bool get _useIme => widget.imeInput ?? isTouchPlatform;
 
@@ -151,6 +156,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient {
         inputAction: TextInputAction.newline,
         autocorrect: false,
         enableSuggestions: false,
+        enableDeltaModel: true,
         keyboardAppearance: widget.controller.grid.defaultBg < 0x808080 ? Brightness.dark : Brightness.light,
       ),
     )..setEditingState(_imeValue);
@@ -178,26 +184,57 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient {
   AutofillScope? get currentAutofillScope => null;
 
   @override
+  void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
+    for (final d in deltas) {
+      switch (d) {
+        case TextEditingDeltaInsertion(:final textInserted):
+          _writeText(textInserted.replaceAll('\n', '\r'));
+        case TextEditingDeltaDeletion(:final deletedRange):
+          _erase(deletedRange.end - deletedRange.start);
+        case TextEditingDeltaReplacement(:final replacedRange, :final replacementText):
+          _erase(replacedRange.end - replacedRange.start);
+          _writeText(replacementText.replaceAll('\n', '\r'));
+        case TextEditingDeltaNonTextUpdate():
+          break;
+      }
+      // Follow the platform's view of the buffer. A delta that refers to an
+      // older buffer than ours (one we had just reset) is applied to its
+      // own old text instead, which is what the platform holds now.
+      final base = d.oldText == _imeValue.text ? _imeValue : TextEditingValue(text: d.oldText);
+      _imeValue = d.apply(base);
+    }
+    _trimImeBuffer();
+  }
+
+  /// Without the delta model (a platform or test that sends whole values),
+  /// what changed since last time is what was typed or erased.
+  @override
   void updateEditingValue(TextEditingValue value) {
-    // The IME holds a little buffer; what changed since last time is what
-    // was typed (or erased with backspace).
     final before = _imeValue.text;
     final after = value.text;
     var common = 0;
     while (common < before.length && common < after.length && before[common] == after[common]) {
       common++;
     }
-    final erased = before.length - common;
+    _erase(before.length - common);
     final typed = after.substring(common);
-    if (erased > 0) widget.controller.write(List.filled(erased, 0x7f));
     if (typed.isNotEmpty) _writeText(typed.replaceAll('\n', '\r'));
     _imeValue = value;
-    // Start the buffer afresh once nothing is being composed, so it never
-    // grows and a later backspace always means "erase what I typed".
-    if (!value.composing.isValid || value.composing.isCollapsed) {
-      _imeValue = _imeBase;
-      _ime?.setEditingState(_imeValue);
-    }
+    _trimImeBuffer();
+  }
+
+  void _erase(int count) {
+    if (count > 0) widget.controller.write(List.filled(count, 0x7f));
+  }
+
+  /// Start the buffer afresh when it has grown, and nothing is being
+  /// composed, so it never gets big and a backspace keeps meaning "erase
+  /// what I typed".
+  void _trimImeBuffer() {
+    final composing = _imeValue.composing.isValid && !_imeValue.composing.isCollapsed;
+    if (composing || _imeValue.text.length < _imeBufferLimit) return;
+    _imeValue = _imeBase;
+    _ime?.setEditingState(_imeBase);
   }
 
   @override
