@@ -1,13 +1,10 @@
-import 'dart:io' show Platform, Process;
-
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/engine/engine.dart' show TerminalSearchHit;
+import '../../core/links.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/host_colors.dart';
@@ -375,24 +372,6 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
 /// Hand a link to the system. On Linux that is `xdg-open`, which every
 /// desktop wires to the person's browser; elsewhere the platform's own
 /// opener. False when nothing could take it.
-Future<bool> openExternalLink(String uri) async {
-  final parsed = Uri.tryParse(uri);
-  if (parsed == null || parsed.scheme.isEmpty) return false;
-  if (!kIsWeb && Platform.isLinux) {
-    try {
-      final result = await Process.run('xdg-open', [uri]).timeout(const Duration(seconds: 5));
-      if (result.exitCode == 0) return true;
-    } catch (_) {
-      // No xdg-open: fall through to the platform opener.
-    }
-  }
-  try {
-    return await launchUrl(parsed, mode: LaunchMode.externalApplication).timeout(const Duration(seconds: 5));
-  } catch (_) {
-    return false;
-  }
-}
-
 /// Over a session whose connection dropped: what is happening, a way to
 /// stop, and any question the new connection asks (a changed host key, a
 /// password that is not saved).

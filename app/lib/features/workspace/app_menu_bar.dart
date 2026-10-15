@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/engine/engine.dart';
 import '../../core/theme/tokens.dart';
 import 'app_shortcuts.dart';
 import 'command_palette.dart';
@@ -162,11 +161,9 @@ class _AppMenuBarState extends ConsumerState<AppMenuBar> {
               ),
               SubmenuButton(
                 menuChildren: [
+                  MenuItemButton(onPressed: () => context.go('/settings/help'), child: const Text('Help')),
                   MenuItemButton(onPressed: () => context.go('/settings'), child: const Text('Settings')),
-                  MenuItemButton(
-                    onPressed: () => actions.about(ref.read(engineProvider).version()),
-                    child: const Text('About Promptly'),
-                  ),
+                  MenuItemButton(onPressed: () => context.go('/settings/about'), child: const Text('About Promptly')),
                 ],
                 child: const Text('Help'),
               ),

@@ -477,14 +477,20 @@ Future<void> tapVisible(WidgetTester tester, Finder finder) async {
 
 Widget app([FakeEngine? engine]) => appWith(engine);
 
-Widget appWith(FakeEngine? engine, {String? localDir, Fs? localFs}) => ProviderScope(
+/// The app on a fake engine. The welcome tour counts as seen unless a test
+/// asks for a first run.
+Widget appWith(FakeEngine? engine, {String? localDir, Fs? localFs, bool onboarded = true}) {
+  engine ??= FakeEngine();
+  if (onboarded) engine.settings.putIfAbsent('onboarding_done', () => 'true');
+  return ProviderScope(
       overrides: [
-        engineProvider.overrideWithValue(engine ?? FakeEngine()),
+        engineProvider.overrideWithValue(engine),
         if (localDir != null) localStartDirProvider.overrideWithValue(localDir),
         if (localFs != null) localFsProvider.overrideWithValue(localFs),
       ],
       child: const PromptlyApp(),
     );
+}
 
 String hostJson(
   String id,
@@ -1415,5 +1421,72 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('142×37'), findsOneWidget, reason: 'the title bar must follow the live grid');
     expect(find.text('deploy@web-1: ~'), findsOneWidget, reason: 'and the title the program set');
+  });
+
+  testWidgets('the first run shows the welcome tour and Skip remembers it', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(appWith(engine, onboarded: false));
+    await tester.pumpAndSettle();
+    expect(find.text('Your terminal, everywhere.'), findsOneWidget);
+    expect(find.text('No hosts yet'), findsNothing);
+    await tester.tap(find.byKey(const Key('onboarding-skip')));
+    await tester.pumpAndSettle();
+    expect(find.text('No hosts yet'), findsOneWidget);
+    expect(engine.settings['onboarding_done'], 'true');
+
+    // The next start goes straight to hosts.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(appWith(engine, onboarded: false));
+    await tester.pumpAndSettle();
+    expect(find.text('Your terminal, everywhere.'), findsNothing);
+    expect(find.text('No hosts yet'), findsOneWidget);
+  });
+
+  testWidgets('the tour walks three pages and its last page starts things', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(appWith(engine, onboarded: false));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('onboarding-next')));
+    await tester.pumpAndSettle();
+    expect(find.text('Your data, yours.'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-next')));
+    await tester.pumpAndSettle();
+    expect(find.text('Ready when you are.'), findsOneWidget);
+    expect(find.byKey(const Key('onboarding-start')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-add-host')));
+    await tester.pumpAndSettle();
+    expect(find.text('New host'), findsOneWidget, reason: 'Add a host lands in the editor');
+    expect(engine.settings['onboarding_done'], 'true');
+  });
+
+  testWidgets('help lists the shortcuts, about shows the version, and the tour can be replayed', (tester) async {
+    await tester.pumpWidget(app());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('settings-help')));
+    await tester.pumpAndSettle();
+    expect(find.text('Help'), findsWidgets);
+    await scrollTo(tester, find.text('Ctrl+Shift+P'));
+    expect(find.text('Ctrl+Shift+P'), findsOneWidget);
+    expect(find.text('Command palette: hosts, snippets, themes, every action'), findsOneWidget);
+    await scrollTap(tester, find.byKey(const Key('help-tour')));
+    await tester.pumpAndSettle();
+    expect(find.text('Your terminal, everywhere.'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('onboarding-skip')));
+    await tester.pumpAndSettle();
+    expect(find.text('No hosts yet'), findsOneWidget);
+
+    // The Settings tab remembers it was on Help; back goes to the list.
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Back to settings'));
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('settings-about')));
+    await tester.pumpAndSettle();
+    expect(find.text('Version 1.0.0 · engine 9.9.9-test'), findsOneWidget);
+    await scrollTap(tester, find.byKey(const Key('about-licences')));
+    await tester.pumpAndSettle();
+    expect(find.byType(LicensePage), findsOneWidget);
   });
 }

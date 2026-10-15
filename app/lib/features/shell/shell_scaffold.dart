@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../workspace/app_menu_bar.dart';
 
@@ -98,30 +97,12 @@ class ShellScaffold extends StatelessWidget {
   }
 }
 
-/// A block cursor in prompt green: the mark until there is a real icon.
+/// The app icon at the top of the rail.
 class _Wordmark extends StatelessWidget {
   const _Wordmark();
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
-    return Semantics(
-      label: 'Promptly',
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('p', style: monoStyle(context, size: 18, weight: FontWeight.w700, color: t.text)),
-          const SizedBox(width: 2),
-          Container(
-            width: 10,
-            height: 18,
-            decoration: BoxDecoration(
-              color: t.accent,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-        ],
-      ),
-    );
+    return Image.asset('assets/icon/promptly.png', width: 32, height: 32, semanticLabel: 'Promptly');
   }
 }

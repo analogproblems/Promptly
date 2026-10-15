@@ -119,15 +119,6 @@ class DesktopActions {
     exit(0);
   }
 
-  void about(String engineVersion) {
-    showAboutDialog(
-      context: context,
-      applicationName: 'Promptly',
-      applicationVersion: 'engine $engineVersion',
-      applicationLegalese: 'MIT licence. Your terminal, everywhere. Your data, yours.',
-    );
-  }
-
   /// Every saved host, for the palette and the panel.
   List<Host> get hosts => ref.read(hostsProvider);
 }

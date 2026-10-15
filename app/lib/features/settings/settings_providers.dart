@@ -12,6 +12,7 @@ abstract final class SettingKeys {
   static const terminalTheme = 'terminal_theme';
   static const programClipboard = 'program_clipboard';
   static const reachability = 'reachability_check';
+  static const onboardingDone = 'onboarding_done';
 }
 
 String? _readString(Engine engine, String key) {

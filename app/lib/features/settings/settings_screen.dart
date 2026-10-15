@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../../core/version.dart';
 import '../shell/empty_state.dart';
 import 'settings_providers.dart';
 import '../hosts/ssh_config_import.dart';
@@ -225,13 +226,26 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const SizedBox(height: 16),
               _Section(
-                title: 'About',
-                child: ListTile(
-                  leading: Icon(Icons.info_outline, color: t.muted),
-                  title: const Text('Promptly'),
-                  subtitle: const Text(
-                    'Free and open source, MIT licensed. No servers, no accounts, no subscription.',
-                  ),
+                title: 'Help',
+                child: Column(
+                  children: [
+                    ListTile(
+                      key: const Key('settings-help'),
+                      leading: Icon(Icons.help_outline, color: t.muted),
+                      title: const Text('Help'),
+                      subtitle: const Text('Getting started, keyboard shortcuts, what the session bar does.'),
+                      trailing: Icon(Icons.chevron_right, color: t.muted),
+                      onTap: () => context.go('/settings/help'),
+                    ),
+                    ListTile(
+                      key: const Key('settings-about'),
+                      leading: Icon(Icons.info_outline, color: t.muted),
+                      title: const Text('About Promptly'),
+                      subtitle: Text('Version $appVersion · free and open source, MIT licensed.'),
+                      trailing: Icon(Icons.chevron_right, color: t.muted),
+                      onTap: () => context.go('/settings/about'),
+                    ),
+                  ],
                 ),
               ),
             ],

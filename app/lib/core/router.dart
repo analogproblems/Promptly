@@ -3,9 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../features/files/files_screen.dart';
+import '../features/help/about_screen.dart';
+import '../features/help/help_screen.dart';
 import '../features/hosts/host_editor_screen.dart';
 import '../features/hosts/hosts_screen.dart';
 import '../features/keys/keys_screen.dart';
+import '../features/onboarding/onboarding.dart';
 import '../features/sessions/sessions_root.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/settings/themes_screen.dart';
@@ -21,7 +24,13 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     navigatorKey: _rootKey,
     initialLocation: '/hosts',
+    // The welcome tour until it has been seen or skipped.
+    redirect: (context, state) {
+      if (!ref.read(onboardingDoneProvider) && state.matchedLocation != '/welcome') return '/welcome';
+      return null;
+    },
     routes: [
+      GoRoute(path: '/welcome', builder: (_, _) => const OnboardingScreen()),
       StatefulShellRoute.indexedStack(
         builder: (context, state, shell) => ShellScaffold(shell: shell),
         branches: [
@@ -87,6 +96,8 @@ final routerProvider = Provider<GoRouter>((ref) {
               routes: [
                 GoRoute(path: 'themes', builder: (_, _) => const ThemesScreen()),
                 GoRoute(path: 'sync', builder: (_, _) => const SyncScreen()),
+                GoRoute(path: 'help', builder: (_, _) => const HelpScreen()),
+                GoRoute(path: 'about', builder: (_, _) => const AboutScreen()),
               ],
             ),
           ]),

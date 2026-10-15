@@ -15,6 +15,7 @@ import 'host_colors.dart';
 import 'models.dart';
 import 'reachability.dart';
 import 'repositories.dart';
+import 'ssh_config_import.dart';
 
 class HostsScreen extends ConsumerStatefulWidget {
   const HostsScreen({super.key});
@@ -225,6 +226,13 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                             onPressed: () => openLocalShell(context, ref),
                             icon: const Icon(Icons.terminal),
                             label: const Text('Local shell'),
+                          ),
+                        if (supportsLocalShell)
+                          OutlinedButton.icon(
+                            key: const Key('hosts-import'),
+                            onPressed: () => showSshConfigImport(context, ref),
+                            icon: const Icon(Icons.file_download_outlined),
+                            label: const Text('Import ~/.ssh/config'),
                           ),
                       ],
                     ),
