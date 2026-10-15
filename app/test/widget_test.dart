@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -27,7 +29,44 @@ class FakeEngine implements Engine {
   @override
   int terminalOpenLocal({required int cols, required int rows, required bool dark}) => 1;
   @override
-  Stream<TerminalEvent> terminalEvents(int id) => const Stream.empty();
+  Stream<TerminalEvent> terminalEvents(int id) {
+    if (id != connectedSessionId) return const Stream.empty();
+    final rows = <TerminalRow>[
+      for (var y = 0; y < frameRows; y++)
+        TerminalRow(
+          line: y,
+          glyphs: List.filled(frameCols, ''),
+          fg: Uint32List(frameCols),
+          bg: Uint32List(frameCols),
+          flags: Uint16List(frameCols),
+        ),
+    ];
+    return Stream.fromIterable([
+      TerminalEvent(
+        kind: TerminalEventKind.frame,
+        frame: TerminalFrame(
+          cols: frameCols,
+          rows: frameRows,
+          full: true,
+          rowsChanged: rows,
+          cursor: const TerminalCursor(line: 0, col: 0, shape: TerminalCursorShape.block),
+          displayOffset: 0,
+          historyLen: 0,
+          defaultFg: 0xE6EDF3,
+          defaultBg: 0x0E1116,
+          cursorColor: 0x7CE38B,
+          title: 'deploy@web-1: ~',
+          bell: false,
+          appCursor: false,
+          altScreen: false,
+          bracketedPaste: false,
+          mouseReporting: false,
+        ),
+        clipboard: null,
+        exitCode: null,
+      ),
+    ]);
+  }
   @override
   void terminalWrite(int id, List<int> data) {}
   @override
@@ -46,10 +85,23 @@ class FakeEngine implements Engine {
   void terminalClose(int id) {}
   @override
   void setDataDir(String path) {}
+  /// When set, SSH attempts succeed with this engine session id, and that
+  /// session emits one full frame of the given size.
+  int? connectedSessionId;
+  int frameCols = 142;
+  int frameRows = 37;
+
   @override
   int sshConnectBegin(SshConnectRequest request) => 1;
   @override
-  Stream<SshEvent> sshConnectEvents(int attemptId) => const Stream.empty();
+  Stream<SshEvent> sshConnectEvents(int attemptId) {
+    final id = connectedSessionId;
+    if (id == null) return const Stream.empty();
+    return Stream.fromIterable([
+      const SshEvent(kind: SshEventKind.progress, step: SshStep.connecting, hostKey: null, secretPrompt: null, kbName: null, kbInstructions: null, kbPrompts: null, sessionId: null, error: null),
+      SshEvent(kind: SshEventKind.connected, step: null, hostKey: null, secretPrompt: null, kbName: null, kbInstructions: null, kbPrompts: null, sessionId: id, error: null),
+    ]);
+  }
   @override
   void sshAnswerHostKey(int attemptId, bool trust) {}
   @override
@@ -220,5 +272,20 @@ void main() {
     expect(engine.secrets.values.first, contains('OPENSSH PRIVATE KEY'));
     expect(engine.secrets.keys.first, matches(RegExp(r'^[0-9a-f-]{36}$')), reason: 'secret ids are UUIDs');
     expect(find.text('laptop'), findsOneWidget);
+  });
+
+  testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, 'deploy@web-1');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Connect'));
+    await tester.pumpAndSettle();
+    // The connecting screen is up first; the session arrives from the stream afterwards.
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(find.text('142×37'), findsOneWidget, reason: 'the title bar must follow the live grid');
+    expect(find.text('deploy@web-1: ~'), findsOneWidget, reason: 'and the title the program set');
   });
 }

@@ -33,8 +33,12 @@ class SessionEntry extends ChangeNotifier {
 
   String get title => _controller?.title ?? label;
 
+  /// Attach the live terminal. From here on the controller's frames also
+  /// notify the entry, so a screen watching the entry sees size and title
+  /// changes even if it was built while the session was still connecting.
   void setController(TerminalController c) {
     _controller = c;
+    c.addListener(notifyListeners);
     notifyListeners();
   }
 

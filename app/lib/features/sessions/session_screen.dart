@@ -38,7 +38,7 @@ class SessionScreen extends ConsumerWidget {
     }
 
     return ListenableBuilder(
-      listenable: Listenable.merge([entry, ?entry.controller]),
+      listenable: entry,
       builder: (context, _) {
         final c = entry.controller;
         final live = c != null && !c.exited;

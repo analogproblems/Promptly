@@ -500,7 +500,15 @@ mod tests {
         let _h = pump(session.clone(), Box::new(reader), move |e| {
             let _ = tx.send(e);
         });
-        session.write(b"echo ssh-$((6*7))-ok; exit 3\n").unwrap();
+        // Resize before asking the remote shell what size it sees.
+        session
+            .resize(TermSize::new(100, 30), |f| {
+                assert_eq!((f.cols, f.rows), (100, 30))
+            })
+            .unwrap();
+        session
+            .write(b"sleep 0.3; stty size; echo ssh-$((6*7))-ok; exit 3\n")
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(15);
         let mut code = None;
         while Instant::now() < deadline {
@@ -536,6 +544,10 @@ mod tests {
             &password,
         );
         assert!(text.contains("ssh-42-ok"), "screen:\n{text}");
+        assert!(
+            text.contains("30 100"),
+            "the remote pty should see the new size; screen:\n{text}"
+        );
         assert_eq!(
             asked,
             Some(HostKeyStatus::Unknown),

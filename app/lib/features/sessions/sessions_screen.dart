@@ -64,7 +64,7 @@ class SessionsScreen extends ConsumerWidget {
                   itemBuilder: (context, i) {
                     final s = sessions[i];
                     return ListenableBuilder(
-                      listenable: Listenable.merge([s, ?s.controller]),
+                      listenable: s,
                       builder: (context, _) {
                         final c = s.controller;
                         final live = c != null && !c.exited;

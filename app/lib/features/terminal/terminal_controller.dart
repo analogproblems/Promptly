@@ -87,8 +87,9 @@ class TerminalController extends ChangeNotifier {
   void _guard(void Function() call) {
     try {
       call();
-    } catch (_) {
+    } catch (e) {
       // The session is gone; the Exited event (or close) handles the rest.
+      debugPrint('[promptly] engine call failed for session $id: $e');
     }
   }
 
