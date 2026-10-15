@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/app.dart';
 import 'package:promptly/core/theme/theme.dart';
+import 'package:promptly/core/version.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/core/file_picker.dart';
 import 'package:promptly/core/platform.dart';
@@ -1817,7 +1818,7 @@ void main() {
     await tester.pumpAndSettle();
     await scrollTap(tester, find.byKey(const Key('settings-about')));
     await tester.pumpAndSettle();
-    expect(find.text('Version 1.0.0 · engine 9.9.9-test'), findsOneWidget);
+    expect(find.text('Version $appVersion · engine 9.9.9-test'), findsOneWidget);
     await scrollTap(tester, find.byKey(const Key('about-licences')));
     await tester.pumpAndSettle();
     expect(find.byType(LicensePage), findsOneWidget);
