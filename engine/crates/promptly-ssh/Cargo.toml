@@ -12,7 +12,7 @@ base64 = "0.22"
 promptly-term = { workspace = true }
 promptly-session = { workspace = true }
 # ring rather than aws-lc: pure-ish Rust, cross-compiles to Android and Windows without cmake.
-russh = { version = "0.63.1", default-features = false, features = ["flate2", "ring", "rsa"] }
+russh = { version = "0.64.1", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = "3"
 promptly-vault = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "time", "macros", "fs"] }
