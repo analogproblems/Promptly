@@ -49,6 +49,9 @@ enum SshAuthKind {
 
   /// Keyboard-interactive only.
   interactive,
+
+  /// The keys in the running SSH agent, then whatever the server offers.
+  agent,
 }
 
 class SshConnectRequest {

@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
+import '../settings/settings_providers.dart';
 import '../terminal/terminal_controller.dart';
 import 'connect_flow.dart';
 
@@ -133,7 +135,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final entry = SessionEntry(id: _nextId++, label: 'Local shell', isLocal: true);
     try {
       final engineId = engine.terminalOpenLocal(cols: 80, rows: 24, theme: theme);
-      entry.setController(TerminalController(engine: engine, id: engineId, label: entry.label)..start());
+      entry.setController(_controller(engine, engineId, entry.label));
     } catch (e) {
       entry.setError(e is String ? e : e.toString());
     }
@@ -160,10 +162,20 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     String? password;
     String? privateKey;
     String? problem;
-    switch (host.auth.kind) {
+    // The group fills in what the host leaves blank.
+    final group = ref.read(groupsProvider.notifier).byId(host.groupId);
+    final defaults = group?.defaults ?? const <String, dynamic>{};
+    var username = host.username;
+    if (username.isEmpty) username = defaults['username'] as String? ?? '';
+    var auth = host.auth;
+    final defaultIdentity = defaults['identity_id'] as String?;
+    if ((auth.kind == AuthKind.interactive || auth.kind == AuthKind.agent) && defaultIdentity != null) {
+      auth = HostAuth(kind: AuthKind.identity, identityId: defaultIdentity);
+    }
+    switch (auth.kind) {
       case AuthKind.identity:
         kind = SshAuthKind.key;
-        final identity = ref.read(identitiesProvider.notifier).byId(host.auth.identityId);
+        final identity = ref.read(identitiesProvider.notifier).byId(auth.identityId);
         final secretId = identity?.privateKeySecretId;
         privateKey = secretId == null ? null : _secret(engine, secretId);
         if (privateKey == null) {
@@ -171,9 +183,10 @@ class SessionManager extends Notifier<List<SessionEntry>> {
         }
       case AuthKind.password:
         kind = SshAuthKind.password;
-        final secretId = host.auth.passwordSecretId;
+        final secretId = auth.passwordSecretId;
         password = secretId == null ? null : _secret(engine, secretId);
       case AuthKind.agent:
+        kind = SshAuthKind.agent;
       case AuthKind.interactive:
         kind = SshAuthKind.interactive;
     }
@@ -190,7 +203,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       return entry;
     }
     final request = SshConnectRequest(
-      user: host.username,
+      user: username,
       host: host.hostname,
       port: host.port,
       auth: kind,
@@ -274,9 +287,18 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   }
 
   void _attach(SessionEntry entry, Engine engine, int sessionId) {
-    final c = TerminalController(engine: engine, id: sessionId, label: entry.label)..start();
+    final c = _controller(engine, sessionId, entry.label);
     entry.setController(c);
     if (!entry.isLocal) c.addListener(() => _watchForDrop(entry, c));
+  }
+
+  /// A started controller whose clipboard writes follow the setting.
+  TerminalController _controller(Engine engine, int sessionId, String label) {
+    final c = TerminalController(engine: engine, id: sessionId, label: label);
+    c.onClipboard = (text) {
+      if (ref.read(programClipboardProvider)) Clipboard.setData(ClipboardData(text: text));
+    };
+    return c..start();
   }
 
   // ---- Automatic reconnect -----------------------------------------------

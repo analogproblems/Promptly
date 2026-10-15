@@ -9,7 +9,7 @@ import 'host_colors.dart';
 import 'models.dart';
 import 'repositories.dart';
 
-enum _AuthChoice { password, key, ask }
+enum _AuthChoice { password, key, agent, ask }
 
 /// Add or edit a host. Saves to the engine's store; passwords go to the
 /// secret store under an id the host record points at.
@@ -56,6 +56,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     _auth = switch (_original.auth.kind) {
       AuthKind.identity => _AuthChoice.key,
       AuthKind.password => _AuthChoice.password,
+      AuthKind.agent => _AuthChoice.agent,
       _ => _AuthChoice.ask,
     };
     _rememberPassword = _original.auth.passwordSecretId != null;
@@ -101,6 +102,8 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
           }
           auth = const HostAuth(kind: AuthKind.password);
         }
+      case _AuthChoice.agent:
+        auth = const HostAuth(kind: AuthKind.agent);
       case _AuthChoice.ask:
         auth = const HostAuth(kind: AuthKind.interactive);
     }
@@ -269,6 +272,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                       segments: const [
                         ButtonSegment(value: _AuthChoice.password, label: Text('Password')),
                         ButtonSegment(value: _AuthChoice.key, label: Text('Key')),
+                        ButtonSegment(value: _AuthChoice.agent, label: Text('Agent')),
                         ButtonSegment(value: _AuthChoice.ask, label: Text('Ask each time')),
                       ],
                       selected: {_auth},

@@ -30,6 +30,9 @@ pub enum AuthMethod {
     },
     /// Keyboard-interactive only (two-factor servers).
     Interactive,
+    /// Whatever keys the running SSH agent holds (`SSH_AUTH_SOCK`), then
+    /// the server's other methods with prompts.
+    Agent,
 }
 
 #[derive(Debug, Clone)]
@@ -289,7 +292,68 @@ async fn authenticate(
             password(handle, &user, &where_, stored.clone(), prompter).await
         }
         AuthMethod::Interactive => keyboard_interactive(handle, &user, prompter).await,
+        AuthMethod::Agent => {
+            let remaining = match agent_auth(handle, &user).await {
+                Ok(None) => return Ok(()),
+                Ok(Some(remaining)) => remaining,
+                Err(e) => {
+                    tracing::info!("agent authentication unavailable: {e}");
+                    MethodSet::empty()
+                }
+            };
+            if offers(&remaining, MethodKind::KeyboardInteractive) {
+                keyboard_interactive(handle, &user, prompter).await
+            } else if offers(&remaining, MethodKind::Password) || remaining.is_empty() {
+                password(handle, &user, &where_, None, prompter).await
+            } else {
+                Err(ConnectError::AuthFailed(
+                    "no key in the agent was accepted".into(),
+                ))
+            }
+        }
     }
+}
+
+/// Try every identity the agent holds. `Ok(None)` means one was accepted;
+/// `Ok(Some(methods))` means none was, and these are what the server still
+/// offers.
+async fn agent_auth(
+    handle: &mut client::Handle<Handler>,
+    user: &str,
+) -> Result<Option<MethodSet>, ConnectError> {
+    use russh::keys::agent::client::AgentClient;
+    let mut agent = AgentClient::connect_env()
+        .await
+        .map_err(|e| ConnectError::AuthFailed(format!("no SSH agent: {e}")))?;
+    let identities = agent
+        .request_identities()
+        .await
+        .map_err(|e| ConnectError::AuthFailed(format!("the SSH agent did not answer: {e}")))?;
+    if identities.is_empty() {
+        return Err(ConnectError::AuthFailed(
+            "the SSH agent holds no keys".into(),
+        ));
+    }
+    let hash = handle.best_supported_rsa_hash().await?.flatten();
+    let mut remaining = MethodSet::empty();
+    for identity in identities {
+        match handle
+            .authenticate_publickey_with(
+                user.to_string(),
+                identity.public_key().into_owned(),
+                hash,
+                &mut agent,
+            )
+            .await
+            .map_err(|e| ConnectError::AuthFailed(format!("the SSH agent could not sign: {e}")))?
+        {
+            AuthResult::Success => return Ok(None),
+            AuthResult::Failure {
+                remaining_methods, ..
+            } => remaining = remaining_methods,
+        }
+    }
+    Ok(Some(remaining))
 }
 
 fn offers(methods: &MethodSet, kind: MethodKind) -> bool {
@@ -572,6 +636,46 @@ mod tests {
             return;
         };
         let (text, _) = run_shell("interactive", AuthMethod::Interactive, endpoint, &password);
+        assert!(text.contains("ssh-42-ok"), "screen:\n{text}");
+    }
+
+    #[test]
+    fn agent_login_runs_a_shell() {
+        let Some((endpoint, password)) = test_server() else {
+            return;
+        };
+        let Ok(path) = std::env::var("PROMPTLY_TEST_SSH_KEY") else {
+            return;
+        };
+        // A private agent for this test, with the test key added.
+        let Ok(out) = std::process::Command::new("ssh-agent").arg("-s").output() else {
+            eprintln!("ssh-agent not available; skipping");
+            return;
+        };
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        let find = |name: &str| {
+            text.lines()
+                .find_map(|l| l.strip_prefix(&format!("{name}=")))
+                .and_then(|rest| rest.split(';').next())
+                .map(str::to_string)
+        };
+        let (Some(sock), Some(pid)) = (find("SSH_AUTH_SOCK"), find("SSH_AGENT_PID")) else {
+            panic!("could not start ssh-agent: {text}");
+        };
+        let added = std::process::Command::new("ssh-add")
+            .arg(&path)
+            .env("SSH_AUTH_SOCK", &sock)
+            .output()
+            .expect("run ssh-add");
+        assert!(
+            added.status.success(),
+            "{}",
+            String::from_utf8_lossy(&added.stderr)
+        );
+        std::env::set_var("SSH_AUTH_SOCK", &sock);
+
+        let (text, _) = run_shell("agent", AuthMethod::Agent, endpoint, &password);
+        let _ = std::process::Command::new("kill").arg(&pid).status();
         assert!(text.contains("ssh-42-ok"), "screen:\n{text}");
     }
 

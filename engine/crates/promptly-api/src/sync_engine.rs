@@ -10,13 +10,13 @@ use std::time::{Duration, Instant};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use promptly_ssh::{
-    AuthMethod, ConnectError, ConnectParams, Endpoint, FileKnownHosts, QuietPrompter, SftpBackend,
-    SftpError,
+    AuthMethod, ConnectError, ConnectParams, Endpoint, FileKnownHosts, HostKeyInfo, HostKeyStatus,
+    KnownHosts, PublicKey, QuietPrompter, SftpBackend, SftpError,
 };
 use promptly_store::{Collection, SecretStore, Store};
 use promptly_term::TermSize;
 use promptly_vault::backend::LocalFolder;
-use promptly_vault::model::{Auth, Device, Host, Identity};
+use promptly_vault::model::{Auth, Device, Host, Identity, KnownHost};
 use promptly_vault::{crypto, Backend, Dek, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +25,7 @@ use crate::frb_generated::StreamSink;
 
 pub const META_VAULT: &str = "vault";
 pub const META_SECRET_MARKERS: &str = "secret_markers";
+pub const META_KNOWN_HOST_MARKER: &str = "known_hosts_applied";
 pub const DEK_SECRET_ID: &str = "vault-dek";
 
 /// Settle time after a local change before pushing.
@@ -33,6 +34,104 @@ const DEBOUNCE: Duration = Duration::from_secs(2);
 /// on. A listing is one cheap call per device folder.
 const PERIOD: Duration = Duration::from_secs(30);
 const MAX_BACKOFF: Duration = Duration::from_secs(3600);
+
+/// The device's known-hosts files, plus a record in the vault for every
+/// key trusted here, so trusting a server once trusts it on every device.
+pub struct VaultKnownHosts {
+    files: FileKnownHosts,
+}
+
+impl VaultKnownHosts {
+    pub fn new() -> Self {
+        Self {
+            files: FileKnownHosts::default_paths(&crate::api::engine::data_dir()),
+        }
+    }
+}
+
+impl Default for VaultKnownHosts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl KnownHosts for VaultKnownHosts {
+    fn check(&self, host: &str, port: u16, key: &PublicKey) -> HostKeyStatus {
+        self.files.check(host, port, key)
+    }
+
+    fn remember(&self, host: &str, port: u16, key: &PublicKey) -> std::io::Result<()> {
+        self.files.remember(host, port, key)?;
+        if let Ok(store) = store() {
+            let info = HostKeyInfo::from_key(host, port, key);
+            let record = KnownHost {
+                id: promptly_vault::model::new_id(),
+                host: host.to_string(),
+                port,
+                key_type: info.algorithm,
+                fingerprint_sha256: info.fingerprint,
+                public_key: info.public_key,
+                first_seen_at: time::OffsetDateTime::now_utc(),
+                first_seen_device: store.device_id().to_string(),
+            };
+            // One record per (host, port, key): skip if an identical one exists.
+            let exists = store
+                .list(Collection::KnownHosts)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|r| serde_json::from_str::<KnownHost>(&r.json).ok())
+                .any(|k| {
+                    k.host == record.host
+                        && k.port == record.port
+                        && k.public_key == record.public_key
+                });
+            if !exists {
+                if let Ok(json) = serde_json::to_string(&record) {
+                    let _ = store.put(Collection::KnownHosts, &record.id.to_string(), &json);
+                    notify_change();
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Keys other devices trusted land in this device's known-hosts file.
+fn apply_pulled_known_hosts(store: &Store) -> Result<(), String> {
+    let applied: std::collections::BTreeSet<String> = store
+        .meta_get(META_KNOWN_HOST_MARKER)
+        .map_err(|e| e.to_string())?
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let mut now = applied.clone();
+    let files = FileKnownHosts::default_paths(&crate::api::engine::data_dir());
+    for r in store
+        .list(Collection::KnownHosts)
+        .map_err(|e| e.to_string())?
+    {
+        if applied.contains(&r.id) {
+            continue;
+        }
+        let Ok(k) = serde_json::from_str::<KnownHost>(&r.json) else {
+            continue;
+        };
+        if let Ok(key) = PublicKey::from_openssh(&k.public_key) {
+            if files.check(&k.host, k.port, &key) != HostKeyStatus::Known {
+                let _ = files.remember(&k.host, k.port, &key);
+            }
+        }
+        now.insert(r.id);
+    }
+    if now.len() != applied.len() {
+        store
+            .meta_set(
+                META_KNOWN_HOST_MARKER,
+                &serde_json::to_string(&now).expect("set serialises"),
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
 
 /// What is kept in the store's metadata once a vault is set up.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,9 +302,7 @@ pub fn connect_sftp(host_id: &str, remote_dir: &str) -> Result<Arc<SftpBackend>,
     }
     let store = store()?;
     let (params, label) = sftp_params(&store, host_id)?;
-    let known_hosts = Arc::new(FileKnownHosts::default_paths(
-        &crate::api::engine::data_dir(),
-    ));
+    let known_hosts = Arc::new(VaultKnownHosts::new());
     let backend = SftpBackend::connect_blocking(
         &params,
         Arc::new(QuietPrompter),
@@ -306,6 +403,7 @@ pub fn finish_setup(
         let report = store.pull(vault).map_err(|e| e.to_string())?;
         ENGINE.status.lock().unwrap().changes += report.ops_applied as u32;
         apply_pulled_secrets(&store, dek)?;
+        apply_pulled_known_hosts(&store)?;
         store.push(vault).map_err(|e| e.to_string())?;
         store
             .compact(vault, first_snapshot)
@@ -472,6 +570,7 @@ pub fn sync_once() -> Result<(), String> {
         );
         let report = store.pull(&vault).map_err(|e| e.to_string())?;
         apply_pulled_secrets(&store, &dek)?;
+        apply_pulled_known_hosts(&store)?;
         store.push(&vault).map_err(|e| e.to_string())?;
         store.compact(&vault, false).map_err(|e| e.to_string())?;
         Ok::<(Vec<String>, usize), String>((report.warnings, report.ops_applied))
@@ -562,6 +661,9 @@ pub fn disconnect() -> Result<(), String> {
     store.meta_delete(META_VAULT).map_err(|e| e.to_string())?;
     store
         .meta_delete(META_SECRET_MARKERS)
+        .map_err(|e| e.to_string())?;
+    store
+        .meta_delete(META_KNOWN_HOST_MARKER)
         .map_err(|e| e.to_string())?;
     store.reset_sync_state().map_err(|e| e.to_string())?;
     secrets().delete(DEK_SECRET_ID).map_err(|e| e.to_string())?;

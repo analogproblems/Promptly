@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../src/rust/api/engine.dart' as rust;
+import '../../src/rust/api/import.dart' as rust_import;
 import '../../src/rust/api/keys.dart' as rust_keys;
 import '../../src/rust/api/ssh.dart' as rust_ssh;
 import '../../src/rust/api/store.dart' as rust_store;
@@ -8,6 +9,7 @@ import '../../src/rust/api/sync.dart' as rust_sync;
 import '../../src/rust/api/terminal.dart' as rust_term;
 import '../../src/rust/api/themes.dart' as rust_themes;
 
+export '../../src/rust/api/import.dart' show ImportReport, SshConfigHost;
 export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
 export '../../src/rust/api/store.dart' show StoreRecord;
 export '../../src/rust/api/sync.dart' show SyncBackendKind, SyncDevice, SyncSetupResult, SyncStatus;
@@ -100,6 +102,10 @@ abstract class Engine {
   rust_keys.GeneratedKey keyGenerate(rust_keys.SshKeyKind kind, String comment);
   rust_keys.KeyInfo keyInspect(String privateKey, String? passphrase);
   String keyFingerprint(String publicKey);
+
+  /// Hosts in the user's ~/.ssh/config, and importing them.
+  List<rust_import.SshConfigHost> sshConfigHosts();
+  rust_import.ImportReport sshConfigImport(List<String> aliases);
 
   /// The vault: where it is, how it is doing, and setting it up.
   rust_sync.SyncStatus syncStatus();
@@ -277,6 +283,13 @@ class RustEngine implements Engine {
 
   @override
   String keyFingerprint(String publicKey) => rust_keys.keyFingerprint(publicKey: publicKey);
+
+  @override
+  List<rust_import.SshConfigHost> sshConfigHosts() => rust_import.sshConfigHosts();
+
+  @override
+  rust_import.ImportReport sshConfigImport(List<String> aliases) =>
+      rust_import.sshConfigImport(aliases: aliases);
 
   @override
   rust_sync.SyncStatus syncStatus() => rust_sync.syncStatus();

@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/engine.dart';
+import 'api/import.dart';
 import 'api/keys.dart';
 import 'api/ssh.dart';
 import 'api/store.dart';
@@ -78,6 +79,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_i_32(dynamic raw);
 
   @protected
+  ImportReport dco_decode_import_report(dynamic raw);
+
+  @protected
   KeyInfo dco_decode_key_info(dynamic raw);
 
   @protected
@@ -97,6 +101,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SessionInfo> dco_decode_list_session_info(dynamic raw);
+
+  @protected
+  List<SshConfigHost> dco_decode_list_ssh_config_host(dynamic raw);
 
   @protected
   List<SshKbPrompt> dco_decode_list_ssh_kb_prompt(dynamic raw);
@@ -151,6 +158,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SshAuthKind dco_decode_ssh_auth_kind(dynamic raw);
+
+  @protected
+  SshConfigHost dco_decode_ssh_config_host(dynamic raw);
 
   @protected
   SshConnectRequest dco_decode_ssh_connect_request(dynamic raw);
@@ -288,6 +298,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
+  ImportReport sse_decode_import_report(SseDeserializer deserializer);
+
+  @protected
   KeyInfo sse_decode_key_info(SseDeserializer deserializer);
 
   @protected
@@ -307,6 +320,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<SessionInfo> sse_decode_list_session_info(SseDeserializer deserializer);
+
+  @protected
+  List<SshConfigHost> sse_decode_list_ssh_config_host(
+    SseDeserializer deserializer,
+  );
 
   @protected
   List<SshKbPrompt> sse_decode_list_ssh_kb_prompt(SseDeserializer deserializer);
@@ -371,6 +389,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SshAuthKind sse_decode_ssh_auth_kind(SseDeserializer deserializer);
+
+  @protected
+  SshConfigHost sse_decode_ssh_config_host(SseDeserializer deserializer);
 
   @protected
   SshConnectRequest sse_decode_ssh_connect_request(
@@ -531,6 +552,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_import_report(ImportReport self, SseSerializer serializer);
+
+  @protected
   void sse_encode_key_info(KeyInfo self, SseSerializer serializer);
 
   @protected
@@ -560,6 +584,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_session_info(
     List<SessionInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_ssh_config_host(
+    List<SshConfigHost> self,
     SseSerializer serializer,
   );
 
@@ -652,6 +682,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_ssh_auth_kind(SshAuthKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_config_host(SshConfigHost self, SseSerializer serializer);
 
   @protected
   void sse_encode_ssh_connect_request(

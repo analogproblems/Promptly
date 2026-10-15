@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use flutter_rust_bridge::frb;
 use promptly_session::{Session, SessionKind};
-use promptly_ssh::{connect, AuthMethod, ConnectParams, Endpoint, FileKnownHosts, Prompter};
+use promptly_ssh::{connect, AuthMethod, ConnectParams, Endpoint, Prompter};
 use promptly_term::TermSize;
 
 use crate::api::terminal::{palette_for, reattach_session, register_session, session_exists};
@@ -27,6 +27,8 @@ pub enum SshAuthKind {
     Key,
     /// Keyboard-interactive only.
     Interactive,
+    /// The keys in the running SSH agent, then whatever the server offers.
+    Agent,
 }
 
 pub struct SshConnectRequest {
@@ -158,6 +160,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
             passphrase: request.passphrase.clone(),
         },
         SshAuthKind::Interactive => AuthMethod::Interactive,
+        SshAuthKind::Agent => AuthMethod::Agent,
     };
     let size = TermSize::new(request.cols, request.rows);
     let mut params = ConnectParams::new(endpoint.clone(), auth, size);
@@ -171,9 +174,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
     let palette = palette_for(&request.theme);
     let reattach = request.reattach_session_id;
 
-    let known_hosts = Arc::new(FileKnownHosts::default_paths(
-        &crate::api::engine::data_dir(),
-    ));
+    let known_hosts = Arc::new(crate::sync_engine::VaultKnownHosts::new());
     let prompter: Arc<dyn Prompter> = Arc::new(UiPrompter(attempt.clone()));
 
     promptly_ssh::runtime().spawn(async move {

@@ -8,7 +8,7 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 
 ## Status
 
-**Milestone 2 under way: the vault.** Set up sync from Settings: pick a folder (one that Syncthing, Dropbox, iCloud Drive or any sync client mirrors), choose a passphrase, write down the recovery code. Every other device joins with the passphrase and gets the same hosts, keys and snippets, encrypted end to end, with nothing but files on storage you already own. A host added on one machine shows up on the other within half a minute. Or keep the vault on a server you already have: pick a saved host and a folder, and Promptly syncs over SFTP with that host's stored login. The `promptly` command-line tool reads the same vault: inspect, export to JSON, import, sync, and write an OpenSSH config.
+**Milestone 2 under way: the vault.** Set up sync from Settings: pick a folder (one that Syncthing, Dropbox, iCloud Drive or any sync client mirrors), choose a passphrase, write down the recovery code. Every other device joins with the passphrase and gets the same hosts, keys and snippets, encrypted end to end, with nothing but files on storage you already own. A host added on one machine shows up on the other within half a minute. Or keep the vault on a server you already have: pick a saved host and a folder, and Promptly syncs over SFTP with that host's stored login. The `promptly` command-line tool reads the same vault: inspect, export to JSON, import, sync, and write an OpenSSH config. Going the other way, Settings imports the hosts in your `~/.ssh/config` along with the keys they name, and a host can log in with the keys in your SSH agent. A server trusted on one device is trusted on all of them.
 
 **Milestone 1 built, now in daily use on Linux.** Save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Select text with the mouse and copy it with Ctrl+Shift+C or the right-click menu. The Sessions tab shows a live thumbnail of every open session. A dropped connection comes back by itself, with the screen intact. The milestone is done when it has replaced the old terminal for a week; the touch gestures wait for the Android build. Linux comes first, then Windows, Android, macOS and iOS.
 
@@ -23,6 +23,10 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 <p>
   <img src="docs/screenshots/m2-sync-sftp-server.png" alt="Picking a saved host to keep the vault on over SFTP" width="640">
   <img src="docs/screenshots/m2-sync-sftp-status.png" alt="The sync status for a vault kept on a server" width="640">
+</p>
+<p>
+  <img src="docs/screenshots/m2-import-ssh-config.png" alt="Importing hosts and keys from ~/.ssh/config" width="640">
+  <img src="docs/screenshots/m2-import-key-login.png" alt="Logged in to an imported host with its imported key" width="640">
 </p>
 <p>
   <img src="docs/screenshots/m1-hosts-list.png" alt="The saved hosts list on Linux, dark theme" width="640">

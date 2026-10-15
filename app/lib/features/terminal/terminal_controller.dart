@@ -24,6 +24,10 @@ class TerminalController extends ChangeNotifier {
   bool bell = false;
   double fontSize = 14;
 
+  /// Called when the program asks to put text on the clipboard (OSC 52).
+  /// Unset means the request is ignored.
+  void Function(String text)? onClipboard;
+
   int _cols = 0;
   int _rows = 0;
 
@@ -42,8 +46,8 @@ class TerminalController extends ChangeNotifier {
           if (f.bell) bell = true;
         }
       case TerminalEventKind.clipboard:
-        // OSC 52 writes are gated by a setting that lands with the vault; ignored for now.
-        break;
+        final text = e.clipboard;
+        if (text != null && text.isNotEmpty) onClipboard?.call(text);
       case TerminalEventKind.exited:
         exited = true;
         exitCode = e.exitCode;

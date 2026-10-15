@@ -7,6 +7,8 @@ import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../shell/empty_state.dart';
 import 'settings_providers.dart';
+import '../hosts/ssh_config_import.dart';
+import '../sessions/sessions_screen.dart' show supportsLocalShell;
 import '../sync/sync_providers.dart';
 import 'themes_screen.dart';
 
@@ -41,6 +43,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final terminalId = resolveTerminalTheme(terminalSetting, Theme.of(context).brightness);
     final themes = ref.watch(themesProvider);
     final sync = ref.watch(syncStatusProvider).value;
+    final programClipboard = ref.watch(programClipboardProvider);
     final terminalTheme = themes.cast<ThemeInfo?>().firstWhere(
           (th) => th!.id == terminalId,
           orElse: () => themes.isEmpty ? null : themes.first,
@@ -95,6 +98,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
               ),
+              const SizedBox(height: 16),
+              _Section(
+                title: 'Terminal',
+                child: SwitchListTile(
+                  key: const Key('program-clipboard'),
+                  title: const Text('Let programs copy to the clipboard'),
+                  subtitle: const Text(
+                    'tmux, vim and others can set your clipboard (OSC 52). Off, a remote program cannot touch what you copied.',
+                  ),
+                  value: programClipboard,
+                  onChanged: (v) => ref.read(programClipboardProvider.notifier).set(v),
+                ),
+              ),
+              if (supportsLocalShell) ...[
+                const SizedBox(height: 16),
+                _Section(
+                  title: 'Hosts',
+                  child: ListTile(
+                    key: const Key('import-ssh-config'),
+                    leading: Icon(Icons.file_download_outlined, color: t.muted),
+                    title: const Text('Import from ~/.ssh/config'),
+                    subtitle: const Text('Hosts, users, ports, jump hosts and the keys they name.'),
+                    trailing: TextButton(
+                      onPressed: () => showSshConfigImport(context, ref),
+                      child: const Text('Import'),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               _Section(
                 title: 'Sync',

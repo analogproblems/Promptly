@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1949710119;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1635238669;
 
 // Section: executor
 
@@ -693,6 +693,65 @@ fn wire__crate__api__ssh__ssh_cancel_impl(
                 let output_ok = Ok::<_, ()>({
                     crate::api::ssh::ssh_cancel(api_attempt_id);
                 })?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__import__ssh_config_hosts_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "ssh_config_hosts",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Ok::<_, ()>(crate::api::import::ssh_config_hosts())?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__import__ssh_config_import_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "ssh_config_import",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_aliases = <Vec<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::import::ssh_config_import(api_aliases)?;
                 std::result::Result::Ok(output_ok)
             })())
         },
@@ -1881,6 +1940,20 @@ impl SseDecode for i32 {
     }
 }
 
+impl SseDecode for crate::api::import::ImportReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_hosts = <u32>::sse_decode(deserializer);
+        let mut var_keys = <u32>::sse_decode(deserializer);
+        let mut var_skipped = <Vec<String>>::sse_decode(deserializer);
+        return crate::api::import::ImportReport {
+            hosts: var_hosts,
+            keys: var_keys,
+            skipped: var_skipped,
+        };
+    }
+}
+
 impl SseDecode for crate::api::keys::KeyInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1954,6 +2027,20 @@ impl SseDecode for Vec<crate::api::terminal::SessionInfo> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::terminal::SessionInfo>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::import::SshConfigHost> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::import::SshConfigHost>::sse_decode(
                 deserializer,
             ));
         }
@@ -2179,7 +2266,32 @@ impl SseDecode for crate::api::ssh::SshAuthKind {
             0 => crate::api::ssh::SshAuthKind::Password,
             1 => crate::api::ssh::SshAuthKind::Key,
             2 => crate::api::ssh::SshAuthKind::Interactive,
+            3 => crate::api::ssh::SshAuthKind::Agent,
             _ => unreachable!("Invalid variant for SshAuthKind: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::import::SshConfigHost {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_alias = <String>::sse_decode(deserializer);
+        let mut var_hostname = <String>::sse_decode(deserializer);
+        let mut var_user = <String>::sse_decode(deserializer);
+        let mut var_port = <u16>::sse_decode(deserializer);
+        let mut var_identityFile = <Option<String>>::sse_decode(deserializer);
+        let mut var_keyReadable = <bool>::sse_decode(deserializer);
+        let mut var_proxyJump = <Option<String>>::sse_decode(deserializer);
+        let mut var_alreadyImported = <bool>::sse_decode(deserializer);
+        return crate::api::import::SshConfigHost {
+            alias: var_alias,
+            hostname: var_hostname,
+            user: var_user,
+            port: var_port,
+            identity_file: var_identityFile,
+            key_readable: var_keyReadable,
+            proxy_jump: var_proxyJump,
+            already_imported: var_alreadyImported,
         };
     }
 }
@@ -2623,25 +2735,25 @@ fn pde_ffi_dispatcher_primary_impl(
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
         2 => wire__crate__api__engine__init_engine_impl(port, ptr, rust_vec_len, data_len),
-        23 => wire__crate__api__ssh__ssh_connect_events_impl(port, ptr, rust_vec_len, data_len),
-        24 => {
+        25 => wire__crate__api__ssh__ssh_connect_events_impl(port, ptr, rust_vec_len, data_len),
+        26 => {
             wire__crate__api__sync__sync_create_local_folder_impl(port, ptr, rust_vec_len, data_len)
         }
-        25 => wire__crate__api__sync__sync_create_sftp_impl(port, ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__sync__sync_events_impl(port, ptr, rust_vec_len, data_len),
-        30 => {
+        27 => wire__crate__api__sync__sync_create_sftp_impl(port, ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__sync__sync_events_impl(port, ptr, rust_vec_len, data_len),
+        32 => {
             wire__crate__api__sync__sync_join_local_folder_impl(port, ptr, rust_vec_len, data_len)
         }
-        31 => wire__crate__api__sync__sync_join_sftp_impl(port, ptr, rust_vec_len, data_len),
-        32 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
-        34 => wire__crate__api__sync__sync_remove_device_impl(port, ptr, rust_vec_len, data_len),
-        35 => wire__crate__api__sync__sync_sftp_folder_has_vault_impl(
+        33 => wire__crate__api__sync__sync_join_sftp_impl(port, ptr, rust_vec_len, data_len),
+        34 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
+        36 => wire__crate__api__sync__sync_remove_device_impl(port, ptr, rust_vec_len, data_len),
+        37 => wire__crate__api__sync__sync_sftp_folder_has_vault_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        38 => wire__crate__api__terminal__terminal_events_impl(port, ptr, rust_vec_len, data_len),
+        40 => wire__crate__api__terminal__terminal_events_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2676,31 +2788,33 @@ fn pde_ffi_dispatcher_sync_impl(
         }
         20 => wire__crate__api__ssh__ssh_answer_secret_impl(ptr, rust_vec_len, data_len),
         21 => wire__crate__api__ssh__ssh_cancel_impl(ptr, rust_vec_len, data_len),
-        22 => wire__crate__api__ssh__ssh_connect_begin_impl(ptr, rust_vec_len, data_len),
-        26 => wire__crate__api__sync__sync_default_device_name_impl(ptr, rust_vec_len, data_len),
-        27 => wire__crate__api__sync__sync_disconnect_impl(ptr, rust_vec_len, data_len),
-        29 => wire__crate__api__sync__sync_folder_has_vault_impl(ptr, rust_vec_len, data_len),
-        33 => wire__crate__api__sync__sync_qr_payload_impl(ptr, rust_vec_len, data_len),
-        36 => wire__crate__api__sync__sync_status_impl(ptr, rust_vec_len, data_len),
-        37 => wire__crate__api__terminal__terminal_close_impl(ptr, rust_vec_len, data_len),
-        39 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
-        40 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
-        41 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
-        42 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
-        43 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
-        44 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
-        45 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
-        46 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
-        47 => {
+        22 => wire__crate__api__import__ssh_config_hosts_impl(ptr, rust_vec_len, data_len),
+        23 => wire__crate__api__import__ssh_config_import_impl(ptr, rust_vec_len, data_len),
+        24 => wire__crate__api__ssh__ssh_connect_begin_impl(ptr, rust_vec_len, data_len),
+        28 => wire__crate__api__sync__sync_default_device_name_impl(ptr, rust_vec_len, data_len),
+        29 => wire__crate__api__sync__sync_disconnect_impl(ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__sync__sync_folder_has_vault_impl(ptr, rust_vec_len, data_len),
+        35 => wire__crate__api__sync__sync_qr_payload_impl(ptr, rust_vec_len, data_len),
+        38 => wire__crate__api__sync__sync_status_impl(ptr, rust_vec_len, data_len),
+        39 => wire__crate__api__terminal__terminal_close_impl(ptr, rust_vec_len, data_len),
+        41 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
+        42 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
+        43 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
+        44 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
+        45 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
+        46 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
+        47 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
+        48 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
+        49 => {
             wire__crate__api__terminal__terminal_scroll_to_bottom_impl(ptr, rust_vec_len, data_len)
         }
-        48 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
-        49 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
-        50 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
-        51 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
-        52 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
-        53 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
-        54 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
+        50 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
+        51 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
+        52 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
+        53 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
+        54 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
+        55 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
+        56 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2727,6 +2841,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::keys::GeneratedKey>
     for crate::api::keys::GeneratedKey
 {
     fn into_into_dart(self) -> crate::api::keys::GeneratedKey {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::import::ImportReport {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.hosts.into_into_dart().into_dart(),
+            self.keys.into_into_dart().into_dart(),
+            self.skipped.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::import::ImportReport
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::import::ImportReport>
+    for crate::api::import::ImportReport
+{
+    fn into_into_dart(self) -> crate::api::import::ImportReport {
         self
     }
 }
@@ -2802,6 +2938,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::ssh::SshAuthKind {
             Self::Password => 0.into_dart(),
             Self::Key => 1.into_dart(),
             Self::Interactive => 2.into_dart(),
+            Self::Agent => 3.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -2811,6 +2948,33 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::ssh::SshAuthKind>
     for crate::api::ssh::SshAuthKind
 {
     fn into_into_dart(self) -> crate::api::ssh::SshAuthKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::import::SshConfigHost {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.alias.into_into_dart().into_dart(),
+            self.hostname.into_into_dart().into_dart(),
+            self.user.into_into_dart().into_dart(),
+            self.port.into_into_dart().into_dart(),
+            self.identity_file.into_into_dart().into_dart(),
+            self.key_readable.into_into_dart().into_dart(),
+            self.proxy_jump.into_into_dart().into_dart(),
+            self.already_imported.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::import::SshConfigHost
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::import::SshConfigHost>
+    for crate::api::import::SshConfigHost
+{
+    fn into_into_dart(self) -> crate::api::import::SshConfigHost {
         self
     }
 }
@@ -3375,6 +3539,15 @@ impl SseEncode for i32 {
     }
 }
 
+impl SseEncode for crate::api::import::ImportReport {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.hosts, serializer);
+        <u32>::sse_encode(self.keys, serializer);
+        <Vec<String>>::sse_encode(self.skipped, serializer);
+    }
+}
+
 impl SseEncode for crate::api::keys::KeyInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -3432,6 +3605,16 @@ impl SseEncode for Vec<crate::api::terminal::SessionInfo> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::terminal::SessionInfo>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::import::SshConfigHost> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::import::SshConfigHost>::sse_encode(item, serializer);
         }
     }
 }
@@ -3614,12 +3797,27 @@ impl SseEncode for crate::api::ssh::SshAuthKind {
                 crate::api::ssh::SshAuthKind::Password => 0,
                 crate::api::ssh::SshAuthKind::Key => 1,
                 crate::api::ssh::SshAuthKind::Interactive => 2,
+                crate::api::ssh::SshAuthKind::Agent => 3,
                 _ => {
                     unimplemented!("");
                 }
             },
             serializer,
         );
+    }
+}
+
+impl SseEncode for crate::api::import::SshConfigHost {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.alias, serializer);
+        <String>::sse_encode(self.hostname, serializer);
+        <String>::sse_encode(self.user, serializer);
+        <u16>::sse_encode(self.port, serializer);
+        <Option<String>>::sse_encode(self.identity_file, serializer);
+        <bool>::sse_encode(self.key_readable, serializer);
+        <Option<String>>::sse_encode(self.proxy_jump, serializer);
+        <bool>::sse_encode(self.already_imported, serializer);
     }
 }
 

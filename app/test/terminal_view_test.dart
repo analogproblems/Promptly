@@ -96,6 +96,10 @@ class RecordingEngine implements Engine {
   @override
   String keyFingerprint(String publicKey) => 'SHA256:test';
   @override
+  List<SshConfigHost> sshConfigHosts() => const [];
+  @override
+  ImportReport sshConfigImport(List<String> aliases) => throw UnimplementedError();
+  @override
   SyncStatus syncStatus() => throw UnimplementedError();
   @override
   Stream<SyncStatus> syncEvents() => const Stream.empty();

@@ -10,6 +10,7 @@ import '../settings/settings_providers.dart';
 import '../sessions/sessions_screen.dart';
 import '../shell/empty_state.dart';
 import '../sync/sync_providers.dart';
+import 'group_editor.dart';
 import 'host_colors.dart';
 import 'models.dart';
 import 'repositories.dart';
@@ -107,10 +108,10 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
       final gid = groups.any((g) => g.id == h.groupId) ? h.groupId : null;
       byGroup.putIfAbsent(gid, () => []).add(h);
     }
-    final sections = <(String?, List<Host>)>[
+    final sections = <(String?, Group?, List<Host>)>[
       for (final g in groups)
-        if (byGroup[g.id] case final list?) (g.label, list),
-      if (byGroup[null] case final list?) (groups.isEmpty ? null : 'Other', list),
+        if (byGroup[g.id] case final list?) (g.label, g, list),
+      if (byGroup[null] case final list?) (groups.isEmpty ? null : 'Other', null, list),
     ];
 
     return Scaffold(
@@ -216,7 +217,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                     : ListView(
                         padding: const EdgeInsets.fromLTRB(12, 0, 12, 96),
                         children: [
-                          for (final (title, list) in sections) ...[
+                          for (final (title, group, list) in sections) ...[
                             if (title != null)
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
@@ -234,6 +235,15 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                                       ),
                                     ),
                                     Text('${list.length}', style: TextStyle(fontSize: 11, color: t.muted)),
+                                    if (group case final g?)
+                                      IconButton(
+                                        key: Key('group-edit-${g.id}'),
+                                        tooltip: 'Edit group',
+                                        visualDensity: VisualDensity.compact,
+                                        iconSize: 16,
+                                        icon: Icon(Icons.tune, color: t.muted),
+                                        onPressed: () => showGroupEditor(context, ref, g),
+                                      ),
                                   ],
                                 ),
                               ),

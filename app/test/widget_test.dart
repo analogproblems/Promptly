@@ -208,7 +208,22 @@ class FakeEngine implements Engine {
         comment: '',
       );
   @override
-  String keyFingerprint(String publicKey) => 'SHA256:${publicKey.hashCode}';
+  String keyFingerprint(String publicKey) => 'SHA256:${publicKode(publicKey)}';
+  static int publicKode(String s) => s.hashCode;
+
+  // ---- Import ----
+  List<SshConfigHost> configHosts = const [];
+  List<String>? imported;
+  @override
+  List<SshConfigHost> sshConfigHosts() => configHosts;
+  @override
+  ImportReport sshConfigImport(List<String> aliases) {
+    imported = aliases;
+    for (final a in aliases) {
+      records.putIfAbsent('hosts', () => {})['imported-$a'] = hostJson('imported-$a', a);
+    }
+    return ImportReport(hosts: aliases.length, keys: 1, skipped: const []);
+  }
 
   // ---- Sync ----
   static const notConfigured = SyncStatus(
@@ -319,6 +334,19 @@ class FakeEngine implements Engine {
   String? syncQrPayload() => sync.configured ? '{"v":1}' : null;
 }
 
+/// Scroll a lazily built list until a widget shows, then tap it.
+Future<void> scrollTap(WidgetTester tester, Finder finder) async {
+  await tester.scrollUntilVisible(finder, 150, scrollable: find.byType(Scrollable).first);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
+}
+
+/// Scroll a lazily built list until a widget shows.
+Future<void> scrollTo(WidgetTester tester, Finder finder) async {
+  await tester.scrollUntilVisible(finder, 150, scrollable: find.byType(Scrollable).first);
+  await tester.pumpAndSettle();
+}
+
 /// Scroll to a widget inside a scrollable page, then tap it.
 Future<void> tapVisible(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
@@ -364,9 +392,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
+    await scrollTo(tester, find.text('Rust engine 9.9.9-test'));
     expect(find.text('Rust engine 9.9.9-test'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('ping-input')), 'Ada');
-    await tester.tap(find.text('Ping'));
+    await scrollTap(tester, find.text('Ping'));
     await tester.pumpAndSettle();
     expect(find.text('pong: Ada'), findsOneWidget);
   });
@@ -569,8 +598,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
+    await scrollTo(tester, find.text('Vault not set up'));
     expect(find.text('Vault not set up'), findsOneWidget);
-    await tester.tap(find.text('Set up'));
+    await scrollTap(tester, find.text('Set up'));
     await tester.pumpAndSettle();
     expect(find.text('Where should Promptly keep your vault?'), findsOneWidget);
     await tapVisible(tester, find.byKey(const Key('sync-continue')));
@@ -598,8 +628,9 @@ void main() {
     await tester.pumpAndSettle();
     await tapVisible(tester, find.byKey(const Key('sync-done')));
     await tester.pumpAndSettle();
+    await scrollTo(tester, find.textContaining('Synced just now · 2 devices'));
     expect(find.textContaining('Synced just now · 2 devices'), findsOneWidget);
-    await tester.tap(find.text('Open'));
+    await scrollTap(tester, find.text('Open'));
     await tester.pumpAndSettle();
     expect(find.text('Phone'), findsOneWidget);
     expect(find.byTooltip('Remove device'), findsOneWidget);
@@ -614,7 +645,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Set up'));
+    await scrollTap(tester, find.text('Set up'));
     await tester.pumpAndSettle();
     await tapVisible(tester, find.byKey(const Key('sync-continue')));
     await tester.pumpAndSettle();
@@ -643,7 +674,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Set up'));
+    await scrollTap(tester, find.text('Set up'));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('sync-option-sftp')));
     await tapVisible(tester, find.byKey(const Key('sync-continue')));
@@ -665,6 +696,68 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.syncCalls.last, 'create-sftp h1 vaults/promptly test-box (Linux)');
     expect(find.text('AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH'), findsOneWidget);
+  });
+
+  testWidgets('hosts from ~/.ssh/config can be picked and imported', (tester) async {
+    final engine = FakeEngine()
+      ..configHosts = const [
+        SshConfigHost(alias: 'web-1', hostname: 'web-1.example', user: 'deploy', port: 22, identityFile: '/home/me/.ssh/id_ed25519', keyReadable: true, proxyJump: null, alreadyImported: false),
+        SshConfigHost(alias: 'db', hostname: '10.0.0.20', user: 'postgres', port: 2222, identityFile: null, keyReadable: false, proxyJump: 'web-1', alreadyImported: false),
+        SshConfigHost(alias: 'old', hostname: 'old.example', user: '', port: 22, identityFile: null, keyReadable: false, proxyJump: null, alreadyImported: true),
+      ];
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.text('Import'));
+    await tester.pumpAndSettle();
+    expect(find.text('Import from ~/.ssh/config'), findsWidgets);
+    expect(find.text('already saved'), findsOneWidget);
+    expect(find.text('Import 2'), findsOneWidget, reason: 'the two new hosts are ticked');
+    await tester.tap(find.byKey(const Key('import-db')));
+    await tester.pumpAndSettle();
+    expect(find.text('Import 1'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('import-go')));
+    await tester.pumpAndSettle();
+    expect(engine.imported, ['web-1']);
+    expect(find.textContaining('Imported 1 host and 1 key'), findsOneWidget);
+    await tester.tap(find.text('Hosts').first);
+    await tester.pumpAndSettle();
+    expect(find.text('web-1'), findsOneWidget, reason: 'the list reloaded');
+  });
+
+  testWidgets('programs may write the clipboard only when the setting is on', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    expect(engine.settings['program_clipboard'], isNull);
+    await scrollTap(tester, find.byKey(const Key('program-clipboard')));
+    await tester.pumpAndSettle();
+    expect(engine.settings['program_clipboard'], 'true');
+  });
+
+  testWidgets("a group's defaults fill in a host's blank user and key", (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['groups'] = {
+      'g1': '{"id":"g1","label":"Production","parent_id":null,"color":null,"defaults":{"username":"ops-default","identity_id":"k1"}}',
+    };
+    engine.records['identities'] = {
+      'k1': '{"id":"k1","label":"laptop","key_type":"ed25519","public_key":"ssh-ed25519 AAAA","private_key_secret_id":"s1"}',
+    };
+    engine.secrets['s1'] = '-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----';
+    engine.records['hosts'] = {
+      'h1': hostJson('h1', 'web-1', group: 'g1').replaceFirst('"username":"ops"', '"username":""'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    final request = engine.requests.single;
+    expect(request.user, 'ops-default');
+    expect(request.auth, SshAuthKind.key);
+    expect(request.privateKey, contains('PRIVATE KEY'));
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

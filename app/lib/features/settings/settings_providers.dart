@@ -10,6 +10,7 @@ import '../../core/engine/engine.dart';
 abstract final class SettingKeys {
   static const themeMode = 'theme_mode';
   static const terminalTheme = 'terminal_theme';
+  static const programClipboard = 'program_clipboard';
 }
 
 String? _readString(Engine engine, String key) {
@@ -81,3 +82,28 @@ String terminalThemeFor(WidgetRef ref, BuildContext context) =>
 
 /// The gallery, read from the engine once.
 final themesProvider = Provider<List<ThemeInfo>>((ref) => ref.watch(engineProvider).themesList());
+
+/// Whether a program in the terminal may put text on the clipboard (OSC 52,
+/// as tmux and vim use). Off by default: a remote program should not be
+/// able to read or replace what you copied without you knowing.
+class ProgramClipboardNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    try {
+      final raw = ref.watch(engineProvider).settingGet(SettingKeys.programClipboard);
+      return raw != null && jsonDecode(raw) == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void set(bool on) {
+    state = on;
+    try {
+      ref.read(engineProvider).settingSet(SettingKeys.programClipboard, jsonEncode(on));
+    } catch (_) {}
+  }
+}
+
+final programClipboardProvider =
+    NotifierProvider<ProgramClipboardNotifier, bool>(ProgramClipboardNotifier.new);
