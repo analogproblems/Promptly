@@ -6,6 +6,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/engine/engine.dart' show TerminalSelectKind;
+import '../../core/platform.dart';
 import '../workspace/app_shortcuts.dart';
 import 'key_mapper.dart';
 import 'terminal_controller.dart';
@@ -15,7 +16,24 @@ import 'terminal_painter.dart';
 /// The terminal itself: paints the controller's grid, sizes the session to
 /// fit, and turns keys, mouse, scrolls and pastes into engine calls.
 class TerminalView extends StatefulWidget {
-  const TerminalView({super.key, required this.controller, this.autofocus = true, this.onFind, this.onOpenLink});
+  const TerminalView({
+    super.key,
+    required this.controller,
+    this.autofocus = true,
+    this.onFind,
+    this.onOpenLink,
+    this.imeInput,
+  });
+
+  /// The view that last took focus, so the keyboard bar can show or hide
+  /// its keyboard.
+  static _TerminalViewState? _active;
+
+  /// Ask the platform keyboard to appear for the focused terminal.
+  static void showKeyboard() => _active?._openIme();
+
+  /// Put the platform keyboard away; a tap on the terminal brings it back.
+  static void hideKeyboard() => SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
 
   final TerminalController controller;
   final bool autofocus;
@@ -27,6 +45,10 @@ class TerminalView extends StatefulWidget {
   /// Ctrl+click (or Cmd+click) on a link, and "Open link" in the menu.
   final void Function(String uri)? onOpenLink;
 
+  /// Take typed text from the platform's soft keyboard (the IME) as well
+  /// as from hardware key events. On by default on phones and tablets.
+  final bool? imeInput;
+
   @override
   State<TerminalView> createState() => _TerminalViewState();
 }
@@ -35,7 +57,16 @@ class TerminalView extends StatefulWidget {
 /// the pointer is dragged past an edge; the engine clamps it.
 typedef _Cell = ({int col, int line, bool right});
 
-class _TerminalViewState extends State<TerminalView> {
+class _TerminalViewState extends State<TerminalView> with TextInputClient {
+  TextInputConnection? _ime;
+
+  /// The IME's little buffer starts with one space, so that a backspace on
+  /// an otherwise empty buffer still reaches us as a change.
+  static const _imeBase = TextEditingValue(text: ' ', selection: TextSelection.collapsed(offset: 1));
+  TextEditingValue _imeValue = _imeBase;
+
+  bool get _useIme => widget.imeInput ?? isTouchPlatform;
+
   late final FocusNode _focus = FocusNode(debugLabel: 'terminal');
   late CellMetrics _metrics = CellMetrics.measure(widget.controller.fontSize);
   late GlyphCache _glyphs = GlyphCache(_metrics);
@@ -77,6 +108,8 @@ class _TerminalViewState extends State<TerminalView> {
 
   @override
   void dispose() {
+    _closeIme();
+    if (TerminalView._active == this) TerminalView._active = null;
     _blink?.cancel();
     widget.controller.removeListener(_onController);
     _focus.removeListener(_onFocus);
@@ -98,7 +131,101 @@ class _TerminalViewState extends State<TerminalView> {
 
   void _onFocus() {
     _restartBlink();
+    if (_focus.hasFocus) {
+      TerminalView._active = this;
+      if (_useIme) _openIme();
+    } else {
+      _closeIme();
+    }
     setState(() {});
+  }
+
+  // ---- The soft keyboard --------------------------------------------------
+
+  void _openIme() {
+    if (!_useIme) return;
+    _ime ??= TextInput.attach(
+      this,
+      TextInputConfiguration(
+        inputType: TextInputType.multiline,
+        inputAction: TextInputAction.newline,
+        autocorrect: false,
+        enableSuggestions: false,
+        keyboardAppearance: widget.controller.grid.defaultBg < 0x808080 ? Brightness.dark : Brightness.light,
+      ),
+    )..setEditingState(_imeValue);
+    _ime!.show();
+  }
+
+  void _closeIme() {
+    _ime?.close();
+    _ime = null;
+    _imeValue = _imeBase;
+  }
+
+  /// Send typed text to the program, through the sticky modifiers.
+  void _writeText(String text) {
+    final c = widget.controller;
+    if (c.grid.displayOffset != 0) c.scrollToBottom();
+    c.selectClear();
+    c.write(c.encodeTyped(text));
+  }
+
+  @override
+  TextEditingValue? get currentTextEditingValue => _imeValue;
+
+  @override
+  AutofillScope? get currentAutofillScope => null;
+
+  @override
+  void updateEditingValue(TextEditingValue value) {
+    // The IME holds a little buffer; what changed since last time is what
+    // was typed (or erased with backspace).
+    final before = _imeValue.text;
+    final after = value.text;
+    var common = 0;
+    while (common < before.length && common < after.length && before[common] == after[common]) {
+      common++;
+    }
+    final erased = before.length - common;
+    final typed = after.substring(common);
+    if (erased > 0) widget.controller.write(List.filled(erased, 0x7f));
+    if (typed.isNotEmpty) _writeText(typed.replaceAll('\n', '\r'));
+    _imeValue = value;
+    // Start the buffer afresh once nothing is being composed, so it never
+    // grows and a later backspace always means "erase what I typed".
+    if (!value.composing.isValid || value.composing.isCollapsed) {
+      _imeValue = _imeBase;
+      _ime?.setEditingState(_imeValue);
+    }
+  }
+
+  @override
+  void performAction(TextInputAction action) {
+    switch (action) {
+      case TextInputAction.newline:
+      case TextInputAction.done:
+      case TextInputAction.go:
+      case TextInputAction.send:
+        _writeText('\r');
+      default:
+        break;
+    }
+  }
+
+  @override
+  void performPrivateCommand(String action, Map<String, dynamic> data) {}
+
+  @override
+  void updateFloatingCursor(RawFloatingCursorPoint point) {}
+
+  @override
+  void showAutocorrectionPromptRect(int start, int end) {}
+
+  @override
+  void connectionClosed() {
+    _ime = null;
+    _imeValue = _imeBase;
   }
 
   void _restartBlink() {
@@ -122,6 +249,10 @@ class _TerminalViewState extends State<TerminalView> {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
     // The window's own shortcuts (tabs, panes, the palette) pass through.
     if (AppShortcuts.isReserved(event)) return KeyEventResult.ignored;
+    // With the soft keyboard attached, printable characters come through
+    // it (a hardware keyboard on a phone feeds the IME too); only keys it
+    // does not carry are taken from here.
+    if (_ime != null && !ctrl && !alt && !meta && _isPrintable(event)) return KeyEventResult.ignored;
 
     // App shortcuts first.
     final key = event.logicalKey;
@@ -168,6 +299,13 @@ class _TerminalViewState extends State<TerminalView> {
     return KeyEventResult.handled;
   }
 
+  static bool _isPrintable(KeyEvent event) {
+    final ch = event.character;
+    if (ch == null || ch.isEmpty) return false;
+    final code = ch.codeUnitAt(0);
+    return code >= 0x20 && code != 0x7f;
+  }
+
   // ---- Clipboard -------------------------------------------------------
 
   Future<void> _pasteFromClipboard() async {
@@ -209,7 +347,10 @@ class _TerminalViewState extends State<TerminalView> {
   void _onPointerDown(PointerDownEvent e) {
     _focus.requestFocus();
     // Touch selection (long press, handles) comes with the mobile build.
-    if (e.kind == PointerDeviceKind.touch) return;
+    if (e.kind == PointerDeviceKind.touch) {
+      if (_useIme) _openIme();
+      return;
+    }
     if (e.buttons & kSecondaryButton != 0) {
       _showContextMenu(e.position, _cellAt(e.localPosition));
       return;

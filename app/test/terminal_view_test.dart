@@ -29,8 +29,13 @@ class RecordingEngine implements Engine {
     return const Stream.empty();
   }
 
+  final List<List<int>> written = [];
   @override
-  void terminalWrite(int id, List<int> data) => calls.add('write ${data.length}');
+  void terminalWrite(int id, List<int> data) {
+    calls.add('write ${data.length}');
+    written.add(data);
+  }
+
   @override
   void terminalPaste(int id, String text) => calls.add('paste');
   @override
@@ -174,17 +179,25 @@ class RecordingEngine implements Engine {
   Future<SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName) =>
       throw UnimplementedError();
   @override
-  Future<void> syncJoinLocalFolder(String path, {String? passphrase, String? recoveryCode, required String deviceName}) =>
-      throw UnimplementedError();
+  Future<void> syncJoinLocalFolder(
+    String path, {
+    String? passphrase,
+    String? recoveryCode,
+    required String deviceName,
+  }) => throw UnimplementedError();
   @override
   Future<bool> syncSftpFolderHasVault(String hostId, String remoteDir) async => false;
   @override
   Future<SyncSetupResult> syncCreateSftp(String hostId, String remoteDir, String passphrase, String deviceName) =>
       throw UnimplementedError();
   @override
-  Future<void> syncJoinSftp(String hostId, String remoteDir,
-          {String? passphrase, String? recoveryCode, required String deviceName}) =>
-      throw UnimplementedError();
+  Future<void> syncJoinSftp(
+    String hostId,
+    String remoteDir, {
+    String? passphrase,
+    String? recoveryCode,
+    required String deviceName,
+  }) => throw UnimplementedError();
   @override
   Future<SyncStatus> syncNow() => throw UnimplementedError();
   @override
@@ -201,16 +214,14 @@ void main() {
     final controller = TerminalController(engine: engine, id: 1, label: 'test');
     String? opened;
     var findAsked = 0;
-    await tester.pumpWidget(MaterialApp(
-      theme: buildPromptlyTheme(Brightness.dark),
-      home: Scaffold(
-        body: TerminalView(
-          controller: controller,
-          onFind: () => findAsked++,
-          onOpenLink: (uri) => opened = uri,
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(
+          body: TerminalView(controller: controller, onFind: () => findAsked++, onOpenLink: (uri) => opened = uri),
         ),
       ),
-    ));
+    );
     await tester.pump();
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
@@ -227,17 +238,23 @@ void main() {
     await tester.pump();
     expect(engine.calls, contains('link 0,0'));
     expect(opened, 'https://example.com/docs');
-    expect(engine.calls.where((c) => c.startsWith('select')), isEmpty, reason: 'opening a link does not start a selection');
+    expect(
+      engine.calls.where((c) => c.startsWith('select')),
+      isEmpty,
+      reason: 'opening a link does not start a selection',
+    );
     controller.dispose();
   });
 
   testWidgets('the view subscribes, sizes the session to fit, and sends keys', (tester) async {
     final engine = RecordingEngine();
     final controller = TerminalController(engine: engine, id: 1, label: 'test');
-    await tester.pumpWidget(MaterialApp(
-      theme: buildPromptlyTheme(Brightness.dark),
-      home: Scaffold(body: TerminalView(controller: controller)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller)),
+      ),
+    );
     await tester.pump();
     expect(engine.calls, contains('events'));
     expect(engine.calls.where((c) => c.startsWith('resize')), isNotEmpty, reason: '${engine.calls}');
@@ -250,8 +267,7 @@ void main() {
     controller.dispose();
   });
 
-  testWidgets('dragging selects, Ctrl+Shift+C copies, typing clears, double click picks a word',
-      (tester) async {
+  testWidgets('dragging selects, Ctrl+Shift+C copies, typing clears, double click picks a word', (tester) async {
     final engine = RecordingEngine()..selection = 'hello';
     final controller = TerminalController(engine: engine, id: 1, label: 'test');
     String? copied;
@@ -261,10 +277,12 @@ void main() {
       }
       return null;
     });
-    await tester.pumpWidget(MaterialApp(
-      theme: buildPromptlyTheme(Brightness.dark),
-      home: Scaffold(body: TerminalView(controller: controller)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller)),
+      ),
+    );
     await tester.pump();
     final origin = tester.getTopLeft(find.byType(TerminalView));
 
@@ -296,6 +314,61 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
     expect(engine.calls.where((c) => c.startsWith('select word')), isNotEmpty, reason: '${engine.calls}');
+    controller.dispose();
+  });
+
+  testWidgets('the soft keyboard types into the session, Enter is Return, sticky Ctrl makes control bytes', (
+    tester,
+  ) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller, imeInput: true)),
+      ),
+    );
+    await tester.pump();
+    expect(tester.testTextInput.hasAnyClients, isTrue, reason: 'focus attaches the IME');
+
+    void ime(String text) => tester.testTextInput.updateEditingValue(
+      TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+      ),
+    );
+
+    ime(' ls');
+    await tester.pump();
+    expect(engine.written.last, 'ls'.codeUnits);
+    await tester.testTextInput.receiveAction(TextInputAction.newline);
+    await tester.pump();
+    expect(engine.written.last, [13]);
+
+    // Backspace in the IME erases what was typed.
+    ime(' ab');
+    await tester.pump();
+    expect(engine.written.last, 'ab'.codeUnits);
+    // The buffer is reset to its one-space sentinel after each commit, so a
+    // backspace empties it, and that is how it reaches the program.
+    ime('');
+    await tester.pump();
+    expect(engine.written.last, [0x7f]);
+
+    // A hardware key for a printable character is left to the IME (no double input).
+    final before = engine.written.length;
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyX);
+    await tester.pump();
+    expect(engine.written.length, before);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pump();
+    expect(engine.written.last, [0x1b, 0x5b, 0x41], reason: 'keys the IME lacks still come from key events');
+
+    controller.setSticky(ctrl: true);
+    ime(' c');
+    await tester.pump();
+    expect(engine.written.last, [3]);
+    expect(controller.stickyCtrl, isFalse, reason: 'sticky modifiers are one-shot');
     controller.dispose();
   });
 }

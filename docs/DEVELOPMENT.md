@@ -132,9 +132,20 @@ Windows yet. The path in `app/rust_builder/windows/CMakeLists.txt` climbs
 seven directories because Flutter builds plugins through a symlink under
 `windows/flutter/ephemeral`; do not "fix" it to match the Linux one.
 
-**Android.** Needs Android Studio's SDK and NDK, plus the Rust targets
-`aarch64-linux-android`, `armv7-linux-androideabi` and `x86_64-linux-android`.
-The build glue installs them with `cargo-ndk` on first build.
+**Android.** Needs the Android SDK with NDK 28.2.13676358 (the version
+Flutter's Gradle plugin asks for), a JDK 17 or newer, and the Rust targets
+`aarch64-linux-android`, `armv7-linux-androideabi` and `x86_64-linux-android`
+(the build glue installs a missing target itself). `flutter build apk
+--release` puts a universal APK at `app/build/app/outputs/flutter-apk/`;
+`flutter build appbundle --release` makes the bundle Play wants. Android 9
+(API 28) is the minimum. A release build signs with the upload key named
+by `app/android/key.properties` when that file exists (make the key once
+with `tools/android-keystore.sh`), else with the debug key, so a build for
+testing always comes out. CI builds both on every push and keeps them as
+the `promptly-android` artifact; the four `ANDROID_*` repository secrets,
+when set, make CI sign with the upload key. On a phone the terminal takes
+text from the system keyboard and shows a bar of the keys phones lack
+(Esc, Tab, sticky Ctrl and Alt, arrows, and the shell's punctuation).
 
 **macOS and iOS.** Need Xcode and the Rust targets `aarch64-apple-darwin`,
 `aarch64-apple-ios` and `aarch64-apple-ios-sim`. The podspecs in

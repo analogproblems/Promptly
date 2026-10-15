@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- SSH and sync both need the network. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="Promptly"
         android:name="${applicationName}"

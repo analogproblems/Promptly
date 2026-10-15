@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -58,6 +59,48 @@ class TerminalController extends ChangeNotifier {
   void write(List<int> bytes) {
     if (exited) return;
     _guard(() => engine.terminalWrite(id, bytes));
+  }
+
+  /// Modifiers the keyboard bar holds down for the next key, since a phone
+  /// keyboard has no Ctrl or Alt of its own. One-shot: typing clears them.
+  bool stickyCtrl = false;
+  bool stickyAlt = false;
+
+  void setSticky({bool? ctrl, bool? alt}) {
+    if (ctrl != null) stickyCtrl = ctrl;
+    if (alt != null) stickyAlt = alt;
+    notifyListeners();
+  }
+
+  /// Typed text as bytes for the program, through the sticky modifiers:
+  /// Ctrl turns a letter into its control byte, Alt prefixes Escape. Both
+  /// are released afterwards.
+  List<int> encodeTyped(String text) {
+    if (!stickyCtrl && !stickyAlt) return utf8.encode(text);
+    final out = <int>[];
+    for (final rune in text.runes) {
+      if (stickyAlt) out.add(0x1b);
+      if (stickyCtrl) {
+        final u = String.fromCharCode(rune).toUpperCase().codeUnitAt(0);
+        if (u >= 0x40 && u <= 0x5f) {
+          out.add(u & 0x1f);
+          continue;
+        }
+        if (rune == 0x20 || rune == 0x32) {
+          out.add(0);
+          continue;
+        }
+        if (rune == 0x3f) {
+          out.add(0x7f);
+          continue;
+        }
+      }
+      out.addAll(utf8.encode(String.fromCharCode(rune)));
+    }
+    stickyCtrl = false;
+    stickyAlt = false;
+    notifyListeners();
+    return out;
   }
 
   void paste(String text) {

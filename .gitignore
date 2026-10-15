@@ -13,6 +13,8 @@ app/*.iml
 app/android/.gradle/
 app/android/local.properties
 app/android/key.properties
+app/android/upload.jks
+*.jks
 app/ios/Pods/
 app/ios/.symlinks/
 app/macos/Pods/

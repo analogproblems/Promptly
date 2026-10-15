@@ -9,8 +9,10 @@ import 'package:promptly/app.dart';
 import 'package:promptly/core/theme/theme.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/core/file_picker.dart';
+import 'package:promptly/core/platform.dart';
 import 'package:promptly/features/files/files_screen.dart';
 import 'package:promptly/features/files/fs.dart';
+import 'package:promptly/features/terminal/keyboard_bar.dart';
 import 'package:promptly/features/sessions/session_body.dart';
 import 'package:promptly/features/sessions/session_thumbnail.dart';
 import 'package:promptly/features/workspace/workspace.dart';
@@ -54,37 +56,46 @@ class FakeEngine implements Engine {
     openedThemes.add(theme);
     return 1;
   }
+
   /// Frames pushed after the first one, by `emitText`.
   final StreamController<TerminalEvent> laterFrames = StreamController<TerminalEvent>.broadcast();
 
   /// Show `text` on the top row of a session, as a program printing it would.
   void emitText(int id, String text) {
     final glyphs = List<String>.generate(frameCols, (i) => i < text.length ? text[i] : '');
-    laterFrames.add(TerminalEvent(
-      kind: TerminalEventKind.frame,
-      frame: TerminalFrame(
-        cols: frameCols,
-        rows: frameRows,
-        full: false,
-        rowsChanged: [
-          TerminalRow(line: 0, glyphs: glyphs, fg: Uint32List(frameCols), bg: Uint32List(frameCols), flags: Uint16List(frameCols)),
-        ],
-        cursor: TerminalCursor(line: 0, col: text.length, shape: TerminalCursorShape.block),
-        displayOffset: 0,
-        historyLen: 0,
-        defaultFg: 0xE6EDF3,
-        defaultBg: 0x0E1116,
-        cursorColor: 0x7CE38B,
-        title: 'deploy@web-1: ~',
-        bell: false,
-        appCursor: false,
-        altScreen: false,
-        bracketedPaste: false,
-        mouseReporting: false,
+    laterFrames.add(
+      TerminalEvent(
+        kind: TerminalEventKind.frame,
+        frame: TerminalFrame(
+          cols: frameCols,
+          rows: frameRows,
+          full: false,
+          rowsChanged: [
+            TerminalRow(
+              line: 0,
+              glyphs: glyphs,
+              fg: Uint32List(frameCols),
+              bg: Uint32List(frameCols),
+              flags: Uint16List(frameCols),
+            ),
+          ],
+          cursor: TerminalCursor(line: 0, col: text.length, shape: TerminalCursorShape.block),
+          displayOffset: 0,
+          historyLen: 0,
+          defaultFg: 0xE6EDF3,
+          defaultBg: 0x0E1116,
+          cursorColor: 0x7CE38B,
+          title: 'deploy@web-1: ~',
+          bell: false,
+          appCursor: false,
+          altScreen: false,
+          bracketedPaste: false,
+          mouseReporting: false,
+        ),
+        clipboard: null,
+        exitCode: null,
       ),
-      clipboard: null,
-      exitCode: null,
-    ));
+    );
   }
 
   @override
@@ -134,6 +145,7 @@ class FakeEngine implements Engine {
 
     return events();
   }
+
   /// Everything typed or pasted into sessions.
   final List<List<int>> written = [];
   final List<String> pasted = [];
@@ -187,24 +199,24 @@ class FakeEngine implements Engine {
   void setDataDir(String path) {}
 
   static ThemeInfo _theme(String id, String name, bool dark, int bg, int fg) => ThemeInfo(
-        id: id,
-        name: name,
-        dark: dark,
-        foreground: fg,
-        background: bg,
-        cursor: fg,
-        selection: 0x444444,
-        ansi: Uint32List.fromList(List.generate(16, (i) => 0x0F0F0F * (i + 1))),
-        builtin: true,
-      );
+    id: id,
+    name: name,
+    dark: dark,
+    foreground: fg,
+    background: bg,
+    cursor: fg,
+    selection: 0x444444,
+    ansi: Uint32List.fromList(List.generate(16, (i) => 0x0F0F0F * (i + 1))),
+    builtin: true,
+  );
 
   @override
   List<ThemeInfo> themesList() => [
-        _theme('promptly-dark', 'Promptly Dark', true, 0x0E1116, 0xE6EDF3),
-        _theme('promptly-light', 'Promptly Light', false, 0xFAFAF7, 0x1F2328),
-        _theme('dracula', 'Dracula', true, 0x282A36, 0xF8F8F2),
-        ...customThemes,
-      ];
+    _theme('promptly-dark', 'Promptly Dark', true, 0x0E1116, 0xE6EDF3),
+    _theme('promptly-light', 'Promptly Light', false, 0xFAFAF7, 0x1F2328),
+    _theme('dracula', 'Dracula', true, 0x282A36, 0xF8F8F2),
+    ...customThemes,
+  ];
 
   /// When set, SSH attempts succeed with this engine session id, and that
   /// session emits one full frame of the given size.
@@ -217,15 +229,37 @@ class FakeEngine implements Engine {
     requests.add(request);
     return requests.length;
   }
+
   @override
   Stream<SshEvent> sshConnectEvents(int attemptId) {
     final id = connectedSessionId;
     if (id == null) return const Stream.empty();
     return Stream.fromIterable([
-      const SshEvent(kind: SshEventKind.progress, step: SshStep.connecting, hostKey: null, secretPrompt: null, kbName: null, kbInstructions: null, kbPrompts: null, sessionId: null, error: null),
-      SshEvent(kind: SshEventKind.connected, step: null, hostKey: null, secretPrompt: null, kbName: null, kbInstructions: null, kbPrompts: null, sessionId: id, error: null),
+      const SshEvent(
+        kind: SshEventKind.progress,
+        step: SshStep.connecting,
+        hostKey: null,
+        secretPrompt: null,
+        kbName: null,
+        kbInstructions: null,
+        kbPrompts: null,
+        sessionId: null,
+        error: null,
+      ),
+      SshEvent(
+        kind: SshEventKind.connected,
+        step: null,
+        hostKey: null,
+        secretPrompt: null,
+        kbName: null,
+        kbInstructions: null,
+        kbPrompts: null,
+        sessionId: id,
+        error: null,
+      ),
     ]);
   }
+
   @override
   void sshAnswerHostKey(int attemptId, bool trust) {}
   @override
@@ -251,19 +285,46 @@ class FakeEngine implements Engine {
 
   @override
   Future<List<Reachability>> hostsReachability(List<ReachTarget> targets, int timeoutMs) async => [
-        for (final t in targets)
-          Reachability(id: t.id, reachable: reach[t.host]?.$1 ?? false, millis: reach[t.host]?.$2 ?? 0),
-      ];
+    for (final t in targets)
+      Reachability(id: t.id, reachable: reach[t.host]?.$1 ?? false, millis: reach[t.host]?.$2 ?? 0),
+  ];
 
   /// A small remote file tree for the browser, by folder, and every change
   /// and transfer asked for.
   final Map<String, List<FileEntry>> remoteFiles = {
     '/home/ops': [
-      FileEntry(name: 'projects', isDir: true, isSymlink: false, size: BigInt.zero, modified: BigInt.zero, permissions: 0x1ED, owner: 'ops', group: 'ops'),
-      FileEntry(name: 'notes.txt', isDir: false, isSymlink: false, size: BigInt.from(2048), modified: BigInt.zero, permissions: 0x1A4, owner: 'ops', group: 'ops'),
+      FileEntry(
+        name: 'projects',
+        isDir: true,
+        isSymlink: false,
+        size: BigInt.zero,
+        modified: BigInt.zero,
+        permissions: 0x1ED,
+        owner: 'ops',
+        group: 'ops',
+      ),
+      FileEntry(
+        name: 'notes.txt',
+        isDir: false,
+        isSymlink: false,
+        size: BigInt.from(2048),
+        modified: BigInt.zero,
+        permissions: 0x1A4,
+        owner: 'ops',
+        group: 'ops',
+      ),
     ],
     '/home/ops/projects': [
-      FileEntry(name: 'app.py', isDir: false, isSymlink: false, size: BigInt.from(512), modified: BigInt.zero, permissions: 0x1A4, owner: 'ops', group: 'ops'),
+      FileEntry(
+        name: 'app.py',
+        isDir: false,
+        isSymlink: false,
+        size: BigInt.from(512),
+        modified: BigInt.zero,
+        permissions: 0x1A4,
+        owner: 'ops',
+        group: 'ops',
+      ),
     ],
   };
   final List<String> fileCalls = [];
@@ -280,7 +341,8 @@ class FakeEngine implements Engine {
   @override
   Future<String> filesHome(int id) async => '/home/ops';
   @override
-  Future<List<FileEntry>> filesList(int id, String path) async => remoteFiles[path] ?? (throw 'That is not there any more.');
+  Future<List<FileEntry>> filesList(int id, String path) async =>
+      remoteFiles[path] ?? (throw 'That is not there any more.');
   @override
   Future<void> filesMkdir(int id, String path) async => fileCalls.add('mkdir $path');
   @override
@@ -304,17 +366,38 @@ class FakeEngine implements Engine {
     fileCalls.add('write $path');
     remoteText[path] = text;
   }
+
   @override
   int filesDownload(int id, String remote, String local) {
     fileCalls.add('download $remote $local');
-    transfers.add(FileTransfer(id: transfers.length + 1, name: remote.split('/').last, upload: false, done: BigInt.from(2048), total: BigInt.from(2048), finished: true, error: null));
+    transfers.add(
+      FileTransfer(
+        id: transfers.length + 1,
+        name: remote.split('/').last,
+        upload: false,
+        done: BigInt.from(2048),
+        total: BigInt.from(2048),
+        finished: true,
+        error: null,
+      ),
+    );
     return transfers.length;
   }
 
   @override
   int filesUpload(int id, String local, String remote) {
     fileCalls.add('upload $local $remote');
-    transfers.add(FileTransfer(id: transfers.length + 1, name: remote.split('/').last, upload: true, done: BigInt.from(10), total: BigInt.from(10), finished: true, error: null));
+    transfers.add(
+      FileTransfer(
+        id: transfers.length + 1,
+        name: remote.split('/').last,
+        upload: true,
+        done: BigInt.from(10),
+        total: BigInt.from(10),
+        finished: true,
+        error: null,
+      ),
+    );
     return transfers.length;
   }
 
@@ -336,7 +419,13 @@ class FakeEngine implements Engine {
     forwards = [
       for (final f in forwards)
         f.index == index
-            ? SshForwardStatus(index: f.index, forward: f.forward, active: enabled, boundPort: enabled ? f.forward.bindPort : 0, error: null)
+            ? SshForwardStatus(
+                index: f.index,
+                forward: f.forward,
+                active: enabled,
+                boundPort: enabled ? f.forward.bindPort : 0,
+                error: null,
+              )
             : f,
     ];
     return 0;
@@ -344,8 +433,8 @@ class FakeEngine implements Engine {
 
   @override
   List<StoreRecord> recordsList(String collection) => [
-        for (final e in (records[collection] ?? {}).entries) StoreRecord(id: e.key, json: e.value),
-      ];
+    for (final e in (records[collection] ?? {}).entries) StoreRecord(id: e.key, json: e.value),
+  ];
   @override
   StoreRecord? recordGet(String collection, String id) {
     final json = records[collection]?[id];
@@ -353,8 +442,7 @@ class FakeEngine implements Engine {
   }
 
   @override
-  void recordPut(String collection, String id, String json) =>
-      (records[collection] ??= {})[id] = json;
+  void recordPut(String collection, String id, String json) => (records[collection] ??= {})[id] = json;
   @override
   bool recordDelete(String collection, String id) => (records[collection] ?? {}).remove(id) != null;
   @override
@@ -388,10 +476,13 @@ class FakeEngine implements Engine {
       fingerprint: 'SHA256:imported',
       encrypted: false,
       comment: '',
-      privateOpenssh: putty ? '-----BEGIN OPENSSH PRIVATE KEY-----\nconverted\n-----END OPENSSH PRIVATE KEY-----\n' : null,
+      privateOpenssh: putty
+          ? '-----BEGIN OPENSSH PRIVATE KEY-----\nconverted\n-----END OPENSSH PRIVATE KEY-----\n'
+          : null,
       converted: putty,
     );
   }
+
   @override
   String keyFingerprint(String publicKey) => 'SHA256:${publicKode(publicKey)}';
   static int publicKode(String s) => s.hashCode;
@@ -399,6 +490,7 @@ class FakeEngine implements Engine {
   // ---- Import ----
   List<SshConfigHost> configHosts = const [];
   List<String>? imported;
+
   /// Imported themes, listed after the built-in ones.
   final List<ThemeInfo> customThemes = [];
 
@@ -523,8 +615,22 @@ class FakeEngine implements Engine {
       warnings: const [],
       pendingOps: 0,
       devices: [
-        SyncDevice(id: 'this-device', name: name, platform: 'linux', enrolledAt: '2026-10-15T06:00:00Z', lastSeenAt: null, isThisDevice: true),
-        const SyncDevice(id: 'other', name: 'Phone', platform: 'android', enrolledAt: '2026-10-15T06:00:00Z', lastSeenAt: null, isThisDevice: false),
+        SyncDevice(
+          id: 'this-device',
+          name: name,
+          platform: 'linux',
+          enrolledAt: '2026-10-15T06:00:00Z',
+          lastSeenAt: null,
+          isThisDevice: true,
+        ),
+        const SyncDevice(
+          id: 'other',
+          name: 'Phone',
+          platform: 'android',
+          enrolledAt: '2026-10-15T06:00:00Z',
+          lastSeenAt: null,
+          isThisDevice: false,
+        ),
       ],
       vaultBytes: 2048,
       recoveryHint: 'R7Q2',
@@ -549,7 +655,12 @@ class FakeEngine implements Engine {
   }
 
   @override
-  Future<void> syncJoinLocalFolder(String path, {String? passphrase, String? recoveryCode, required String deviceName}) async {
+  Future<void> syncJoinLocalFolder(
+    String path, {
+    String? passphrase,
+    String? recoveryCode,
+    required String deviceName,
+  }) async {
     syncCalls.add('join $path pass=$passphrase code=$recoveryCode');
     if (passphrase == 'wrong') throw 'the passphrase is wrong';
     _configured(path, deviceName);
@@ -569,7 +680,13 @@ class FakeEngine implements Engine {
   }
 
   @override
-  Future<void> syncJoinSftp(String hostId, String remoteDir, {String? passphrase, String? recoveryCode, required String deviceName}) async {
+  Future<void> syncJoinSftp(
+    String hostId,
+    String remoteDir, {
+    String? passphrase,
+    String? recoveryCode,
+    required String deviceName,
+  }) async {
     syncCalls.add('join-sftp $hostId $remoteDir pass=$passphrase');
     _configured('test server · $remoteDir', deviceName);
   }
@@ -621,14 +738,16 @@ Widget appWith(FakeEngine? engine, {String? localDir, Fs? localFs, bool onboarde
   engine ??= FakeEngine();
   if (onboarded) engine.settings.putIfAbsent('onboarding_done', () => 'true');
   return ProviderScope(
-      overrides: [
-        engineProvider.overrideWithValue(engine),
-        filePickerProvider.overrideWithValue(({required String label, required List<String> extensions}) async => pickedFile),
-        if (localDir != null) localStartDirProvider.overrideWithValue(localDir),
-        if (localFs != null) localFsProvider.overrideWithValue(localFs),
-      ],
-      child: const PromptlyApp(),
-    );
+    overrides: [
+      engineProvider.overrideWithValue(engine),
+      filePickerProvider.overrideWithValue(
+        ({required String label, required List<String> extensions}) async => pickedFile,
+      ),
+      if (localDir != null) localStartDirProvider.overrideWithValue(localDir),
+      if (localFs != null) localFsProvider.overrideWithValue(localFs),
+    ],
+    child: const PromptlyApp(),
+  );
 }
 
 String hostJson(
@@ -694,7 +813,13 @@ void desktopWindow(WidgetTester tester) {
   });
 }
 
-Future<void> chord(WidgetTester tester, LogicalKeyboardKey key, {bool control = true, bool shift = true, bool alt = false}) async {
+Future<void> chord(
+  WidgetTester tester,
+  LogicalKeyboardKey key, {
+  bool control = true,
+  bool shift = true,
+  bool alt = false,
+}) async {
   if (control) await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
   if (shift) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
   if (alt) await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
@@ -801,13 +926,8 @@ void main() {
 
   testWidgets('saved hosts show grouped, searchable, with the ungrouped under Other', (tester) async {
     final engine = FakeEngine();
-    engine.records['groups'] = {
-      'g1': '{"id":"g1","label":"Production","parent_id":null,"color":null,"defaults":{}}',
-    };
-    engine.records['hosts'] = {
-      'h1': hostJson('h1', 'web-1', group: 'g1'),
-      'h2': hostJson('h2', 'nas'),
-    };
+    engine.records['groups'] = {'g1': '{"id":"g1","label":"Production","parent_id":null,"color":null,"defaults":{}}'};
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1', group: 'g1'), 'h2': hostJson('h2', 'nas')};
     await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
     expect(find.text('PRODUCTION'), findsOneWidget);
@@ -1012,7 +1132,11 @@ void main() {
   testWidgets('a vault on a saved host goes through the server step', (tester) async {
     final engine = FakeEngine();
     engine.records['hosts'] = {
-      'h1': hostJson('h1', 'web-1', auth: '{"kind":"password","password_secret_id":"0192f3a0-0000-7000-8000-000000000002"}'),
+      'h1': hostJson(
+        'h1',
+        'web-1',
+        auth: '{"kind":"password","password_secret_id":"0192f3a0-0000-7000-8000-000000000002"}',
+      ),
       'h2': hostJson('h2', 'nas'), // no stored login: must not be offered
     };
     await tester.pumpWidget(app(engine));
@@ -1046,9 +1170,36 @@ void main() {
   testWidgets('hosts from ~/.ssh/config can be picked and imported', (tester) async {
     final engine = FakeEngine()
       ..configHosts = const [
-        SshConfigHost(alias: 'web-1', hostname: 'web-1.example', user: 'deploy', port: 22, identityFile: '/home/me/.ssh/id_ed25519', keyReadable: true, proxyJump: null, alreadyImported: false),
-        SshConfigHost(alias: 'db', hostname: '10.0.0.20', user: 'postgres', port: 2222, identityFile: null, keyReadable: false, proxyJump: 'web-1', alreadyImported: false),
-        SshConfigHost(alias: 'old', hostname: 'old.example', user: '', port: 22, identityFile: null, keyReadable: false, proxyJump: null, alreadyImported: true),
+        SshConfigHost(
+          alias: 'web-1',
+          hostname: 'web-1.example',
+          user: 'deploy',
+          port: 22,
+          identityFile: '/home/me/.ssh/id_ed25519',
+          keyReadable: true,
+          proxyJump: null,
+          alreadyImported: false,
+        ),
+        SshConfigHost(
+          alias: 'db',
+          hostname: '10.0.0.20',
+          user: 'postgres',
+          port: 2222,
+          identityFile: null,
+          keyReadable: false,
+          proxyJump: 'web-1',
+          alreadyImported: false,
+        ),
+        SshConfigHost(
+          alias: 'old',
+          hostname: 'old.example',
+          user: '',
+          port: 22,
+          identityFile: null,
+          keyReadable: false,
+          proxyJump: null,
+          alreadyImported: true,
+        ),
       ];
     await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
@@ -1135,10 +1286,15 @@ void main() {
     expect(saved, contains('"jump_host_id":"b1"'));
     expect(saved, contains('"persistent_session":true'));
     expect(saved, contains('"agent_forwarding":false'));
-    expect(saved, contains('"kind":"local","bind_host":"","bind_port":8080,"target_host":"db","target_port":5432,"auto":true'));
+    expect(
+      saved,
+      contains('"kind":"local","bind_host":"","bind_port":8080,"target_host":"db","target_port":5432,"auto":true'),
+    );
   });
 
-  testWidgets('connecting through a jump host sends the chain, tmux and the forwards, which the session can toggle', (tester) async {
+  testWidgets('connecting through a jump host sends the chain, tmux and the forwards, which the session can toggle', (
+    tester,
+  ) async {
     final engine = FakeEngine()..connectedSessionId = 7;
     engine.secrets['p1'] = 'hunter2';
     engine.records['hosts'] = {
@@ -1163,7 +1319,9 @@ void main() {
     expect(r.persistent, isTrue);
     expect(r.forwards.single.bindPort, 8080);
 
-    engine.forwards = [SshForwardStatus(index: 0, forward: r.forwards.single, active: true, boundPort: 8080, error: null)];
+    engine.forwards = [
+      SshForwardStatus(index: 0, forward: r.forwards.single, active: true, boundPort: 8080, error: null),
+    ];
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('session-forwards')));
@@ -1205,7 +1363,10 @@ void main() {
     await tester.enterText(find.byKey(const Key('var-default-path')), '/');
     await tester.tap(find.byKey(const Key('snippet-save')));
     await tester.pumpAndSettle();
-    expect(engine.records['snippets']!.values.single, contains('"variables":[{"name":"path","default":"/","prompt":""}]'));
+    expect(
+      engine.records['snippets']!.values.single,
+      contains('"variables":[{"name":"path","default":"/","prompt":""}]'),
+    );
     expect(find.text('Disk'), findsOneWidget);
     expect(find.text('df -h {{path}}'), findsOneWidget);
   });
@@ -1213,7 +1374,12 @@ void main() {
   testWidgets('a snippet run from a live session asks for its variables and types the command', (tester) async {
     final engine = FakeEngine()..connectedSessionId = 7;
     engine.records['snippets'] = {
-      's1': snippetJson('s1', 'Disk', 'df -h {{path}}', variables: '[{"name":"path","default":"/","prompt":"Which folder?"}]'),
+      's1': snippetJson(
+        's1',
+        'Disk',
+        'df -h {{path}}',
+        variables: '[{"name":"path","default":"/","prompt":"Which folder?"}]',
+      ),
     };
     await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
@@ -1242,7 +1408,12 @@ void main() {
       'h2': hostJson('h2', 'web-2', auth: '{"kind":"password","password_secret_id":"p1"}'),
     };
     engine.records['snippets'] = {'s1': snippetJson('s1', 'Uptime', 'uptime')};
-    engine.execResults['web-1.example'] = const SshExecResult(output: ' up 3 days', exitCode: 0, timedOut: false, error: null);
+    engine.execResults['web-1.example'] = const SshExecResult(
+      output: ' up 3 days',
+      exitCode: 0,
+      timedOut: false,
+      error: null,
+    );
     engine.execResults['web-2.example'] = const SshExecResult(
       output: '',
       exitCode: null,
@@ -1399,7 +1570,9 @@ void main() {
     expect(find.byType(SessionBody), findsOneWidget);
   });
 
-  testWidgets('the file browser lists a host, walks into folders, and makes, renames, chmods and deletes', (tester) async {
+  testWidgets('the file browser lists a host, walks into folders, and makes, renames, chmods and deletes', (
+    tester,
+  ) async {
     final engine = FakeEngine()..connectedSessionId = 7;
     engine.records['hosts'] = {'h1': hostJson('h1', 'web-1')};
     await tester.pumpWidget(app(engine));
@@ -1538,8 +1711,17 @@ void main() {
     expect(find.text('FAVOURITES'), findsOneWidget);
     expect(find.text('RECENT'), findsOneWidget);
     expect(find.byKey(const Key('favourite-row-h3')), findsOneWidget);
-    final recentRows = tester.widgetList(find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key as ValueKey<String>).value.startsWith('recent-row-'))).toList();
-    expect(recentRows.map((w) => (w.key as ValueKey<String>).value).toList(), ['recent-row-h2', 'recent-row-h1'], reason: 'newest first');
+    final recentRows = tester
+        .widgetList(
+          find.byWidgetPredicate(
+            (w) => w.key is ValueKey<String> && (w.key as ValueKey<String>).value.startsWith('recent-row-'),
+          ),
+        )
+        .toList();
+    expect(recentRows.map((w) => (w.key as ValueKey<String>).value).toList(), [
+      'recent-row-h2',
+      'recent-row-h1',
+    ], reason: 'newest first');
     expect(find.byKey(const Key('host-row-h3')), findsOneWidget, reason: 'the full list still has it');
 
     // The search box has a scroller of its own; aim at the list.
@@ -1646,7 +1828,13 @@ void main() {
     addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
     final engine = FakeEngine()
       ..records['hosts'] = {
-        'h1': hostJson('h1', 'web-1', color: 'blue', favourite: true, lastConnected: DateTime.now().toUtc().toIso8601String()),
+        'h1': hostJson(
+          'h1',
+          'web-1',
+          color: 'blue',
+          favourite: true,
+          lastConnected: DateTime.now().toUtc().toIso8601String(),
+        ),
         'h2': hostJson('h2', 'db-primary'),
       }
       ..records['snippets'] = {'s1': snippetJson('s1', 'Disk space', 'df -h {{path}}')};
@@ -1721,7 +1909,10 @@ void main() {
     await tester.pumpWidget(appWith(FakeEngine(), onboarded: false));
     await tester.pumpAndSettle();
     final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
-    expect(materialApp.theme!.pageTransitionsTheme.builders[TargetPlatform.linux], isA<NoMotionPageTransitionsBuilder>());
+    expect(
+      materialApp.theme!.pageTransitionsTheme.builders[TargetPlatform.linux],
+      isA<NoMotionPageTransitionsBuilder>(),
+    );
     await tester.tap(find.byKey(const Key('onboarding-next')));
     await tester.pump();
     expect(find.text('Your data, yours.'), findsOneWidget, reason: 'the page jumps instead of sliding');
@@ -1730,7 +1921,12 @@ void main() {
   testWidgets('a CSV file imports the hosts picked in the preview', (tester) async {
     final engine = FakeEngine();
     const csv = 'Label,Hostname/IP,Username,Password\nweb-1,10.0.0.1,deploy,s3cret\ndb-1,10.0.0.2,root,\n';
-    await tester.pumpWidget(appWith(engine, pickedFile: const PickedTextFile(name: 'termius.csv', text: csv)));
+    await tester.pumpWidget(
+      appWith(
+        engine,
+        pickedFile: const PickedTextFile(name: 'termius.csv', text: csv),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
@@ -1755,7 +1951,12 @@ void main() {
   testWidgets('a theme file imports, becomes the terminal theme, and can be removed', (tester) async {
     final engine = FakeEngine()..connectedSessionId = 1;
     const base16 = 'scheme: "Ocean"\nbase00: "2b303b"\nbase05: "c0c5ce"\n';
-    await tester.pumpWidget(appWith(engine, pickedFile: const PickedTextFile(name: 'ocean.yaml', text: base16)));
+    await tester.pumpWidget(
+      appWith(
+        engine,
+        pickedFile: const PickedTextFile(name: 'ocean.yaml', text: base16),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
@@ -1782,7 +1983,12 @@ void main() {
   testWidgets('a PuTTY key chosen from a file is stored in OpenSSH form', (tester) async {
     final engine = FakeEngine();
     const ppk = 'PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\nComment: work\n';
-    await tester.pumpWidget(appWith(engine, pickedFile: const PickedTextFile(name: 'work.ppk', text: ppk)));
+    await tester.pumpWidget(
+      appWith(
+        engine,
+        pickedFile: const PickedTextFile(name: 'work.ppk', text: ppk),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Keys').first);
     await tester.pumpAndSettle();
@@ -1802,7 +2008,16 @@ void main() {
       ..connectedSessionId = 7
       ..records['hosts'] = {'h1': hostJson('h1', 'web-1')}
       ..remoteFiles['/home/ops'] = [
-        FileEntry(name: 'notes.txt', isDir: false, isSymlink: false, size: BigInt.from(12), modified: BigInt.zero, permissions: 0x1A4, owner: 'ops', group: 'ops'),
+        FileEntry(
+          name: 'notes.txt',
+          isDir: false,
+          isSymlink: false,
+          size: BigInt.from(12),
+          modified: BigInt.zero,
+          permissions: 0x1A4,
+          owner: 'ops',
+          group: 'ops',
+        ),
       ]
       ..remoteText['/home/ops/notes.txt'] = 'hello\nworld\n';
     await tester.pumpWidget(app(engine));
@@ -1837,5 +2052,43 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('editor-text')), findsNothing);
     expect(engine.remoteText['/home/ops/notes.txt'], 'hello\nthere\n', reason: 'the discarded text was not written');
+  });
+
+  testWidgets('on a phone the session has a keyboard bar whose keys type into the shell', (tester) async {
+    touchPlatformOverride = true;
+    addTearDown(() => touchPlatformOverride = null);
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final engine = FakeEngine()..connectedSessionId = 1;
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sessions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open a local shell'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('kb-esc')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('kb-esc')));
+    expect(engine.written.last, [0x1b]);
+    final bar = find.descendant(of: find.byType(KeyboardBar), matching: find.byType(Scrollable));
+    await tester.scrollUntilVisible(find.byKey(const Key('kb-up')), 80, scrollable: bar);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('kb-up')));
+    expect(engine.written.last, [0x1b, 0x5b, 0x41]);
+    await tester.scrollUntilVisible(find.byKey(const Key('kb-ctrl')), -80, scrollable: bar);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('kb-ctrl')));
+    await tester.pump();
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(text: ' c', selection: TextSelection.collapsed(offset: 2)),
+    );
+    await tester.pump();
+    expect(engine.written.last, [3], reason: 'Ctrl+C through the sticky key');
+    await tester.tap(find.byKey(const Key('kb-alt')));
+    await tester.scrollUntilVisible(find.byKey(const Key('kb-dash')), 80, scrollable: bar);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('kb-dash')));
+    expect(engine.written.last, [0x1b, 0x2d], reason: 'Alt prefixes Escape');
+    expect(find.byKey(const Key('kb-snippets')), findsOneWidget);
   });
 }

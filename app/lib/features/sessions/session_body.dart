@@ -5,10 +5,12 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/engine/engine.dart' show TerminalSearchHit;
 import '../../core/links.dart';
+import '../../core/platform.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/host_colors.dart';
 import '../settings/settings_providers.dart';
+import '../terminal/keyboard_bar.dart';
 import '../terminal/terminal_view.dart';
 import '../workspace/workspace.dart' show findRequestProvider;
 import 'connecting_view.dart';
@@ -123,6 +125,8 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
     }
   }
 
+  static bool get _touchPlatform => isTouchPlatform;
+
   KeyEventResult _onSearchKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     if (event.logicalKey == LogicalKeyboardKey.escape) {
@@ -174,8 +178,7 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
           onPointerDown: widget.onFocus == null ? null : (_) => widget.onFocus!(),
           child: Column(
             children: [
-              if (accent != null)
-                Container(key: const Key('host-colour-bar'), height: 3, color: accent),
+              if (accent != null) Container(key: const Key('host-colour-bar'), height: 3, color: accent),
               Container(
                 height: barHeight,
                 padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -197,8 +200,8 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                       label: live
                           ? 'Connected'
                           : entry.isConnecting
-                              ? 'Connecting'
-                              : 'Not connected',
+                          ? 'Connecting'
+                          : 'Not connected',
                       child: Container(
                         width: 8,
                         height: 8,
@@ -206,8 +209,8 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                           color: live
                               ? t.accent
                               : entry.isConnecting
-                                  ? t.warning
-                                  : t.muted,
+                              ? t.warning
+                              : t.muted,
                           shape: BoxShape.circle,
                         ),
                       ),
@@ -226,10 +229,7 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                       ),
                     ),
                     if (c != null)
-                      Text(
-                        '${c.grid.cols}×${c.grid.rows}',
-                        style: monoStyle(context, size: 11, color: t.muted),
-                      ),
+                      Text('${c.grid.cols}×${c.grid.rows}', style: monoStyle(context, size: 11, color: t.muted)),
                     if (c != null)
                       IconButton(
                         key: const Key('session-search'),
@@ -276,30 +276,47 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
               Expanded(
                 child: c == null
                     ? (entry.flow != null
-                        ? ConnectingView(
-                            flow: entry.flow!,
-                            onCancel: widget.onClose,
-                            onRetry: () => ref.read(sessionManagerProvider.notifier).retry(entry.id),
-                          )
-                        : Center(
-                            child: Text(entry.error ?? 'Nothing here.', style: TextStyle(color: t.muted)),
-                          ))
-                    : Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          TerminalView(controller: c, autofocus: widget.focused, onFind: _openSearch, onOpenLink: _openLink),
-                          if (entry.reconnecting)
-                            _ReconnectOverlay(
-                              entry: entry,
-                              onStop: () => ref.read(sessionManagerProvider.notifier).stopReconnect(entry.id),
+                          ? ConnectingView(
+                              flow: entry.flow!,
+                              onCancel: widget.onClose,
+                              onRetry: () => ref.read(sessionManagerProvider.notifier).retry(entry.id),
                             )
-                          else if (c.exited)
-                            _ExitedOverlay(
-                              code: c.exitCode,
-                              isLocal: entry.isLocal,
-                              detail: entry.error,
-                              onClose: widget.onClose,
-                              onAgain: _again,
+                          : Center(
+                              child: Text(entry.error ?? 'Nothing here.', style: TextStyle(color: t.muted)),
+                            ))
+                    : Column(
+                        children: [
+                          Expanded(
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                TerminalView(
+                                  controller: c,
+                                  autofocus: widget.focused,
+                                  onFind: _openSearch,
+                                  onOpenLink: _openLink,
+                                ),
+                                if (entry.reconnecting)
+                                  _ReconnectOverlay(
+                                    entry: entry,
+                                    onStop: () => ref.read(sessionManagerProvider.notifier).stopReconnect(entry.id),
+                                  )
+                                else if (c.exited)
+                                  _ExitedOverlay(
+                                    code: c.exitCode,
+                                    isLocal: entry.isLocal,
+                                    detail: entry.error,
+                                    onClose: widget.onClose,
+                                    onAgain: _again,
+                                  ),
+                              ],
+                            ),
+                          ),
+                          // The keys a phone keyboard lacks, above the system keyboard.
+                          if (!widget.compact && !c.exited && _touchPlatform)
+                            KeyboardBar(
+                              controller: c,
+                              onSnippets: live ? () => showSnippetsDrawer(context, ref, entry) : null,
                             ),
                         ],
                       ),
@@ -318,8 +335,8 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
     final status = _noMatch
         ? 'No matches'
         : hit == null
-            ? ''
-            : '${hit.index} of ${hit.total}';
+        ? ''
+        : '${hit.index} of ${hit.total}';
     return Container(
       height: 40,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -348,7 +365,11 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
               ),
             ),
           ),
-          Text(status, key: const Key('search-status'), style: TextStyle(fontSize: 12, color: _noMatch ? t.danger : t.muted)),
+          Text(
+            status,
+            key: const Key('search-status'),
+            style: TextStyle(fontSize: 12, color: _noMatch ? t.danger : t.muted),
+          ),
           IconButton(
             key: const Key('search-prev'),
             tooltip: 'Previous match (Enter)',
@@ -477,7 +498,11 @@ class _ExitedOverlay extends StatelessWidget {
                 const SizedBox(height: 6),
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),
-                  child: Text(detail!, textAlign: TextAlign.center, style: TextStyle(color: t.muted, fontSize: 13)),
+                  child: Text(
+                    detail!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: t.muted, fontSize: 13),
+                  ),
                 ),
               ],
               const SizedBox(height: 14),
