@@ -123,9 +123,12 @@ walkthrough does not wait on Argon2id. Never set the second one for real use.
 
 **Windows.** Needs Visual Studio with the C++ desktop workload and Rust's
 `x86_64-pc-windows-msvc` target; then `flutter build windows --release`
-puts a self-contained folder at `app\build\windows\x64\runner\Release\`.
-CI builds it on every push and keeps the folder as the
-`promptly-windows-x64` artifact. The local shell is PowerShell when it is
+puts a folder at `app\build\windows\x64\runner\Release\`. It runs as is
+on a machine with Visual Studio, but a plain Windows lacks the Visual C++
+runtime it links to, so `tools\windows-runtime.ps1 <that folder>` copies
+the runtime DLLs in from Visual Studio's redistributable folder before the
+folder goes anywhere. CI does that on every push and keeps the folder as
+the `promptly-windows-x64` artifact. The local shell is PowerShell when it is
 installed, else `cmd`. Data lives under `%APPDATA%` unless
 `PROMPTLY_DATA_DIR` says otherwise. Agent logins and agent forwarding use
 Windows' own OpenSSH agent (the "OpenSSH Authentication Agent" service, on

@@ -22,6 +22,7 @@ How Promptly reaches people, what each channel costs, and the order we take them
 ## What unsigned means for people installing
 
 - **Windows:** the first run of an unsigned program shows SmartScreen's "Windows protected your PC". *More info* then *Run anyway* gets past it. The release notes say so. A certificate removes the warning and is the cost the plan defers.
+- **Windows, the C++ runtime:** the app, its plugins and the Rust engine all need Microsoft's Visual C++ runtime (`vcruntime140.dll`, `msvcp140.dll` and friends), which a fresh Windows does not have. An installer would run Microsoft's `vc_redist.x64.exe`; a zip cannot, so `tools/windows-runtime.ps1` copies the runtime files from Visual Studio's redistributable folder into the bundle, next to `promptly.exe`. Microsoft allows this ("local deployment") for exactly those files. Anyone who already has the runtime installed is unaffected: Windows loads the system copy first.
 - **Android:** an APK from GitHub installs after allowing "unknown apps" for the browser or file manager that opened it. The Play build has no such step.
 - **Linux:** none; the tarball runs from anywhere and the `.deb` installs with the package manager.
 

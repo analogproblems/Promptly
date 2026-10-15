@@ -64,6 +64,7 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
           New-Item -ItemType Directory -Force dist | Out-Null
+          tools/windows-runtime.ps1 app/build/windows/x64/runner/Release
           Copy-Item LICENSE app/build/windows/x64/runner/Release/LICENSE.txt
           Compress-Archive -Path app/build/windows/x64/runner/Release/* -DestinationPath "dist/promptly-$version-windows-x64.zip"
       - uses: actions/upload-artifact@v4
@@ -159,7 +160,7 @@ jobs:
 
           ---
 
-          **Installing.** Linux: the `.deb` installs with your package manager, or unpack the tarball and run `./promptly`. Windows: unzip and run `promptly.exe`; the first run shows SmartScreen's "Windows protected your PC" because the build is not signed with a bought certificate, and *More info*, then *Run anyway*, gets past it. Android: open the `.apk` on the phone and allow installing from that app when asked. `SHA256SUMS` lets you check a download.
+          **Installing.** Linux: the `.deb` installs with your package manager, or unpack the tarball and run `./promptly`. Windows: unzip and run `promptly.exe`; the first run shows SmartScreen's "Windows protected your PC" because the build is not signed with a bought certificate, and *More info*, then *Run anyway*, gets past it. The zip carries the Microsoft C++ runtime it needs; if Windows still reports a missing `.dll`, install [the Visual C++ Redistributable (x64)](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) once. Android: open the `.apk` on the phone and allow installing from that app when asked. `SHA256SUMS` lets you check a download.
           TXT
           cat notes.md
       - uses: softprops/action-gh-release@v2

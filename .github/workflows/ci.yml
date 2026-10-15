@@ -95,6 +95,9 @@ jobs:
         # Verbose, so the Rust engine's own build output shows up when the
         # MSBuild custom step fails.
         run: flutter build windows --release -v
+      - name: Add the C++ runtime
+        shell: pwsh
+        run: ../tools/windows-runtime.ps1 build/windows/x64/runner/Release
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
