@@ -76,6 +76,36 @@ class TerminalController extends ChangeNotifier {
 
   void refresh() => _guard(() => engine.terminalRefresh(id));
 
+  bool _selecting = false;
+
+  /// Start a selection at a viewport cell. A plain click starts an empty
+  /// one, which also drops whatever was selected before.
+  void selectBegin(int col, int line, bool sideRight, TerminalSelectKind kind) {
+    _selecting = true;
+    _guard(() => engine.terminalSelectBegin(id, col, line, sideRight, kind));
+  }
+
+  void selectUpdate(int col, int line, bool sideRight) {
+    if (!_selecting) return;
+    _guard(() => engine.terminalSelectUpdate(id, col, line, sideRight));
+  }
+
+  void selectClear() {
+    if (!_selecting) return;
+    _selecting = false;
+    _guard(() => engine.terminalSelectClear(id));
+  }
+
+  /// The selected text, or null when nothing is selected.
+  String? selectionText() {
+    if (!_selecting) return null;
+    try {
+      return engine.terminalSelectionText(id);
+    } catch (_) {
+      return null;
+    }
+  }
+
   void setFontSize(double size) {
     fontSize = size.clamp(8, 40);
     notifyListeners();

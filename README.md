@@ -8,7 +8,7 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 
 ## Status
 
-**Milestone 1 in progress.** On Linux you can save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Text selection, the Sessions thumbnails and automatic reconnect are what remain in this milestone. Linux comes first, then Windows, Android, macOS and iOS.
+**Milestone 1 in progress.** On Linux you can save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Select text with the mouse and copy it with Ctrl+Shift+C or the right-click menu. The Sessions thumbnails and automatic reconnect are what remain in this milestone. Linux comes first, then Windows, Android, macOS and iOS.
 
 <p>
   <img src="docs/screenshots/m1-hosts-list.png" alt="The saved hosts list on Linux, dark theme" width="640">

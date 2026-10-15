@@ -90,6 +90,14 @@ class FakeEngine implements Engine {
   @override
   void terminalRefresh(int id) {}
   @override
+  void terminalSelectBegin(int id, int col, int line, bool sideRight, TerminalSelectKind kind) {}
+  @override
+  void terminalSelectUpdate(int id, int col, int line, bool sideRight) {}
+  @override
+  void terminalSelectClear(int id) {}
+  @override
+  String? terminalSelectionText(int id) => null;
+  @override
   void terminalClose(int id) {}
   @override
   void setDataDir(String path) {}

@@ -4,12 +4,13 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/engine/engine.dart' show TerminalSelectKind;
 import 'key_mapper.dart';
 import 'terminal_controller.dart';
 import 'terminal_painter.dart';
 
 /// The terminal itself: paints the controller's grid, sizes the session to
-/// fit, and turns keys, scrolls and pastes into engine calls.
+/// fit, and turns keys, mouse, scrolls and pastes into engine calls.
 class TerminalView extends StatefulWidget {
   const TerminalView({super.key, required this.controller, this.autofocus = true});
 
@@ -20,6 +21,10 @@ class TerminalView extends StatefulWidget {
   State<TerminalView> createState() => _TerminalViewState();
 }
 
+/// A viewport cell under the pointer. `line` may be outside the grid while
+/// the pointer is dragged past an edge; the engine clamps it.
+typedef _Cell = ({int col, int line, bool right});
+
 class _TerminalViewState extends State<TerminalView> {
   late final FocusNode _focus = FocusNode(debugLabel: 'terminal');
   late CellMetrics _metrics = CellMetrics.measure(widget.controller.fontSize);
@@ -27,6 +32,15 @@ class _TerminalViewState extends State<TerminalView> {
   Timer? _blink;
   bool _cursorOn = true;
   double _scrollRemainder = 0;
+
+  // Mouse selection.
+  bool _dragging = false;
+  int _clicks = 0;
+  DateTime? _lastDown;
+  Offset? _lastDownAt;
+  _Cell? _lastCell;
+
+  static const _multiClickGap = Duration(milliseconds: 400);
 
   @override
   void initState() {
@@ -81,6 +95,8 @@ class _TerminalViewState extends State<TerminalView> {
     });
   }
 
+  // ---- Keyboard --------------------------------------------------------
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     final c = widget.controller;
     final hw = HardwareKeyboard.instance;
@@ -98,7 +114,7 @@ class _TerminalViewState extends State<TerminalView> {
       return KeyEventResult.handled;
     }
     if (copyPaste && key == LogicalKeyboardKey.keyC) {
-      // Selection lands next; until then Ctrl+Shift+C does nothing harmful.
+      _copySelection();
       return KeyEventResult.handled;
     }
     if (shift && key == LogicalKeyboardKey.pageUp) {
@@ -125,14 +141,104 @@ class _TerminalViewState extends State<TerminalView> {
     final bytes = KeyMapper.bytesFor(event, appCursor: c.grid.appCursor, ctrl: ctrl, alt: alt, shift: shift);
     if (bytes == null) return KeyEventResult.ignored;
     if (c.grid.displayOffset != 0) c.scrollToBottom();
+    // Typing drops the selection, the way every other terminal does it.
+    c.selectClear();
     c.write(bytes);
     return KeyEventResult.handled;
   }
+
+  // ---- Clipboard -------------------------------------------------------
 
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text != null && text.isNotEmpty) widget.controller.paste(text);
+  }
+
+  Future<void> _copySelection() async {
+    final text = widget.controller.selectionText();
+    if (text == null || text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+  }
+
+  // ---- Mouse -----------------------------------------------------------
+
+  _Cell _cellAt(Offset local) {
+    final cw = _metrics.width;
+    final ch = _metrics.height;
+    final col = (local.dx / cw).floor().clamp(0, 0xFFFF);
+    final right = local.dx - col * cw > cw / 2;
+    final line = (local.dy / ch).floor();
+    return (col: col, line: line, right: right);
+  }
+
+  void _onPointerDown(PointerDownEvent e) {
+    _focus.requestFocus();
+    // Touch selection (long press, handles) comes with the mobile build.
+    if (e.kind == PointerDeviceKind.touch) return;
+    if (e.buttons & kSecondaryButton != 0) {
+      _showContextMenu(e.position);
+      return;
+    }
+    if (e.buttons & kMiddleMouseButton != 0) {
+      _pasteFromClipboard();
+      return;
+    }
+    if (e.buttons & kPrimaryButton == 0) return;
+
+    final now = DateTime.now();
+    final quick = _lastDown != null && now.difference(_lastDown!) < _multiClickGap;
+    final near = _lastDownAt != null && (e.localPosition - _lastDownAt!).distance < _metrics.width;
+    _clicks = quick && near ? _clicks + 1 : 1;
+    _lastDown = now;
+    _lastDownAt = e.localPosition;
+
+    final cell = _cellAt(e.localPosition);
+    final kind = switch (_clicks) {
+      1 => TerminalSelectKind.simple,
+      2 => TerminalSelectKind.word,
+      _ => TerminalSelectKind.line,
+    };
+    widget.controller.selectBegin(cell.col, cell.line, cell.right, kind);
+    _lastCell = cell;
+    _dragging = true;
+  }
+
+  void _onPointerMove(PointerMoveEvent e) {
+    if (!_dragging || e.buttons & kPrimaryButton == 0) return;
+    final cell = _cellAt(e.localPosition);
+    if (cell == _lastCell) return;
+    _lastCell = cell;
+    final c = widget.controller;
+    // Dragging past the top or bottom edge brings more lines into view.
+    if (cell.line < 0) {
+      c.scroll(1);
+    } else if (c.grid.rows > 0 && cell.line >= c.grid.rows) {
+      c.scroll(-1);
+    }
+    c.selectUpdate(cell.col, cell.line, cell.right);
+  }
+
+  void _onPointerUp(PointerEvent e) {
+    _dragging = false;
+  }
+
+  Future<void> _showContextMenu(Offset global) async {
+    final hasSelection = widget.controller.selectionText()?.isNotEmpty == true;
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
+      items: [
+        PopupMenuItem(value: 'copy', enabled: hasSelection, child: const Text('Copy')),
+        const PopupMenuItem(value: 'paste', child: Text('Paste')),
+      ],
+    );
+    switch (choice) {
+      case 'copy':
+        await _copySelection();
+      case 'paste':
+        await _pasteFromClipboard();
+    }
   }
 
   void _onPointerSignal(PointerSignalEvent event) {
@@ -159,23 +265,24 @@ class _TerminalViewState extends State<TerminalView> {
           autofocus: widget.autofocus,
           onKeyEvent: _onKey,
           child: Listener(
+            behavior: HitTestBehavior.opaque,
             onPointerSignal: _onPointerSignal,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapDown: (_) => _focus.requestFocus(),
-              child: MouseRegion(
-                cursor: SystemMouseCursors.text,
-                child: ClipRect(
-                  child: CustomPaint(
-                    size: Size(constraints.maxWidth, constraints.maxHeight),
-                    painter: TerminalPainter(
-                      grid: c.grid,
-                      metrics: _metrics,
-                      glyphs: _glyphs,
-                      cursorVisible: _cursorOn,
-                      focused: _focus.hasFocus,
-                      generation: c.grid.generation,
-                    ),
+            onPointerDown: _onPointerDown,
+            onPointerMove: _onPointerMove,
+            onPointerUp: _onPointerUp,
+            onPointerCancel: _onPointerUp,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.text,
+              child: ClipRect(
+                child: CustomPaint(
+                  size: Size(constraints.maxWidth, constraints.maxHeight),
+                  painter: TerminalPainter(
+                    grid: c.grid,
+                    metrics: _metrics,
+                    glyphs: _glyphs,
+                    cursorVisible: _cursorOn,
+                    focused: _focus.hasFocus,
+                    generation: c.grid.generation,
                   ),
                 ),
               ),

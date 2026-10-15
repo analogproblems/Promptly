@@ -21,7 +21,7 @@ Goal: you can use it daily on your Linux desktop, for local shells and SSH, and 
 
 - `promptly-term`: alacritty_terminal wrapped, frame stream, resize, scrollback. **Done.**
 - Local shell on desktop (pty on Linux and macOS, ConPTY on Windows), so the terminal is usable before SSH lands. **Done on Linux.**
-- Terminal renderer: glyph cache painter, cursor styles, styles and colours. **Done** (selection, handles and links still to come).
+- Terminal renderer: glyph cache painter, cursor styles, styles and colours, mouse selection with copy and paste. **Done** (touch handles and links still to come).
 - Hardware keyboard mapping (Ctrl, Alt, arrows, function keys, app-cursor mode). **Done.** The mobile accessory bar comes with the Android build.
 - Gestures: two-finger session switch, pinch zoom, double tap to select a word.
 - `promptly-ssh`: connect, password, key and keyboard-interactive auth, shell channel, resize, keep-alive. **Done** (auto-reconnect still to come).

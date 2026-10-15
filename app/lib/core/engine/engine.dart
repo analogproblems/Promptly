@@ -28,7 +28,8 @@ export '../../src/rust/api/terminal.dart'
         TerminalEvent,
         TerminalEventKind,
         TerminalFrame,
-        TerminalRow;
+        TerminalRow,
+        TerminalSelectKind;
 
 /// What the app needs from the Rust engine, as a plain interface so screens
 /// can be tested with a fake and so the generated bridge stays in one place.
@@ -52,6 +53,13 @@ abstract class Engine {
   void terminalScrollToBottom(int id);
   void terminalSetTheme(int id, String theme);
   void terminalRefresh(int id);
+
+  /// Text selection in viewport cells; `line` 0 is the top row and may run
+  /// past either edge while dragging. `sideRight` is the right half of a cell.
+  void terminalSelectBegin(int id, int col, int line, bool sideRight, rust_term.TerminalSelectKind kind);
+  void terminalSelectUpdate(int id, int col, int line, bool sideRight);
+  void terminalSelectClear(int id);
+  String? terminalSelectionText(int id);
   void terminalClose(int id);
 
   /// Where the engine keeps its files. Called once at startup.
@@ -154,6 +162,20 @@ class RustEngine implements Engine {
 
   @override
   void terminalRefresh(int id) => rust_term.terminalRefresh(id: id);
+
+  @override
+  void terminalSelectBegin(int id, int col, int line, bool sideRight, rust_term.TerminalSelectKind kind) =>
+      rust_term.terminalSelectBegin(id: id, col: col, line: line, sideRight: sideRight, kind: kind);
+
+  @override
+  void terminalSelectUpdate(int id, int col, int line, bool sideRight) =>
+      rust_term.terminalSelectUpdate(id: id, col: col, line: line, sideRight: sideRight);
+
+  @override
+  void terminalSelectClear(int id) => rust_term.terminalSelectClear(id: id);
+
+  @override
+  String? terminalSelectionText(int id) => rust_term.terminalSelectionText(id: id);
 
   @override
   void terminalClose(int id) => rust_term.terminalClose(id: id);
