@@ -17,7 +17,7 @@ jobs:
     name: Linux packages
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Linux desktop build dependencies
         run: |
           sudo apt-get update
@@ -37,7 +37,7 @@ jobs:
           flutter build linux --release
       - name: Package
         run: tools/package-linux.sh app/build/linux/x64/release/bundle "${GITHUB_REF_NAME#v}" dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: dist/*
@@ -47,7 +47,7 @@ jobs:
     name: Windows zip
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -69,7 +69,7 @@ jobs:
           tools/windows-runtime.ps1 app/build/windows/x64/runner/Release
           Copy-Item LICENSE app/build/windows/x64/runner/Release/LICENSE.txt
           Compress-Archive -Path app/build/windows/x64/runner/Release/* -DestinationPath "dist/promptly-$version-windows-x64.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: dist/*
@@ -82,8 +82,8 @@ jobs:
       run:
         working-directory: app
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -131,7 +131,7 @@ jobs:
           mkdir -p ../dist
           cp build/app/outputs/flutter-apk/app-release.apk "../dist/promptly-$version-android.apk"
           cp build/app/outputs/bundle/release/app-release.aab "../dist/promptly-$version-android.aab"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android
           path: dist/*
@@ -144,7 +144,7 @@ jobs:
     # then hung on the Mac runner, so stop well before GitHub's six hours.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           # A release build is universal, so cargokit builds the engine for both.
@@ -163,7 +163,7 @@ jobs:
           flutter build macos --release
       - name: Package
         run: tools/package-macos.sh app/build/macos/Build/Products/Release/promptly.app "${GITHUB_REF_NAME#v}" dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: dist/*
@@ -176,8 +176,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -200,7 +200,7 @@ jobs:
           TXT
           cat notes.md
       # Pinned to an exact commit (v2.6.2), since this step holds write access.
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           draft: true
           name: Promptly ${{ github.ref_name }}
