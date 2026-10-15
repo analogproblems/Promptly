@@ -145,6 +145,42 @@ impl RemoteFs {
         Ok(self.sftp.remove_dir(dir).await?)
     }
 
+    /// A text file's contents, for editing in place. Refuses files over
+    /// `max` bytes, files with NUL bytes, and text that is not UTF-8.
+    pub async fn read_text(&self, path: &str, max: u64) -> Result<String, SftpError> {
+        let size = self.sftp.metadata(path).await?.size.unwrap_or(0);
+        if size > max {
+            return Err(SftpError::NoSubsystem(format!(
+                "too large to edit here ({} bytes); download it instead",
+                size
+            )));
+        }
+        let mut src = self.sftp.open(path).await?;
+        let mut bytes = Vec::with_capacity(size as usize);
+        src.read_to_end(&mut bytes).await?;
+        src.shutdown().await.ok();
+        if bytes.contains(&0) {
+            return Err(SftpError::NoSubsystem("not a text file".into()));
+        }
+        String::from_utf8(bytes)
+            .map_err(|_| SftpError::NoSubsystem("not UTF-8 text; download it instead".into()))
+    }
+
+    /// Replace a file's contents with `text`. An existing file keeps its
+    /// permissions; a new one gets the server's default.
+    pub async fn write_text(&self, path: &str, text: &str) -> Result<(), SftpError> {
+        let mut dst = self
+            .sftp
+            .open_with_flags(
+                path,
+                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+            )
+            .await?;
+        dst.write_all(text.as_bytes()).await?;
+        dst.shutdown().await?;
+        Ok(())
+    }
+
     /// Copy a remote file to a local path, reporting bytes done and the
     /// total as it goes.
     pub async fn download(
@@ -317,6 +353,22 @@ mod tests {
                 .unwrap();
             assert_eq!(n, 200_000);
             assert_eq!(std::fs::read(&back).unwrap(), body);
+
+            // Edit in place: read, change, write back, re-read.
+            let note = join(&base, "note.txt");
+            fs.write_text(&note, "first line\nsecond\n").await.unwrap();
+            assert_eq!(
+                fs.read_text(&note, 1 << 20).await.unwrap(),
+                "first line\nsecond\n"
+            );
+            fs.write_text(&note, "changed\n").await.unwrap();
+            assert_eq!(fs.read_text(&note, 1 << 20).await.unwrap(), "changed\n");
+            assert!(fs
+                .read_text(&note, 3)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("too large"));
 
             // Delete takes the whole tree.
             fs.delete(&base).await.unwrap();

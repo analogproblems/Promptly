@@ -162,6 +162,25 @@ pub fn files_chmod(id: u32, path: String, mode: u32) -> Result<(), String> {
         .map_err(friendly)
 }
 
+/// The most a file may be to open in the editor.
+const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
+
+/// A text file's contents, for the in-place editor.
+pub fn files_read_text(id: u32, path: String) -> Result<String, String> {
+    let b = browser(id)?;
+    promptly_ssh::runtime()
+        .block_on(b.fs.read_text(&path, MAX_EDIT_BYTES))
+        .map_err(friendly)
+}
+
+/// Replace a file's contents from the editor.
+pub fn files_write_text(id: u32, path: String, text: String) -> Result<(), String> {
+    let b = browser(id)?;
+    promptly_ssh::runtime()
+        .block_on(b.fs.write_text(&path, &text))
+        .map_err(friendly)
+}
+
 fn start_transfer(b: &Arc<Browser>, name: String, upload: bool) -> Arc<Mutex<FileTransfer>> {
     let t = Arc::new(Mutex::new(FileTransfer {
         id: NEXT_TRANSFER.fetch_add(1, Ordering::Relaxed),

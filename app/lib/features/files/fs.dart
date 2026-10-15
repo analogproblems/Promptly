@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io' as io;
 
 import '../../core/engine/engine.dart';
@@ -44,6 +45,12 @@ abstract class Fs {
   Future<void> delete(String path);
 
   Future<void> chmod(String path, int mode);
+
+  /// A text file's contents, for the editor. Throws for binary or very
+  /// large files, with a message the person can act on.
+  Future<String> readText(String path);
+
+  Future<void> writeText(String path, String text);
 
   String join(String dir, String name) => dir.endsWith('/') ? '$dir$name' : '$dir/$name';
 
@@ -99,6 +106,12 @@ class RemoteFs extends Fs {
 
   @override
   Future<void> chmod(String path, int mode) => engine.filesChmod(browserId, path, mode);
+
+  @override
+  Future<String> readText(String path) => engine.filesReadText(browserId, path);
+
+  @override
+  Future<void> writeText(String path, String text) => engine.filesWriteText(browserId, path, text);
 }
 
 /// This device's files.
@@ -125,15 +138,17 @@ class LocalFs extends Fs {
           isDir = await io.FileSystemEntity.isDirectory(e.path);
         } catch (_) {}
       }
-      out.add(FsEntry(
-        name: e.uri.pathSegments.where((s) => s.isNotEmpty).lastOrNull ?? e.path,
-        path: e.path,
-        isDir: isDir,
-        isSymlink: link,
-        size: stat.size,
-        modified: stat.modified,
-        permissions: stat.mode & 0xFFF,
-      ));
+      out.add(
+        FsEntry(
+          name: e.uri.pathSegments.where((s) => s.isNotEmpty).lastOrNull ?? e.path,
+          path: e.path,
+          isDir: isDir,
+          isSymlink: link,
+          size: stat.size,
+          modified: stat.modified,
+          permissions: stat.mode & 0xFFF,
+        ),
+      );
     }
     out.sort((a, b) {
       if (a.isDir != b.isDir) return a.isDir ? -1 : 1;
@@ -169,6 +184,25 @@ class LocalFs extends Fs {
     final result = await io.Process.run('chmod', [mode.toRadixString(8), path]);
     if (result.exitCode != 0) throw (result.stderr as String).trim();
   }
+
+  static const maxEditBytes = 2 * 1024 * 1024;
+
+  @override
+  Future<String> readText(String path) async {
+    final file = io.File(path);
+    final size = await file.length();
+    if (size > maxEditBytes) throw 'too large to edit here ($size bytes)';
+    final bytes = await file.readAsBytes();
+    if (bytes.contains(0)) throw 'not a text file';
+    try {
+      return const Utf8Decoder(allowMalformed: false).convert(bytes);
+    } on FormatException {
+      throw 'not UTF-8 text';
+    }
+  }
+
+  @override
+  Future<void> writeText(String path, String text) => io.File(path).writeAsString(text);
 }
 
 /// "1.2 MB", "340 KB", "12 B".

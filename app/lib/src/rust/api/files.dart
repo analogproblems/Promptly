@@ -52,6 +52,21 @@ Future<void> filesChmod({
   mode: mode,
 );
 
+/// A text file's contents, for the in-place editor.
+Future<String> filesReadText({required int id, required String path}) =>
+    RustLib.instance.api.crateApiFilesFilesReadText(id: id, path: path);
+
+/// Replace a file's contents from the editor.
+Future<void> filesWriteText({
+  required int id,
+  required String path,
+  required String text,
+}) => RustLib.instance.api.crateApiFilesFilesWriteText(
+  id: id,
+  path: path,
+  text: text,
+);
+
 /// Start copying a remote file to a local path. Returns the transfer id;
 /// `files_transfers` reports its progress.
 int filesDownload({

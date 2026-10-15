@@ -123,6 +123,10 @@ class RecordingEngine implements Engine {
   @override
   Future<void> filesChmod(int id, String path, int mode) async {}
   @override
+  Future<String> filesReadText(int id, String path) async => '';
+  @override
+  Future<void> filesWriteText(int id, String path, String text) async {}
+  @override
   int filesDownload(int id, String remote, String local) => 1;
   @override
   int filesUpload(int id, String local, String remote) => 1;

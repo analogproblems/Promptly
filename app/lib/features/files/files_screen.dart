@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -9,6 +10,7 @@ import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/models.dart' show relativeTime;
 import '../sessions/session_manager.dart';
+import '../shell/empty_state.dart';
 import '../shell/shell_scaffold.dart';
 import 'fs.dart';
 
@@ -122,7 +124,8 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
     final id = _browserId;
     if (id == null) return;
     if (entry.isDir) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Folders cannot be copied yet; open one and copy its files.')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Folders cannot be copied yet; open one and copy its files.')));
       return;
     }
     final engine = ref.read(engineProvider);
@@ -155,11 +158,17 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
       body = Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: t.danger)),
+          child: Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: t.danger),
+          ),
         ),
       );
     } else if (_remote == null) {
-      body = Center(child: Text('Opening the file browser…', style: TextStyle(color: t.muted)));
+      body = Center(
+        child: Text('Opening the file browser…', style: TextStyle(color: t.muted)),
+      );
     } else {
       final remotePane = _FsPane(
         key: _remotePane,
@@ -197,7 +206,10 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
         Container(
           height: 48,
           padding: const EdgeInsets.fromLTRB(4, 4, 12, 4),
-          decoration: BoxDecoration(color: t.surface, border: Border(bottom: BorderSide(color: t.border))),
+          decoration: BoxDecoration(
+            color: t.surface,
+            border: Border(bottom: BorderSide(color: t.border)),
+          ),
           child: Row(
             children: [
               IconButton(
@@ -207,7 +219,11 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
               ),
               const SizedBox(width: 4),
               Expanded(
-                child: Text(title, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: t.text)),
+                child: Text(
+                  title,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: t.text),
+                ),
               ),
               if (desktop)
                 Text('Drag files between the two sides to copy them.', style: TextStyle(fontSize: 12, color: t.muted)),
@@ -215,11 +231,15 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
           ),
         ),
         Expanded(child: body),
-        if (_transfers.isNotEmpty) _TransfersBar(transfers: _transfers, onClear: () {
-          final id = _browserId;
-          if (id != null) ref.read(engineProvider).filesClearTransfers(id);
-          _refreshTransfers();
-        }),
+        if (_transfers.isNotEmpty)
+          _TransfersBar(
+            transfers: _transfers,
+            onClear: () {
+              final id = _browserId;
+              if (id != null) ref.read(engineProvider).filesClearTransfers(id);
+              _refreshTransfers();
+            },
+          ),
       ],
     );
   }
@@ -322,6 +342,16 @@ class _FsPaneState extends State<_FsPane> {
     await _run(() => widget.fs.mkdir(widget.fs.join(p, name)));
   }
 
+  /// Open a file in the editor; saving writes it back where it is.
+  Future<void> _edit(FsEntry e) async {
+    final changed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => TextEditorDialog(fs: widget.fs, entry: e),
+    );
+    if (changed == true) await refresh();
+  }
+
   Future<void> _rename(FsEntry e) async {
     final name = await _askName('Rename', initial: e.name, action: 'Rename');
     if (name == null || name == e.name) return;
@@ -333,7 +363,9 @@ class _FsPaneState extends State<_FsPane> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('Delete ${e.name}?'),
-        content: Text(e.isDir ? 'The folder and everything in it are removed. This cannot be undone.' : 'This cannot be undone.'),
+        content: Text(
+          e.isDir ? 'The folder and everything in it are removed. This cannot be undone.' : 'This cannot be undone.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           FilledButton(
@@ -349,7 +381,10 @@ class _FsPaneState extends State<_FsPane> {
   }
 
   Future<void> _permissions(FsEntry e) async {
-    final mode = await showDialog<int>(context: context, builder: (_) => _PermissionsDialog(name: e.name, mode: e.permissions));
+    final mode = await showDialog<int>(
+      context: context,
+      builder: (_) => _PermissionsDialog(name: e.name, mode: e.permissions),
+    );
     if (mode == null || mode == e.permissions) return;
     await _run(() => widget.fs.chmod(e.path, mode));
   }
@@ -364,11 +399,24 @@ class _FsPaneState extends State<_FsPane> {
 
     Widget list;
     if (_error != null) {
-      list = Center(child: Padding(padding: const EdgeInsets.all(20), child: Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: t.danger, fontSize: 13))));
+      list = Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Text(
+            _error!,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: t.danger, fontSize: 13),
+          ),
+        ),
+      );
     } else if (_loading && _entries.isEmpty) {
-      list = Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: t.muted)));
+      list = Center(
+        child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: t.muted)),
+      );
     } else if (_entries.isEmpty) {
-      list = Center(child: Text('Empty folder', style: TextStyle(color: t.muted, fontSize: 13)));
+      list = Center(
+        child: Text('Empty folder', style: TextStyle(color: t.muted, fontSize: 13)),
+      );
     } else {
       list = ListView.builder(
         itemCount: _entries.length,
@@ -377,11 +425,13 @@ class _FsPaneState extends State<_FsPane> {
           final row = _EntryRow(
             key: Key('$side-entry-${e.name}'),
             entry: e,
-            onOpen: e.isDir ? () => go(e.path) : null,
+            onOpen: e.isDir ? () => go(e.path) : () => _edit(e),
             onAction: (action) {
               switch (action) {
                 case 'open':
                   if (e.isDir) go(e.path);
+                case 'edit':
+                  _edit(e);
                 case 'copy':
                   widget.onTransfer?.call(e);
                 case 'rename':
@@ -421,10 +471,15 @@ class _FsPaneState extends State<_FsPane> {
       children: [
         Container(
           padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: t.border))),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: t.border)),
+          ),
           child: Row(
             children: [
-              Text(widget.fs.label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.6, color: t.muted)),
+              Text(
+                widget.fs.label,
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.6, color: t.muted),
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: SingleChildScrollView(
@@ -547,7 +602,15 @@ class _Crumb extends StatelessWidget {
       borderRadius: BorderRadius.circular(4),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-        child: Text(label, style: monoStyle(context, size: 12, weight: last ? FontWeight.w600 : FontWeight.w400, color: last ? t.text : t.muted)),
+        child: Text(
+          label,
+          style: monoStyle(
+            context,
+            size: 12,
+            weight: last ? FontWeight.w600 : FontWeight.w400,
+            color: last ? t.text : t.muted,
+          ),
+        ),
       ),
     );
   }
@@ -586,12 +649,20 @@ class _EntryRow extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: Text(e.name, overflow: TextOverflow.ellipsis, style: monoStyle(context, size: 13, color: t.text)),
+              child: Text(
+                e.name,
+                overflow: TextOverflow.ellipsis,
+                style: monoStyle(context, size: 13, color: t.text),
+              ),
             ),
             if (!e.isDir)
               SizedBox(
                 width: 72,
-                child: Text(formatBytes(e.size), textAlign: TextAlign.right, style: monoStyle(context, size: 11, color: t.muted)),
+                child: Text(
+                  formatBytes(e.size),
+                  textAlign: TextAlign.right,
+                  style: monoStyle(context, size: 11, color: t.muted),
+                ),
               ),
             SizedBox(
               width: 64,
@@ -609,6 +680,7 @@ class _EntryRow extends StatelessWidget {
               onSelected: onAction,
               itemBuilder: (_) => [
                 if (e.isDir) const PopupMenuItem(value: 'open', child: Text('Open')),
+                if (!e.isDir) const PopupMenuItem(value: 'edit', child: Text('Edit')),
                 if (canCopy && !e.isDir) PopupMenuItem(value: 'copy', child: Text(copyLabel)),
                 const PopupMenuItem(value: 'rename', child: Text('Rename')),
                 const PopupMenuItem(value: 'permissions', child: Text('Permissions')),
@@ -651,7 +723,10 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
           for (var w = 0; w < 3; w++)
             Row(
               children: [
-                SizedBox(width: 64, child: Text(who[w], style: TextStyle(color: t.text))),
+                SizedBox(
+                  width: 64,
+                  child: Text(who[w], style: TextStyle(color: t.text)),
+                ),
                 for (var b = 0; b < 3; b++)
                   Row(
                     children: [
@@ -669,12 +744,19 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
               ],
             ),
           const SizedBox(height: 8),
-          Text('${formatMode(_mode)}  ${_mode.toRadixString(8).padLeft(3, '0')}', style: monoStyle(context, size: 13, color: t.muted)),
+          Text(
+            '${formatMode(_mode)}  ${_mode.toRadixString(8).padLeft(3, '0')}',
+            style: monoStyle(context, size: 13, color: t.muted),
+          ),
         ],
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(key: const Key('perm-apply'), onPressed: () => Navigator.pop(context, _mode), child: const Text('Apply')),
+        FilledButton(
+          key: const Key('perm-apply'),
+          onPressed: () => Navigator.pop(context, _mode),
+          child: const Text('Apply'),
+        ),
       ],
     );
   }
@@ -692,13 +774,21 @@ class _TransfersBar extends StatelessWidget {
     final shown = transfers.reversed.take(4).toList();
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
-      decoration: BoxDecoration(color: t.surface, border: Border(top: BorderSide(color: t.border))),
+      decoration: BoxDecoration(
+        color: t.surface,
+        border: Border(top: BorderSide(color: t.border)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              Expanded(child: Text('Transfers', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.6, color: t.muted))),
+              Expanded(
+                child: Text(
+                  'Transfers',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.6, color: t.muted),
+                ),
+              ),
               TextButton(onPressed: onClear, child: const Text('Clear finished')),
             ],
           ),
@@ -707,15 +797,32 @@ class _TransfersBar extends StatelessWidget {
               padding: const EdgeInsets.only(bottom: 4),
               child: Row(
                 children: [
-                  Icon(tr.upload ? Icons.upload : Icons.download, size: 16, color: tr.error != null ? t.danger : (tr.finished ? t.accent : t.muted)),
+                  Icon(
+                    tr.upload ? Icons.upload : Icons.download,
+                    size: 16,
+                    color: tr.error != null ? t.danger : (tr.finished ? t.accent : t.muted),
+                  ),
                   const SizedBox(width: 8),
-                  SizedBox(width: 180, child: Text(tr.name, overflow: TextOverflow.ellipsis, style: monoStyle(context, size: 12, color: t.text))),
+                  SizedBox(
+                    width: 180,
+                    child: Text(
+                      tr.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: monoStyle(context, size: 12, color: t.text),
+                    ),
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: tr.error != null
-                        ? Text(tr.error!, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: t.danger))
+                        ? Text(
+                            tr.error!,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, color: t.danger),
+                          )
                         : LinearProgressIndicator(
-                            value: tr.total == BigInt.zero ? null : (tr.done.toDouble() / tr.total.toDouble()).clamp(0, 1),
+                            value: tr.total == BigInt.zero
+                                ? null
+                                : (tr.done.toDouble() / tr.total.toDouble()).clamp(0, 1),
                             minHeight: 4,
                             color: t.accent,
                             backgroundColor: t.border,
@@ -726,14 +833,205 @@ class _TransfersBar extends StatelessWidget {
                     tr.error != null
                         ? 'Failed'
                         : tr.finished
-                            ? 'Done · ${formatBytes(tr.done.toInt())}'
-                            : '${formatBytes(tr.done.toInt())} of ${formatBytes(tr.total.toInt())}',
+                        ? 'Done · ${formatBytes(tr.done.toInt())}'
+                        : '${formatBytes(tr.done.toInt())} of ${formatBytes(tr.total.toInt())}',
                     style: TextStyle(fontSize: 11, color: t.muted),
                   ),
                 ],
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// A plain text editor over one file, remote or local: load, edit, save
+/// in place. Ctrl+S saves; closing with changes asks first.
+class TextEditorDialog extends StatefulWidget {
+  const TextEditorDialog({super.key, required this.fs, required this.entry});
+
+  final Fs fs;
+  final FsEntry entry;
+
+  @override
+  State<TextEditorDialog> createState() => _TextEditorDialogState();
+}
+
+class _TextEditorDialogState extends State<TextEditorDialog> {
+  final _controller = TextEditingController();
+  String? _loaded;
+  String? _error;
+  bool _saving = false;
+  bool _savedOnce = false;
+
+  bool get _dirty => _loaded != null && _controller.text != _loaded;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _controller.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final text = await widget.fs.readText(widget.entry.path);
+      if (!mounted) return;
+      setState(() {
+        _loaded = text;
+        _controller.text = text;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = e is String ? e : e.toString());
+    }
+  }
+
+  Future<void> _save() async {
+    if (_loaded == null || _saving) return;
+    setState(() => _saving = true);
+    try {
+      await widget.fs.writeText(widget.entry.path, _controller.text);
+      if (!mounted) return;
+      setState(() {
+        _loaded = _controller.text;
+        _saving = false;
+        _savedOnce = true;
+        _error = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Saved ${widget.entry.name}')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saving = false;
+        _error = e is String ? e : e.toString();
+      });
+    }
+  }
+
+  Future<void> _close() async {
+    if (_dirty) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Close ${widget.entry.name} without saving?'),
+          content: const Text('The changes made here are lost.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep editing')),
+            FilledButton(
+              key: const Key('editor-discard'),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Discard'),
+            ),
+          ],
+        ),
+      );
+      if (discard != true || !mounted) return;
+    }
+    if (mounted) Navigator.pop(context, _savedOnce);
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is KeyDownEvent &&
+        event.logicalKey == LogicalKeyboardKey.keyS &&
+        (HardwareKeyboard.instance.isControlPressed || HardwareKeyboard.instance.isMetaPressed)) {
+      _save();
+      return KeyEventResult.handled;
+    }
+    if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape) {
+      _close();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final lines = _loaded == null ? 0 : '\n'.allMatches(_controller.text).length + 1;
+    return Dialog.fullscreen(
+      child: Focus(
+        onKeyEvent: _onKey,
+        // Its own messenger, so "Saved" shows here and not on the screen behind.
+        child: ScaffoldMessenger(
+          child: Scaffold(
+            appBar: AppBar(
+              leading: IconButton(
+                key: const Key('editor-close'),
+                tooltip: 'Close',
+                icon: const Icon(Icons.close),
+                onPressed: _close,
+              ),
+              title: Row(
+                children: [
+                  Flexible(child: Text(widget.entry.name, overflow: TextOverflow.ellipsis)),
+                  if (_dirty)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text('edited', style: TextStyle(fontSize: 12, color: t.warning)),
+                    ),
+                ],
+              ),
+              actions: [
+                if (_loaded != null)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: Center(
+                      child: Text(
+                        '$lines line${lines == 1 ? '' : 's'} · ${widget.fs.label}',
+                        style: TextStyle(fontSize: 12, color: t.muted),
+                      ),
+                    ),
+                  ),
+                FilledButton.icon(
+                  key: const Key('editor-save'),
+                  onPressed: _loaded == null || _saving || !_dirty ? null : _save,
+                  icon: const Icon(Icons.save_outlined, size: 18),
+                  label: Text(_saving ? 'Saving…' : 'Save'),
+                ),
+                const SizedBox(width: 12),
+              ],
+            ),
+            body: _error != null && _loaded == null
+                ? EmptyState(icon: Icons.description_outlined, title: 'Cannot edit this file', message: _error!)
+                : _loaded == null
+                ? const Center(child: CircularProgressIndicator())
+                : Column(
+                    children: [
+                      if (_error != null)
+                        Container(
+                          width: double.infinity,
+                          color: t.danger.withValues(alpha: 0.12),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          child: Text(_error!, style: TextStyle(color: t.danger, fontSize: 13)),
+                        ),
+                      Expanded(
+                        child: TextField(
+                          key: const Key('editor-text'),
+                          controller: _controller,
+                          autofocus: true,
+                          maxLines: null,
+                          expands: true,
+                          keyboardType: TextInputType.multiline,
+                          textAlignVertical: TextAlignVertical.top,
+                          style: monoStyle(context, size: 13, color: t.text),
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            contentPadding: EdgeInsets.all(16),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+          ),
+        ),
       ),
     );
   }

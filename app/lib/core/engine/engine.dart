@@ -127,6 +127,8 @@ abstract class Engine {
   Future<void> filesRename(int id, String from, String to);
   Future<void> filesDelete(int id, String path);
   Future<void> filesChmod(int id, String path, int mode);
+  Future<String> filesReadText(int id, String path);
+  Future<void> filesWriteText(int id, String path, String text);
 
   /// Start a copy; returns the transfer id. `filesTransfers` follows it.
   int filesDownload(int id, String remote, String local);
@@ -345,6 +347,11 @@ class RustEngine implements Engine {
   Future<void> filesDelete(int id, String path) => rust_files.filesDelete(id: id, path: path);
   @override
   Future<void> filesChmod(int id, String path, int mode) => rust_files.filesChmod(id: id, path: path, mode: mode);
+  @override
+  Future<String> filesReadText(int id, String path) => rust_files.filesReadText(id: id, path: path);
+  @override
+  Future<void> filesWriteText(int id, String path, String text) =>
+      rust_files.filesWriteText(id: id, path: path, text: text);
   @override
   int filesDownload(int id, String remote, String local) =>
       rust_files.filesDownload(id: id, remote: remote, local: local);

@@ -289,6 +289,21 @@ class FakeEngine implements Engine {
   Future<void> filesDelete(int id, String path) async => fileCalls.add('delete $path');
   @override
   Future<void> filesChmod(int id, String path, int mode) async => fileCalls.add('chmod $path ${mode.toRadixString(8)}');
+
+  /// What remote text files hold, by path.
+  final Map<String, String> remoteText = {};
+
+  @override
+  Future<String> filesReadText(int id, String path) async {
+    fileCalls.add('read $path');
+    return remoteText[path] ?? (throw 'not a text file');
+  }
+
+  @override
+  Future<void> filesWriteText(int id, String path, String text) async {
+    fileCalls.add('write $path');
+    remoteText[path] = text;
+  }
   @override
   int filesDownload(int id, String remote, String local) {
     fileCalls.add('download $remote $local');
@@ -645,6 +660,17 @@ class MemoryFs extends Fs {
   bool get isRemote => false;
   @override
   Future<String> home() async => tree.keys.first;
+  final Map<String, String> text = {};
+
+  @override
+  Future<String> readText(String path) async => text[path] ?? (throw 'not a text file');
+
+  @override
+  Future<void> writeText(String path, String body) async {
+    calls.add('write $path');
+    text[path] = body;
+  }
+
   @override
   Future<List<FsEntry>> list(String dir) async => tree[dir] ?? (throw 'no such folder');
   @override
@@ -1769,5 +1795,47 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.secrets.values.single, startsWith('-----BEGIN OPENSSH PRIVATE KEY-----'));
     expect(find.text('work'), findsOneWidget);
+  });
+
+  testWidgets('a remote text file opens in the editor and saves back in place', (tester) async {
+    final engine = FakeEngine()
+      ..connectedSessionId = 7
+      ..records['hosts'] = {'h1': hostJson('h1', 'web-1')}
+      ..remoteFiles['/home/ops'] = [
+        FileEntry(name: 'notes.txt', isDir: false, isSymlink: false, size: BigInt.from(12), modified: BigInt.zero, permissions: 0x1A4, owner: 'ops', group: 'ops'),
+      ]
+      ..remoteText['/home/ops/notes.txt'] = 'hello\nworld\n';
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('web-1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('session-files')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('remote-entry-notes.txt')));
+    await tester.pumpAndSettle();
+    expect(find.text('hello\nworld\n'), findsOneWidget);
+    expect(find.text('3 lines · Server'), findsOneWidget);
+    final save = find.byKey(const Key('editor-save'));
+    expect(tester.widget<FilledButton>(save).enabled, isFalse, reason: 'nothing to save yet');
+
+    await tester.enterText(find.byKey(const Key('editor-text')), 'hello\nthere\n');
+    await tester.pumpAndSettle();
+    expect(find.text('edited'), findsOneWidget);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(engine.remoteText['/home/ops/notes.txt'], 'hello\nthere\n');
+    expect(find.text('Saved notes.txt'), findsOneWidget);
+    expect(find.text('edited'), findsNothing);
+
+    // Closing with unsaved changes asks first.
+    await tester.enterText(find.byKey(const Key('editor-text')), 'oops');
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('editor-close')));
+    await tester.pumpAndSettle();
+    expect(find.text('Close notes.txt without saving?'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('editor-discard')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('editor-text')), findsNothing);
+    expect(engine.remoteText['/home/ops/notes.txt'], 'hello\nthere\n', reason: 'the discarded text was not written');
   });
 }
