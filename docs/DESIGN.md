@@ -396,7 +396,9 @@ Promptly is **free and open source under the MIT licence**. There is no paid tie
 
 The repository stays private while the author tests early builds. It goes public when the first release is ready. Nothing in the code or the docs should assume privacy: write everything as if it were already public.
 
-If the project ever needs funding, the options that stay true to the promise are a tip jar, sponsorship, or a one-time "support the author" store listing of the same free code. None of these are planned.
+If the project ever needs funding, the options that stay true to the promise are a tip jar, sponsorship, or a one-time "support the author" store listing of the same free code.
+
+Decided in M4: the free channels come first (GitHub Releases for Linux, Windows and Android, then Google Play for its one-time fee). The stores that charge every year and need bought signing certificates come later, and a listing there carries a flat one-time price of about $5 to cover that cost, with the same code free on GitHub. See [DISTRIBUTION.md](DISTRIBUTION.md).
 
 ## 10. Key decisions log
 

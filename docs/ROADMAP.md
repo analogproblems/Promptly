@@ -65,21 +65,27 @@ Status: built on Linux. What the phone builds bring with them in M4: the snippet
 
 ## M4 · Ship
 
-Goal: on the stores.
+Goal: version 1.0 in people's hands, through the channels that cost nothing first.
+
+The release plan, decided at the start of M4: free distribution first. Builds for Linux, Windows and Android go on GitHub Releases, which costs nothing. Google Play is the one low-cost exception, a one-time developer fee, and is where the Android build gets tested with other people. The stores that need a yearly developer programme and third-party code signing (the App Store for macOS and iOS, a signed Windows installer) wait until the free builds have been tried on real Linux, Windows and Android hardware. If those listings happen later, a flat one-time price of about $5 on those stores covers what they cost to be on; the code stays MIT and the GitHub builds stay free. Details in [DISTRIBUTION.md](DISTRIBUTION.md).
 
 - Onboarding flow (three screens, skippable), empty states, in-app help.
-- Accessibility pass with VoiceOver and TalkBack. Large text, reduced motion.
+- Accessibility pass: labels for screen readers, large text, reduced motion. TalkBack on a real phone comes with the Play test.
 - Theme import (iTerm2, Windows Terminal, Alacritty, base16), PPK import, Termius and CSV import, in-place text editing in SFTP.
-- macOS and iOS builds and store setup.
-- App icon, store listings, screenshots, privacy policy, a small docs site generated from this folder.
-- TestFlight and Play internal testing with a dozen people; fix what they find.
+- App icon, privacy policy, a small docs site generated from this folder.
+- Windows build in CI. Android build in CI, signed with our own upload key.
+- GitHub Releases from a tag: Linux tar.gz and .deb, Windows zip, Android APK, checksums, notes from the changelog.
+- Play internal testing with a dozen people; fix what they find.
+- Deferred to M5 by the release plan: macOS and iOS builds, App Store and TestFlight, a signed Windows installer and the Microsoft Store.
 
-Done when: version 1.0 is on GitHub releases for Linux and Windows, on the Play Store, and on the App Store for macOS and iOS. The repository goes public with it.
+Done when: version 1.0 is on GitHub Releases for Linux, Windows and Android, and on Play internal testing. The repository goes public with it.
 
 ## M5 · Beyond
 
 In no particular order, each independently shippable:
 
+- macOS and iOS builds, App Store and TestFlight; a signed Windows installer and the Microsoft Store. Paid listings at a flat one-time price, as the release plan in M4 says.
+- Flathub, winget and the other free package channels.
 - Remaining backends: Dropbox, OneDrive, WebDAV, S3, Git, device to device.
 - Hardware-backed keys (Secure Enclave, StrongBox).
 - Shared team vaults with badges and per-vault defaults.
