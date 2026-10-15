@@ -1,6 +1,41 @@
-//! Milestone 0: prove the round trip and expose the engine version.
+//! Engine-wide calls: version, the data directory, and the quick-connect parser.
+
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use promptly_ssh::Endpoint;
+
+static DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// Where the engine keeps its files (known hosts, later the local database).
+/// The app sets this from the platform's application-support directory at
+/// startup; until then a sensible per-platform default is used.
+pub(crate) fn data_dir() -> PathBuf {
+    if let Some(d) = DATA_DIR.lock().unwrap().clone() {
+        return d;
+    }
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    let base = if cfg!(target_os = "windows") {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        home.as_ref()
+            .map(|h| PathBuf::from(h).join("Library").join("Application Support"))
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                home.as_ref()
+                    .map(|h| PathBuf::from(h).join(".local").join("share"))
+            })
+    };
+    base.unwrap_or_else(std::env::temp_dir).join("promptly")
+}
+
+/// Tell the engine where to keep its files. Call once at startup.
+#[flutter_rust_bridge::frb(sync)]
+pub fn set_data_dir(path: String) {
+    *DATA_DIR.lock().unwrap() = Some(PathBuf::from(path));
+}
 
 /// Runs once when the Dart side loads the library.
 #[flutter_rust_bridge::frb(init)]

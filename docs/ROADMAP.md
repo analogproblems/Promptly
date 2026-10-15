@@ -19,18 +19,18 @@ Done when: the app launches on a Linux desktop, shows the tab bar, and a button 
 
 Goal: you can use it daily on your Linux desktop, for local shells and SSH, and prefer it to what you have.
 
-- `promptly-term`: alacritty_terminal wrapped, frame stream, resize, scrollback.
-- Local shell on desktop (pty on Linux and macOS, ConPTY on Windows), so the terminal is usable before SSH lands.
-- Terminal renderer: glyph atlas painter, selection with handles, cursor styles, links.
-- Keyboard accessory bar with sticky modifiers, trackpad-style arrows, customisable layout.
+- `promptly-term`: alacritty_terminal wrapped, frame stream, resize, scrollback. **Done.**
+- Local shell on desktop (pty on Linux and macOS, ConPTY on Windows), so the terminal is usable before SSH lands. **Done on Linux.**
+- Terminal renderer: glyph cache painter, cursor styles, styles and colours. **Done** (selection, handles and links still to come).
+- Hardware keyboard mapping (Ctrl, Alt, arrows, function keys, app-cursor mode). **Done.** The mobile accessory bar comes with the Android build.
 - Gestures: two-finger session switch, pinch zoom, double tap to select a word.
-- `promptly-ssh`: connect, password and key auth, shell channel, resize, keep-alive, reconnect.
-- Host key verification flow and known-host storage.
+- `promptly-ssh`: connect, password, key and keyboard-interactive auth, shell channel, resize, keep-alive. **Done** (auto-reconnect still to come).
+- Host key verification flow and known-host storage. **Done** (OpenSSH files; moves into the vault in M2).
 - Hosts list, search and quick connect, host editor (basics and auth), flat groups.
 - Identities: generate, import by paste or file, export the public key, biometric gate.
 - Sessions tab with live thumbnails.
 - Themes: Promptly Dark and Light plus eight popular themes, live preview, JetBrains Mono bundled.
-- Connection progress inside the terminal and plain-language errors.
+- Connection progress inside the terminal and plain-language errors. **Done.**
 
 Done when: you have replaced your current terminal and SSH client on Linux for a week.
 

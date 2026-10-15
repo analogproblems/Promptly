@@ -1,8 +1,19 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../src/rust/api/engine.dart' as rust;
+import '../../src/rust/api/ssh.dart' as rust_ssh;
 import '../../src/rust/api/terminal.dart' as rust_term;
 
+export '../../src/rust/api/ssh.dart'
+    show
+        SshAuthKind,
+        SshConnectRequest,
+        SshEvent,
+        SshEventKind,
+        SshHostKey,
+        SshHostKeyStatus,
+        SshKbPrompt,
+        SshStep;
 export '../../src/rust/api/terminal.dart'
     show
         SessionInfo,
@@ -35,6 +46,18 @@ abstract class Engine {
   void terminalSetDark(int id, bool dark);
   void terminalRefresh(int id);
   void terminalClose(int id);
+
+  /// Where the engine keeps its files. Called once at startup.
+  void setDataDir(String path);
+
+  /// Register an SSH connection attempt; nothing happens until its events
+  /// are subscribed.
+  int sshConnectBegin(rust_ssh.SshConnectRequest request);
+  Stream<rust_ssh.SshEvent> sshConnectEvents(int attemptId);
+  void sshAnswerHostKey(int attemptId, bool trust);
+  void sshAnswerSecret(int attemptId, String? secret);
+  void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers);
+  void sshCancel(int attemptId);
 }
 
 sealed class EndpointParse {
@@ -107,6 +130,31 @@ class RustEngine implements Engine {
 
   @override
   void terminalClose(int id) => rust_term.terminalClose(id: id);
+
+  @override
+  void setDataDir(String path) => rust.setDataDir(path: path);
+
+  @override
+  int sshConnectBegin(rust_ssh.SshConnectRequest request) => rust_ssh.sshConnectBegin(request: request);
+
+  @override
+  Stream<rust_ssh.SshEvent> sshConnectEvents(int attemptId) =>
+      rust_ssh.sshConnectEvents(attemptId: attemptId);
+
+  @override
+  void sshAnswerHostKey(int attemptId, bool trust) =>
+      rust_ssh.sshAnswerHostKey(attemptId: attemptId, trust: trust);
+
+  @override
+  void sshAnswerSecret(int attemptId, String? secret) =>
+      rust_ssh.sshAnswerSecret(attemptId: attemptId, secret: secret);
+
+  @override
+  void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers) =>
+      rust_ssh.sshAnswerKeyboardInteractive(attemptId: attemptId, answers: answers);
+
+  @override
+  void sshCancel(int attemptId) => rust_ssh.sshCancel(attemptId: attemptId);
 }
 
 final engineProvider = Provider<Engine>((_) => const RustEngine());

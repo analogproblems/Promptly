@@ -1,0 +1,78 @@
+import 'package:flutter/services.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:promptly/core/engine/engine.dart';
+import 'package:promptly/core/theme/theme.dart';
+import 'package:promptly/features/terminal/terminal_controller.dart';
+import 'package:promptly/features/terminal/terminal_view.dart';
+
+/// Records what the view asks of the engine.
+class RecordingEngine implements Engine {
+  final List<String> calls = [];
+
+  @override
+  String version() => 'test';
+  @override
+  String ping(String name) => name;
+  @override
+  EndpointParse parseEndpoint(String input) => const EndpointError('n/a');
+  @override
+  int terminalOpenLocal({required int cols, required int rows, required bool dark}) => 1;
+  @override
+  Stream<TerminalEvent> terminalEvents(int id) {
+    calls.add('events');
+    return const Stream.empty();
+  }
+
+  @override
+  void terminalWrite(int id, List<int> data) => calls.add('write ${data.length}');
+  @override
+  void terminalPaste(int id, String text) => calls.add('paste');
+  @override
+  void terminalResize(int id, int cols, int rows) => calls.add('resize $cols x $rows');
+  @override
+  void terminalScroll(int id, int delta) => calls.add('scroll $delta');
+  @override
+  void terminalScrollToBottom(int id) => calls.add('bottom');
+  @override
+  void terminalSetDark(int id, bool dark) => calls.add('dark $dark');
+  @override
+  void terminalRefresh(int id) => calls.add('refresh');
+  @override
+  void terminalClose(int id) => calls.add('close');
+  @override
+  void setDataDir(String path) {}
+  @override
+  int sshConnectBegin(SshConnectRequest request) => 1;
+  @override
+  Stream<SshEvent> sshConnectEvents(int attemptId) => const Stream.empty();
+  @override
+  void sshAnswerHostKey(int attemptId, bool trust) {}
+  @override
+  void sshAnswerSecret(int attemptId, String? secret) {}
+  @override
+  void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers) {}
+  @override
+  void sshCancel(int attemptId) {}
+}
+
+void main() {
+  testWidgets('the view subscribes, sizes the session to fit, and sends keys', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    await tester.pumpWidget(MaterialApp(
+      theme: buildPromptlyTheme(Brightness.dark),
+      home: Scaffold(body: TerminalView(controller: controller)),
+    ));
+    await tester.pump();
+    expect(engine.calls, contains('events'));
+    expect(engine.calls.where((c) => c.startsWith('resize')), isNotEmpty, reason: '${engine.calls}');
+    final resize = engine.calls.firstWhere((c) => c.startsWith('resize'));
+    expect(resize, isNot('resize 80 x 24'));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump();
+    expect(engine.calls, contains('write 1'));
+    controller.dispose();
+  });
+}

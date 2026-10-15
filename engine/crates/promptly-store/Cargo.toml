@@ -8,4 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+promptly-vault = { workspace = true }
+rusqlite = { version = "0.37", features = ["bundled"] }
 thiserror = { workspace = true }
+time = { workspace = true }

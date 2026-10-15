@@ -18,6 +18,7 @@ promptly-ssh = { workspace = true }
 promptly-vault = { workspace = true }
 promptly-store = { workspace = true }
 promptly-session = { workspace = true }
+tokio = { version = "1", features = ["sync"] }
 anyhow = { workspace = true }
 
 # The frb attribute macro expands a `cfg(frb_expand)` probe; tell rustc it is expected.

@@ -64,9 +64,18 @@ class SessionsScreen extends ConsumerWidget {
                   itemBuilder: (context, i) {
                     final s = sessions[i];
                     return ListenableBuilder(
-                      listenable: s.controller,
+                      listenable: Listenable.merge([s, ?s.controller]),
                       builder: (context, _) {
                         final c = s.controller;
+                        final live = c != null && !c.exited;
+                        final String status;
+                        if (c == null) {
+                          status = s.error != null ? 'Failed: ${s.error}' : 'Connecting…';
+                        } else if (c.exited) {
+                          status = 'Ended${c.exitCode == null ? '' : ' with code ${c.exitCode}'}';
+                        } else {
+                          status = '${s.isLocal ? 'Local shell' : 'SSH'} · ${c.grid.cols}×${c.grid.rows}';
+                        }
                         return Card(
                           child: ListTile(
                             onTap: () => context.go('/sessions/${s.id}'),
@@ -74,16 +83,16 @@ class SessionsScreen extends ConsumerWidget {
                               width: 10,
                               height: 10,
                               decoration: BoxDecoration(
-                                color: c.exited ? t.muted : t.accent,
+                                color: live
+                                    ? t.accent
+                                    : s.isConnecting
+                                        ? t.warning
+                                        : t.muted,
                                 shape: BoxShape.circle,
                               ),
                             ),
-                            title: Text(c.title, style: monoStyle(context, size: 14, weight: FontWeight.w600)),
-                            subtitle: Text(
-                              c.exited
-                                  ? 'Exited${c.exitCode == null ? '' : ' with code ${c.exitCode}'}'
-                                  : '${s.isLocal ? 'Local shell' : 'SSH'} · ${c.grid.cols}×${c.grid.rows}',
-                            ),
+                            title: Text(s.title, style: monoStyle(context, size: 14, weight: FontWeight.w600)),
+                            subtitle: Text(status, maxLines: 1, overflow: TextOverflow.ellipsis),
                             trailing: IconButton(
                               tooltip: 'Close session',
                               icon: const Icon(Icons.close),

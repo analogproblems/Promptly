@@ -7,6 +7,12 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `data_dir`
+
+/// Tell the engine where to keep its files. Call once at startup.
+void setDataDir({required String path}) =>
+    RustLib.instance.api.crateApiEngineSetDataDir(path: path);
+
 /// The engine's version string.
 String engineVersion() => RustLib.instance.api.crateApiEngineEngineVersion();
 

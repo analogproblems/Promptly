@@ -39,6 +39,20 @@ class FakeEngine implements Engine {
   void terminalRefresh(int id) {}
   @override
   void terminalClose(int id) {}
+  @override
+  void setDataDir(String path) {}
+  @override
+  int sshConnectBegin(SshConnectRequest request) => 1;
+  @override
+  Stream<SshEvent> sshConnectEvents(int attemptId) => const Stream.empty();
+  @override
+  void sshAnswerHostKey(int attemptId, bool trust) {}
+  @override
+  void sshAnswerSecret(int attemptId, String? secret) {}
+  @override
+  void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers) {}
+  @override
+  void sshCancel(int attemptId) {}
 }
 
 Widget app() => ProviderScope(

@@ -8,11 +8,15 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 
 ## Status
 
-**Milestone 1 in progress.** The terminal emulator works: a local shell on Linux with full colour, styles, scrollback and full-screen programs. SSH, the host list and keys are next. Linux comes first, then Windows, Android, macOS and iOS.
+**Milestone 1 in progress.** You can connect over SSH and run a full terminal: a local shell or a remote host on Linux, with colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. The saved host list and key management are next. Linux comes first, then Windows, Android, macOS and iOS.
 
 <p>
-  <img src="docs/screenshots/m1-terminal-top.png" alt="Promptly running top in a local shell on Linux, dark theme" width="640">
-  <img src="docs/screenshots/m1-terminal-styles.png" alt="Bold, italic, underline, strikethrough, inverse, dim, 256-colour and truecolour text in the terminal" width="640">
+  <img src="docs/screenshots/m1-ssh-shell.png" alt="An SSH session connected and running commands on Linux, dark theme" width="640">
+  <img src="docs/screenshots/m1-ssh-host-key.png" alt="The first-time host key prompt with fingerprint and randomart" width="640">
+</p>
+<p>
+  <img src="docs/screenshots/m1-terminal-top.png" alt="Promptly running top in a local shell on Linux" width="640">
+  <img src="docs/screenshots/m1-terminal-styles.png" alt="Text styles and colour modes in the terminal" width="640">
 </p>
 
 Read the design in this order:

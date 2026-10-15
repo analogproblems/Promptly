@@ -5,9 +5,12 @@ import 'package:go_router/go_router.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../terminal/terminal_view.dart';
+import 'connecting_view.dart';
 import 'session_manager.dart';
 
-/// A single session: slim top bar, then nothing but terminal.
+/// A single session: slim top bar, then nothing but terminal. While an SSH
+/// connection is being made, the terminal area shows the progress and any
+/// question the server has.
 class SessionScreen extends ConsumerWidget {
   const SessionScreen({super.key, required this.id});
 
@@ -29,10 +32,16 @@ class SessionScreen extends ConsumerWidget {
       );
     }
 
+    void closeAndLeave() {
+      ref.read(sessionManagerProvider.notifier).close(id);
+      context.go('/sessions');
+    }
+
     return ListenableBuilder(
-      listenable: entry.controller,
+      listenable: Listenable.merge([entry, ?entry.controller]),
       builder: (context, _) {
         final c = entry.controller;
+        final live = c != null && !c.exited;
         return Column(
           children: [
             Container(
@@ -53,56 +62,77 @@ class SessionScreen extends ConsumerWidget {
                     width: 8,
                     height: 8,
                     decoration: BoxDecoration(
-                      color: c.exited ? t.muted : t.accent,
+                      color: live
+                          ? t.accent
+                          : entry.isConnecting
+                              ? t.warning
+                              : t.muted,
                       shape: BoxShape.circle,
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      c.title,
+                      entry.title,
                       overflow: TextOverflow.ellipsis,
                       style: monoStyle(context, size: 13, weight: FontWeight.w600, color: t.text),
                     ),
                   ),
-                  Text(
-                    '${c.grid.cols}×${c.grid.rows}',
-                    style: monoStyle(context, size: 11, color: t.muted),
-                  ),
+                  if (c != null)
+                    Text(
+                      '${c.grid.cols}×${c.grid.rows}',
+                      style: monoStyle(context, size: 11, color: t.muted),
+                    ),
                   const SizedBox(width: 8),
                   IconButton(
                     tooltip: 'Close session',
-                    onPressed: () {
-                      ref.read(sessionManagerProvider.notifier).close(id);
-                      context.go('/sessions');
-                    },
+                    onPressed: closeAndLeave,
                     icon: const Icon(Icons.close),
                   ),
                 ],
               ),
             ),
             Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  TerminalView(controller: c),
-                  if (c.exited)
-                    _ExitedOverlay(
-                      code: c.exitCode,
-                      onClose: () {
-                        ref.read(sessionManagerProvider.notifier).close(id);
-                        context.go('/sessions');
-                      },
-                      onRestart: () {
-                        final dark = Theme.of(context).brightness == Brightness.dark;
-                        final manager = ref.read(sessionManagerProvider.notifier);
-                        manager.close(id);
-                        final fresh = manager.openLocalShell(dark: dark);
-                        context.go('/sessions/${fresh.id}');
-                      },
+              child: c == null
+                  ? (entry.flow != null
+                      ? ConnectingView(
+                          flow: entry.flow!,
+                          onCancel: closeAndLeave,
+                          onRetry: () => ref.read(sessionManagerProvider.notifier).retry(id),
+                        )
+                      : Center(
+                          child: Text(entry.error ?? 'Nothing here.', style: TextStyle(color: t.muted)),
+                        ))
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        TerminalView(controller: c),
+                        if (c.exited)
+                          _ExitedOverlay(
+                            code: c.exitCode,
+                            isLocal: entry.isLocal,
+                            onClose: closeAndLeave,
+                            onAgain: () {
+                              final manager = ref.read(sessionManagerProvider.notifier);
+                              if (entry.isLocal) {
+                                final dark = Theme.of(context).brightness == Brightness.dark;
+                                manager.close(id);
+                                final fresh = manager.openLocalShell(dark: dark);
+                                context.go('/sessions/${fresh.id}');
+                              } else {
+                                final request = entry.flow?.request;
+                                manager.close(id);
+                                if (request != null) {
+                                  final fresh = manager.connectSsh(request);
+                                  context.go('/sessions/${fresh.id}');
+                                } else {
+                                  context.go('/sessions');
+                                }
+                              }
+                            },
+                          ),
+                      ],
                     ),
-                ],
-              ),
             ),
           ],
         );
@@ -112,15 +142,22 @@ class SessionScreen extends ConsumerWidget {
 }
 
 class _ExitedOverlay extends StatelessWidget {
-  const _ExitedOverlay({required this.code, required this.onClose, required this.onRestart});
+  const _ExitedOverlay({
+    required this.code,
+    required this.isLocal,
+    required this.onClose,
+    required this.onAgain,
+  });
 
   final int? code;
+  final bool isLocal;
   final VoidCallback onClose;
-  final VoidCallback onRestart;
+  final VoidCallback onAgain;
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final what = isLocal ? 'The shell' : 'The connection';
     return Container(
       color: Colors.black.withValues(alpha: 0.45),
       alignment: Alignment.center,
@@ -131,7 +168,7 @@ class _ExitedOverlay extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                code == null || code == 0 ? 'The shell exited.' : 'The shell exited with code $code.',
+                code == null || code == 0 ? '$what ended.' : '$what ended with code $code.',
                 style: TextStyle(color: t.text, fontWeight: FontWeight.w600),
               ),
               const SizedBox(height: 14),
@@ -140,7 +177,7 @@ class _ExitedOverlay extends StatelessWidget {
                 children: [
                   OutlinedButton(onPressed: onClose, child: const Text('Close')),
                   const SizedBox(width: 8),
-                  FilledButton(onPressed: onRestart, child: const Text('New shell')),
+                  FilledButton(onPressed: onAgain, child: Text(isLocal ? 'New shell' : 'Reconnect')),
                 ],
               ),
             ],

@@ -7,6 +7,7 @@
 // ignore_for_file: argument_type_not_assignable
 
 import 'api/engine.dart';
+import 'api/ssh.dart';
 import 'api/terminal.dart';
 
 import 'dart:async';
@@ -28,6 +29,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
   @protected
+  RustStreamSink<SshEvent> dco_decode_StreamSink_ssh_event_Sse(dynamic raw);
+
+  @protected
   RustStreamSink<TerminalEvent> dco_decode_StreamSink_terminal_event_Sse(
     dynamic raw,
   );
@@ -42,7 +46,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int dco_decode_box_autoadd_i_32(dynamic raw);
 
   @protected
+  SshConnectRequest dco_decode_box_autoadd_ssh_connect_request(dynamic raw);
+
+  @protected
+  SshHostKey dco_decode_box_autoadd_ssh_host_key(dynamic raw);
+
+  @protected
+  SshStep dco_decode_box_autoadd_ssh_step(dynamic raw);
+
+  @protected
   TerminalFrame dco_decode_box_autoadd_terminal_frame(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
   int dco_decode_i_32(dynamic raw);
@@ -66,6 +82,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SessionInfo> dco_decode_list_session_info(dynamic raw);
 
   @protected
+  List<SshKbPrompt> dco_decode_list_ssh_kb_prompt(dynamic raw);
+
+  @protected
   List<TerminalRow> dco_decode_list_terminal_row(dynamic raw);
 
   @protected
@@ -75,13 +94,52 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int? dco_decode_opt_box_autoadd_i_32(dynamic raw);
 
   @protected
+  SshHostKey? dco_decode_opt_box_autoadd_ssh_host_key(dynamic raw);
+
+  @protected
+  SshStep? dco_decode_opt_box_autoadd_ssh_step(dynamic raw);
+
+  @protected
   TerminalFrame? dco_decode_opt_box_autoadd_terminal_frame(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  List<String>? dco_decode_opt_list_String(dynamic raw);
+
+  @protected
+  List<SshKbPrompt>? dco_decode_opt_list_ssh_kb_prompt(dynamic raw);
 
   @protected
   ParsedEndpoint dco_decode_parsed_endpoint(dynamic raw);
 
   @protected
   SessionInfo dco_decode_session_info(dynamic raw);
+
+  @protected
+  SshAuthKind dco_decode_ssh_auth_kind(dynamic raw);
+
+  @protected
+  SshConnectRequest dco_decode_ssh_connect_request(dynamic raw);
+
+  @protected
+  SshEvent dco_decode_ssh_event(dynamic raw);
+
+  @protected
+  SshEventKind dco_decode_ssh_event_kind(dynamic raw);
+
+  @protected
+  SshHostKey dco_decode_ssh_host_key(dynamic raw);
+
+  @protected
+  SshHostKeyStatus dco_decode_ssh_host_key_status(dynamic raw);
+
+  @protected
+  SshKbPrompt dco_decode_ssh_kb_prompt(dynamic raw);
+
+  @protected
+  SshStep dco_decode_ssh_step(dynamic raw);
 
   @protected
   TerminalCursor dco_decode_terminal_cursor(dynamic raw);
@@ -117,6 +175,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<SshEvent> sse_decode_StreamSink_ssh_event_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RustStreamSink<TerminalEvent> sse_decode_StreamSink_terminal_event_Sse(
     SseDeserializer deserializer,
   );
@@ -131,9 +194,23 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_box_autoadd_i_32(SseDeserializer deserializer);
 
   @protected
+  SshConnectRequest sse_decode_box_autoadd_ssh_connect_request(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SshHostKey sse_decode_box_autoadd_ssh_host_key(SseDeserializer deserializer);
+
+  @protected
+  SshStep sse_decode_box_autoadd_ssh_step(SseDeserializer deserializer);
+
+  @protected
   TerminalFrame sse_decode_box_autoadd_terminal_frame(
     SseDeserializer deserializer,
   );
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
@@ -157,6 +234,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SessionInfo> sse_decode_list_session_info(SseDeserializer deserializer);
 
   @protected
+  List<SshKbPrompt> sse_decode_list_ssh_kb_prompt(SseDeserializer deserializer);
+
+  @protected
   List<TerminalRow> sse_decode_list_terminal_row(SseDeserializer deserializer);
 
   @protected
@@ -166,7 +246,26 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int? sse_decode_opt_box_autoadd_i_32(SseDeserializer deserializer);
 
   @protected
+  SshHostKey? sse_decode_opt_box_autoadd_ssh_host_key(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SshStep? sse_decode_opt_box_autoadd_ssh_step(SseDeserializer deserializer);
+
+  @protected
   TerminalFrame? sse_decode_opt_box_autoadd_terminal_frame(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  List<String>? sse_decode_opt_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<SshKbPrompt>? sse_decode_opt_list_ssh_kb_prompt(
     SseDeserializer deserializer,
   );
 
@@ -175,6 +274,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SessionInfo sse_decode_session_info(SseDeserializer deserializer);
+
+  @protected
+  SshAuthKind sse_decode_ssh_auth_kind(SseDeserializer deserializer);
+
+  @protected
+  SshConnectRequest sse_decode_ssh_connect_request(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SshEvent sse_decode_ssh_event(SseDeserializer deserializer);
+
+  @protected
+  SshEventKind sse_decode_ssh_event_kind(SseDeserializer deserializer);
+
+  @protected
+  SshHostKey sse_decode_ssh_host_key(SseDeserializer deserializer);
+
+  @protected
+  SshHostKeyStatus sse_decode_ssh_host_key_status(SseDeserializer deserializer);
+
+  @protected
+  SshKbPrompt sse_decode_ssh_kb_prompt(SseDeserializer deserializer);
+
+  @protected
+  SshStep sse_decode_ssh_step(SseDeserializer deserializer);
 
   @protected
   TerminalCursor sse_decode_terminal_cursor(SseDeserializer deserializer);
@@ -217,6 +342,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_ssh_event_Sse(
+    RustStreamSink<SshEvent> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_StreamSink_terminal_event_Sse(
     RustStreamSink<TerminalEvent> self,
     SseSerializer serializer,
@@ -232,10 +363,28 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_ssh_connect_request(
+    SshConnectRequest self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_ssh_host_key(
+    SshHostKey self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_ssh_step(SshStep self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_terminal_frame(
     TerminalFrame self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
@@ -271,6 +420,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_ssh_kb_prompt(
+    List<SshKbPrompt> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_terminal_row(
     List<TerminalRow> self,
     SseSerializer serializer,
@@ -283,8 +438,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_ssh_host_key(
+    SshHostKey? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_ssh_step(
+    SshStep? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_terminal_frame(
     TerminalFrame? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_list_String(List<String>? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_list_ssh_kb_prompt(
+    List<SshKbPrompt>? self,
     SseSerializer serializer,
   );
 
@@ -296,6 +475,36 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_session_info(SessionInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_auth_kind(SshAuthKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_connect_request(
+    SshConnectRequest self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ssh_event(SshEvent self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_event_kind(SshEventKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_host_key(SshHostKey self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_host_key_status(
+    SshHostKeyStatus self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_ssh_kb_prompt(SshKbPrompt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_ssh_step(SshStep self, SseSerializer serializer);
 
   @protected
   void sse_encode_terminal_cursor(

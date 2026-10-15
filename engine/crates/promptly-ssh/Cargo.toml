@@ -8,7 +8,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-russh = "0.63.1"
+promptly-term = { workspace = true }
+promptly-session = { workspace = true }
+# ring rather than aws-lc: pure-ish Rust, cross-compiles to Android and Windows without cmake.
+russh = { version = "0.63.1", default-features = false, features = ["flate2", "ring", "rsa"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "time", "macros"] }
 serde = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1.53.3", features = ["rt-multi-thread", "sync", "io-util", "net", "time", "macros"] }
+tracing = { workspace = true }

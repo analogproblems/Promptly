@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../sessions/session_manager.dart';
 import '../sessions/sessions_screen.dart';
 import '../shell/empty_state.dart';
 
@@ -22,6 +24,25 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
   void dispose() {
     _search.dispose();
     super.dispose();
+  }
+
+  void _connect(EndpointOk ok) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final entry = ref.read(sessionManagerProvider.notifier).connectSsh(SshConnectRequest(
+      user: ok.user,
+      host: ok.host,
+      port: ok.port,
+      auth: SshAuthKind.password,
+      password: null,
+      privateKey: null,
+      passphrase: null,
+      cols: 80,
+      rows: 24,
+      dark: dark,
+      label: null,
+      keepaliveSeconds: 30,
+    ));
+    context.go('/sessions/${entry.id}');
   }
 
   void _onChanged(String text) {
@@ -79,7 +100,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                   title: Text('Connect to ${ok.display}', style: monoStyle(context, size: 14)),
                   subtitle: Text('Port ${ok.port} · parsed by the engine'),
                   trailing: FilledButton(
-                    onPressed: () => notYet(context, 'Connecting lands in milestone 1.'),
+                    onPressed: () => _connect(ok),
                     child: const Text('Connect'),
                   ),
                 ),

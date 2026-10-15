@@ -186,12 +186,30 @@ impl From<SessionEvent> for TerminalEvent {
     }
 }
 
-fn palette(dark: bool) -> Palette {
+pub(crate) fn palette(dark: bool) -> Palette {
     if dark {
         Palette::promptly_dark()
     } else {
         Palette::promptly_light()
     }
+}
+
+/// Put a session into the registry and return its id. Frames start when
+/// `terminal_events` subscribes.
+pub(crate) fn register_session(
+    session: Arc<Session>,
+    reader: Box<dyn std::io::Read + Send>,
+) -> u32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    SESSIONS.lock().unwrap().insert(
+        id,
+        Arc::new(Entry {
+            session,
+            sink: Mutex::new(None),
+            reader: Mutex::new(Some(reader)),
+        }),
+    );
+    id
 }
 
 // ---- Functions ---------------------------------------------------------
@@ -213,16 +231,7 @@ pub fn terminal_open_local(
         program: shell.program().to_string(),
     };
     let session = Arc::new(Session::new(kind, size, palette(dark), Box::new(shell)));
-    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    SESSIONS.lock().unwrap().insert(
-        id,
-        Arc::new(Entry {
-            session,
-            sink: Mutex::new(None),
-            reader: Mutex::new(Some(reader)),
-        }),
-    );
-    Ok(id)
+    Ok(register_session(session, reader))
 }
 
 /// Subscribe to a session's frames. Starts the read loop on first call.
