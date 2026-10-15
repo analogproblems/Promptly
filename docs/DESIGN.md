@@ -48,13 +48,17 @@ Promptly's gap: cross-platform, open, polished on mobile, and sync that uses the
 
 ## 3. Platforms
 
-| Platform | Priority | Notes |
+Order is by how fast the author can test on real hardware, not by market size.
+
+| Platform | Order | Notes |
 |---|---|---|
-| iOS and iPadOS | 1 | The "feel" benchmark. iPad gets split panes and keyboard shortcuts. |
-| Android | 1 | A foreground service keeps sessions alive. |
-| macOS | 2 | Native menu bar, Cmd shortcuts, local shell. |
-| Windows | 3 | Local shell via ConPTY. |
-| Linux | 3 | Local shell via pty. |
+| Linux | 1 | First build target and the daily driver for development. Local shell via pty. |
+| Windows | 2 | Local shell via ConPTY. |
+| Android | 3 | A foreground service keeps sessions alive. First mobile target, so the keyboard bar and gestures are proven here. |
+| macOS | 4 | Native menu bar, Cmd shortcuts, local shell. |
+| iOS and iPadOS | 5 | The "feel" benchmark once the rest is solid. iPad gets split panes and keyboard shortcuts. |
+
+Because desktop comes first, the local shell moves from M5 to M1: it is the fastest way to exercise the terminal emulator without a server, and it is what makes the desktop app useful on day one.
 
 Minimum versions: iOS 16, Android 9 (API 28), macOS 13, Windows 10, Ubuntu 22.04 or equivalent. These are chosen so the platform crypto and file APIs we need are available.
 
@@ -84,7 +88,7 @@ Grouped by area. Each line is tagged with the milestone from [ROADMAP.md](ROADMA
 - Jump hosts (ProxyJump), chained. (M3)
 - Local, remote and dynamic (SOCKS) port forwarding, saved per host and toggled with one tap. (M3)
 - Persistent sessions: a per-host toggle that attaches to a tmux session on the server, so a session survives the phone sleeping or switching networks. Promptly handles the `tmux new -A -s promptly` dance. (M3)
-- Local shell on desktop. (M5)
+- Local shell on desktop: Linux and macOS via pty, Windows via ConPTY. (M1)
 - Mosh: investigated in M5. There is no mature Mosh client library outside the original C++ codebase; persistent sessions via tmux cover most of the need.
 - Telnet and serial: not planned.
 
@@ -386,15 +390,13 @@ VoiceOver and TalkBack read the terminal line by line with a "read from cursor" 
 
 No analytics. No crash reporting unless the user opts in, and then only to a service the user can see in settings. The app makes network connections only to hosts the user configured and to the sync backend the user chose. This is stated in the privacy policy and is verifiable by anyone with a packet capture.
 
-## 9. Business model (suggestion)
+## 9. Licence and price (decided)
 
-Promptly's reason to exist is that sync should not cost a subscription. Options that stay true to that:
+Promptly is **free and open source under the MIT licence**. There is no paid tier, no subscription and no in-app purchase. Sync is free because it uses storage the user already has; the app is free because that is the point of the project.
 
-1. **Open source core, paid app store builds.** Code under a permissive or copyleft licence; the App Store and Play Store listings are a one-time purchase that funds development. Anyone can build it themselves. Many respected tools work this way.
-2. **Free everywhere, optional tip.** Simplest, least income.
-3. **Free personal, paid team features.** Shared vaults and policy controls as a one-time or yearly team licence, with the personal app free forever.
+The repository stays private while the author tests early builds. It goes public when the first release is ready. Nothing in the code or the docs should assume privacy: write everything as if it were already public.
 
-The recommendation is option 1 with option 3 layered later. Whatever is chosen, the promise is written into the README: sync is free forever because there is nothing to charge for.
+If the project ever needs funding, the options that stay true to the promise are a tip jar, sponsorship, or a one-time "support the author" store listing of the same free code. None of these are planned.
 
 ## 10. Key decisions log
 
@@ -410,13 +412,19 @@ The recommendation is option 1 with option 3 layered later. Whatever is chosen, 
 | Local database | SQLite with SQLCipher | Boring and reliable; encrypted at rest |
 | Background on iOS | Honest reconnect plus tmux persistence | Reliable and App Store safe |
 | Mosh | Deferred | No usable library; tmux covers the common case |
+| Platform order | Linux, Windows, Android, macOS, iOS | Fastest path to real testing on the author's devices |
+| Licence | MIT | Simple, permissive, friendly to contributors |
+| Price | Free, no tiers | The project exists to remove a subscription, not to replace it |
 
-## 11. Decisions that are yours
+## 11. Decisions made and decisions open
 
-These do not block starting M0, but they shape M1 onwards.
+Decided on 2026-10-15:
 
-1. **Platform order.** The plan assumes iOS and Android first, macOS next, then Windows and Linux. Swap if your daily devices differ.
-2. **Open source and licence.** The design assumes the code is open. Apache-2.0 is friendliest to contributors; GPL-3.0 stops closed forks. Pick one before the first public commit.
-3. **Price.** One-time purchase on the stores, free, or free plus a team licence.
-4. **Name and mark.** "Promptly" is good. An icon direction: a block cursor in prompt green on near-black.
-5. **Hardware-backed keys in M5 or earlier.** They are a strong security story but add platform code; the plan puts them after shipping.
+1. **Platform order:** Linux, Windows, Android, macOS, iOS.
+2. **Licence:** MIT. **Price:** free. **Visibility:** private until the first release feels ready, then public.
+3. **Name:** Promptly. **Accent:** prompt green on near-black, as in the mockups.
+
+Still open, none blocking:
+
+1. **Hardware-backed keys in M5 or earlier.** They are a strong security story but add platform code; the plan keeps them after shipping.
+2. **Icon.** Direction: a block cursor in prompt green on near-black. Needs an actual mark before the stores.

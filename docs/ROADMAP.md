@@ -4,22 +4,23 @@ Milestones are ordered by what unblocks what. Dates are deliberately absent; the
 
 ## M0 · Foundations
 
-Goal: an empty app that builds and runs on every first-wave target, with the engine wired in.
+Goal: an empty app that builds and runs on Linux, with the engine wired in and the other platforms scaffolded.
 
 - Repository layout from DESIGN.md section 5.2.
 - Rust workspace with the engine crates as stubs; `promptly-api` exposing a `ping`.
 - Flutter app with the navigation shell, theme tokens, dark and light themes, the five tabs.
-- flutter_rust_bridge codegen and build integration for iOS, Android and macOS. Windows and Linux follow in M4.
-- CI: `cargo test`, `cargo clippy`, `cargo audit`, `flutter analyze`, `flutter test`, and a build of each platform on every push.
+- flutter_rust_bridge codegen and build integration, proven on Linux first. Windows, Android, macOS and iOS build setups follow in that order as each device becomes available for testing.
+- CI: `cargo test`, `cargo clippy`, `cargo audit`, `flutter analyze`, `flutter test`, and a Linux build on every push. Other platform builds are added to CI as they come online.
 - A one-command dev setup script.
 
-Done when: the app launches on an iPhone, an Android phone and a Mac, shows the tab bar, and a button round-trips a string through Rust.
+Done when: the app launches on a Linux desktop, shows the tab bar, and a button round-trips a string through Rust.
 
 ## M1 · Connect
 
-Goal: you can use it daily for SSH on your phone and prefer it to what you have.
+Goal: you can use it daily on your Linux desktop, for local shells and SSH, and prefer it to what you have.
 
 - `promptly-term`: alacritty_terminal wrapped, frame stream, resize, scrollback.
+- Local shell on desktop (pty on Linux and macOS, ConPTY on Windows), so the terminal is usable before SSH lands.
 - Terminal renderer: glyph atlas painter, selection with handles, cursor styles, links.
 - Keyboard accessory bar with sticky modifiers, trackpad-style arrows, customisable layout.
 - Gestures: two-finger session switch, pinch zoom, double tap to select a word.
@@ -31,20 +32,20 @@ Goal: you can use it daily for SSH on your phone and prefer it to what you have.
 - Themes: Promptly Dark and Light plus eight popular themes, live preview, JetBrains Mono bundled.
 - Connection progress inside the terminal and plain-language errors.
 
-Done when: you have replaced your current app for a week.
+Done when: you have replaced your current terminal and SSH client on Linux for a week.
 
 ## M2 · Vault
 
 Goal: the same hosts on all your devices, for free.
 
 - `promptly-vault`: data model, operation log, merge, snapshots, envelope encryption, manifest, enrolment.
-- Backends: local folder, iCloud Drive, Google Drive, SFTP.
+- Backends: local folder, SFTP, Google Drive, iCloud Drive (the last one lands when macOS does).
 - Sync setup screen, status line, device list, QR enrolment, recovery key.
 - `promptly-cli` with `inspect`, `export`, `import`, `sync`, `ssh-config`.
 - Import from `~/.ssh/config` and `known_hosts` on desktop.
 - Group defaults, agent forwarding, keyboard-interactive auth, OSC 8 and OSC 52, hardware keyboard polish, native desktop menus.
 
-Done when: a host added on your phone appears on your Mac within a minute via iCloud, and the CLI can export the vault to JSON.
+Done when: a host added on your Linux desktop appears on your Windows machine within a minute via a shared folder or SFTP, and the CLI can export the vault to JSON.
 
 ## M3 · Power
 
@@ -66,11 +67,11 @@ Goal: on the stores.
 - Onboarding flow (three screens, skippable), empty states, in-app help.
 - Accessibility pass with VoiceOver and TalkBack. Large text, reduced motion.
 - Theme import (iTerm2, Windows Terminal, Alacritty, base16), PPK import, Termius and CSV import, in-place text editing in SFTP.
-- Windows and Linux builds.
+- macOS and iOS builds and store setup.
 - App icon, store listings, screenshots, privacy policy, a small docs site generated from this folder.
 - TestFlight and Play internal testing with a dozen people; fix what they find.
 
-Done when: version 1.0 is live on the App Store and Play Store, with desktop builds on GitHub releases.
+Done when: version 1.0 is on GitHub releases for Linux and Windows, on the Play Store, and on the App Store for macOS and iOS. The repository goes public with it.
 
 ## M5 · Beyond
 
@@ -78,7 +79,6 @@ In no particular order, each independently shippable:
 
 - Remaining backends: Dropbox, OneDrive, WebDAV, S3, Git, device to device.
 - Hardware-backed keys (Secure Enclave, StrongBox).
-- Local shell on desktop.
 - Shared team vaults with badges and per-vault defaults.
 - Promptly as an SSH agent for other desktop apps.
 - Sixel and inline images.
