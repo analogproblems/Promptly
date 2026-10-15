@@ -69,16 +69,18 @@ Goal: version 1.0 in people's hands, through the channels that cost nothing firs
 
 The release plan, decided at the start of M4: free distribution first. Builds for Linux, Windows and Android go on GitHub Releases, which costs nothing. Google Play is the one low-cost exception, a one-time developer fee, and is where the Android build gets tested with other people. The stores that need a yearly developer programme and third-party code signing (the App Store for macOS and iOS, a signed Windows installer) wait until the free builds have been tried on real Linux, Windows and Android hardware. If those listings happen later, a flat one-time price of about $5 on those stores covers what they cost to be on; the code stays MIT and the GitHub builds stay free. Details in [DISTRIBUTION.md](DISTRIBUTION.md).
 
-- Onboarding flow (three screens, skippable), empty states, in-app help.
-- Accessibility pass: labels for screen readers, large text, reduced motion. TalkBack on a real phone comes with the Play test.
-- Theme import (iTerm2, Windows Terminal, Alacritty, base16), PPK import, Termius and CSV import, in-place text editing in SFTP.
-- App icon, privacy policy, a small docs site generated from this folder.
-- Windows build in CI. Android build in CI, signed with our own upload key.
-- GitHub Releases from a tag: Linux tar.gz and .deb, Windows zip, Android APK, checksums, notes from the changelog.
-- Play internal testing with a dozen people; fix what they find.
+- Onboarding flow (three screens, skippable), empty states, in-app help. **Done.** The tour shows once and can be replayed from Help; Help lists the getting-started steps, every desktop shortcut and what the session bar does; About shows the version and the licences.
+- Accessibility pass: labels for screen readers, large text, reduced motion. **Done** on desktop (details in DESIGN.md 7.6); TalkBack on a real phone comes with the Play test.
+- Theme import (iTerm2, Windows Terminal, Alacritty, base16), PPK import, Termius and CSV import, in-place text editing in SFTP. **Done.** Imported themes are vault records, so they sync.
+- App icon, privacy policy, a small docs site generated from this folder. **Done.** `make icons` renders every platform's icon from one drawing; the site is built by `tools/site/build.py` and published with GitHub Pages.
+- Windows build in CI. Android build in CI, signed with our own upload key. **Done** (the upload key is made once with `tools/android-keystore.sh`). The phone keyboard came with it: the terminal takes the system keyboard's text through the delta model and a bar carries Esc, Tab, sticky Ctrl and Alt and arrows.
+- GitHub Releases from a tag: Linux tar.gz and .deb, Windows zip, Android APK, checksums, notes from the changelog. **Done.** A tag opens a draft release to try before publishing.
+- Play internal testing with a dozen people; fix what they find. **Next**, by hand: the Play account, the closed test, and what it turns up. The listing text, graphics and screenshots are in docs/store/.
 - Deferred to M5 by the release plan: macOS and iOS builds, App Store and TestFlight, a signed Windows installer and the Microsoft Store.
 
 Done when: version 1.0 is on GitHub Releases for Linux, Windows and Android, and on Play internal testing. The repository goes public with it.
+
+Status: built. What remains is in people's hands rather than the code's: tag v1.0.0, try the three builds on real machines, open the Play closed test, and make the repository public.
 
 ## M5 · Beyond
 

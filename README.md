@@ -23,7 +23,13 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 
 Plain Ctrl+D, Ctrl+W, Ctrl+T, Ctrl+B and Ctrl+K go to the program in the terminal, as they should.
 
+## Get it
+
+Builds for Linux, Windows and Android go on [GitHub Releases](https://github.com/analogproblems/Promptly/releases) as a tarball and `.deb`, a zip, and an APK, with `SHA256SUMS`. The Windows build is not signed with a bought certificate yet, so the first run shows SmartScreen's "Windows protected your PC": *More info*, then *Run anyway*. Android is also coming to Google Play through a closed test first. The plan for each channel, and why the paid stores wait, is in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md). Promptly [collects nothing about you](docs/PRIVACY.md).
+
 ## Status
+
+**Milestone 4 built: ship.** The first run is a three-screen welcome tour, skippable, with help and an about page behind Settings. There is an app icon on every platform. Themes import from iTerm2, Windows Terminal, Alacritty and base16 files and sync like everything else; PuTTY keys import and are kept in OpenSSH form; a CSV such as the one Termius exports brings hosts in with their groups, tags and passwords. Text files on a server open in an editor from the file browser and save back in place. On a phone the terminal takes the system keyboard's text exactly as typed, with a bar above it for Esc, Tab, sticky Ctrl and Alt, arrows and the shell's punctuation. Screen readers get labels and the terminal's text; large text and reduced motion are honoured. CI builds Linux, Windows and Android on every push, a tag opens a draft release with every package, and the docs you are reading become a small site. The paid stores wait, as the release plan says.
 
 **Milestone 3 built: power.** The Hosts tab shows favourites and the hosts you used lately above the full list, and, with one setting on, a dot per host that says whether it is up right now. Files on a host open from the session itself, over the connection it already has: browse, make folders, rename, delete, set permissions, and copy files with progress; on a desktop window your own files sit beside the server's and drag across. On a desktop-sized window the Sessions tab becomes a workspace: tabs across the top, panes split right or down, a hosts panel to drag hosts from, a menu bar, and a command palette on Ctrl+Shift+P that connects to a host, runs a snippet or switches the theme from a few typed letters. Search the screen and scrollback with Ctrl+Shift+F: every match lights up, Enter walks through them, and the one you are on is selected and ready to copy. Links in the output, whether a program marked them or just printed a URL, are underlined; Ctrl+click opens one, right-click copies it. Snippets save the commands you type all the time; write `{{name}}` for the parts that change and Promptly asks for them when it runs. Run one in the session you are in, from the drawer in the session bar, or on a dozen hosts at once and read what each printed. Hosts can connect through a jump host (or a chain of them), each with its own login. Port forwards are saved on the host: local ones open a port on your device, remote ones a port on the server, and a SOCKS proxy lets any program pick its destination through the server. They start with the session when you say so and switch on and off from the session bar. A persistent session attaches to tmux on the server, so the work survives a dropped connection or a phone going to sleep. Agent forwarding, a startup command and environment variables are per host too, and the `~/.ssh/config` import brings all of that in.
 
@@ -31,6 +37,15 @@ Plain Ctrl+D, Ctrl+W, Ctrl+T, Ctrl+B and Ctrl+K go to the program in the termina
 
 **Milestone 1 built, now in daily use on Linux.** Save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Select text with the mouse and copy it with Ctrl+Shift+C or the right-click menu. The Sessions tab shows a live thumbnail of every open session. A dropped connection comes back by itself, with the screen intact. The milestone is done when it has replaced the old terminal for a week; the touch gestures wait for the Android build. Linux comes first, then Windows, Android, macOS and iOS.
 
+<p>
+  <img src="docs/screenshots/m4-welcome.png" alt="The welcome tour on first run" width="640">
+  <img src="docs/screenshots/m4-help.png" alt="In-app help with the keyboard shortcuts" width="640">
+  <img src="docs/screenshots/m4-csv-import.png" alt="Importing hosts from a CSV file" width="640">
+  <img src="docs/screenshots/m4-your-themes.png" alt="Imported themes under Your themes" width="640">
+  <img src="docs/screenshots/m4-editor.png" alt="Editing a file on the server in place" width="640">
+  <img src="docs/screenshots/m4-phone-shell.png" alt="A shell on the phone layout with the keyboard bar" width="300">
+  <img src="docs/screenshots/m4-phone-hosts.png" alt="The hosts list on a phone" width="300">
+</p>
 <p>
   <img src="docs/screenshots/m3-hosts-dots.png" alt="The Hosts tab with a Favourites section and a reachability dot on each host" width="640">
   <img src="docs/screenshots/m3-files-dual-pane.png" alt="The file browser: this device's files beside the server's, a file just dragged across" width="640">

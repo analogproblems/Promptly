@@ -127,8 +127,12 @@ puts a self-contained folder at `app\build\windows\x64\runner\Release\`.
 CI builds it on every push and keeps the folder as the
 `promptly-windows-x64` artifact. The local shell is PowerShell when it is
 installed, else `cmd`. Data lives under `%APPDATA%` unless
-`PROMPTLY_DATA_DIR` says otherwise. Agent forwarding is not wired up on
-Windows yet. The path in `app/rust_builder/windows/CMakeLists.txt` climbs
+`PROMPTLY_DATA_DIR` says otherwise. Agent logins and agent forwarding use
+Windows' own OpenSSH agent (the "OpenSSH Authentication Agent" service, on
+its named pipe) or PuTTY's Pageant, whichever is running; `SSH_AUTH_SOCK`
+is honoured only when it names a pipe, since Git Bash sets it to a socket
+path a Windows program cannot open. The path in
+`app/rust_builder/windows/CMakeLists.txt` climbs
 seven directories because Flutter builds plugins through a symlink under
 `windows/flutter/ephemeral`; do not "fix" it to match the Linux one.
 

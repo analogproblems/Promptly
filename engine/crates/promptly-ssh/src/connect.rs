@@ -217,8 +217,7 @@ impl client::Handler for Handler {
         reply: ChannelOpenHandle,
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
-        let socket = std::env::var("SSH_AUTH_SOCK").ok();
-        let Some(path) = socket.filter(|_| self.agent_forward) else {
+        let Some(address) = agent_address().filter(|_| self.agent_forward) else {
             reply
                 .reject(ChannelOpenFailure::AdministrativelyProhibited)
                 .await;
@@ -226,7 +225,7 @@ impl client::Handler for Handler {
         };
         reply.accept().await;
         crate::runtime().spawn(async move {
-            forward_agent(path, channel).await;
+            forward_agent(address, channel).await;
         });
         Ok(())
     }
@@ -448,26 +447,72 @@ impl Prompter for HopPrompter {
     }
 }
 
-/// Join an agent-forwarding channel from the server to the agent socket on
-/// this device.
-#[cfg(unix)]
-async fn forward_agent(path: String, channel: Channel<Msg>) {
-    match tokio::net::UnixStream::connect(&path).await {
-        Ok(mut sock) => {
-            let mut stream = channel.into_stream();
-            let _ = tokio::io::copy_bidirectional(&mut sock, &mut stream).await;
-        }
-        Err(e) => {
-            tracing::info!("agent forwarding: could not open {path}: {e}");
-            let _ = channel.close().await;
-        }
+/// A connection to the SSH agent on this device, whatever it runs over.
+type AgentStream = Box<dyn russh::keys::agent::client::AgentStream + Send + Unpin>;
+
+/// Where the agent listens. `SSH_AUTH_SOCK` names a Unix socket on Linux
+/// and macOS. On Windows the OpenSSH agent listens on a named pipe, so the
+/// variable only counts when it names one: Git Bash and MSYS set it to a
+/// Cygwin-style socket path this process cannot open.
+fn agent_address() -> Option<String> {
+    let env = std::env::var("SSH_AUTH_SOCK")
+        .ok()
+        .filter(|s| !s.is_empty());
+    if cfg!(windows) {
+        Some(
+            env.filter(|s| s.starts_with(r"\\.\pipe\"))
+                .unwrap_or_else(|| r"\\.\pipe\openssh-ssh-agent".to_string()),
+        )
+    } else {
+        env
     }
 }
 
-#[cfg(not(unix))]
-async fn forward_agent(_path: String, channel: Channel<Msg>) {
-    tracing::info!("agent forwarding is not supported on this platform yet");
-    let _ = channel.close().await;
+/// Open the agent socket `SSH_AUTH_SOCK` names.
+#[cfg(unix)]
+async fn open_agent(address: &str) -> io::Result<AgentStream> {
+    Ok(Box::new(tokio::net::UnixStream::connect(address).await?))
+}
+
+/// Open Windows' own OpenSSH agent (the "OpenSSH Authentication Agent"
+/// service) on its named pipe, else PuTTY's Pageant.
+#[cfg(windows)]
+async fn open_agent(address: &str) -> io::Result<AgentStream> {
+    use russh::keys::agent::client::AgentClient;
+    match AgentClient::connect_named_pipe(address).await {
+        Ok(agent) => return Ok(agent.into_inner()),
+        Err(e) => tracing::debug!("no OpenSSH agent at {address}: {e}"),
+    }
+    match AgentClient::connect_pageant().await {
+        Ok(agent) => Ok(agent.into_inner()),
+        Err(e) => Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no OpenSSH agent at {address} and no Pageant: {e}"),
+        )),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+async fn open_agent(_address: &str) -> io::Result<AgentStream> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "SSH agents are not supported on this platform yet",
+    ))
+}
+
+/// Join an agent-forwarding channel from the server to the agent on this
+/// device.
+async fn forward_agent(address: String, channel: Channel<Msg>) {
+    match open_agent(&address).await {
+        Ok(mut agent) => {
+            let mut stream = channel.into_stream();
+            let _ = tokio::io::copy_bidirectional(&mut agent, &mut stream).await;
+        }
+        Err(e) => {
+            tracing::info!("agent forwarding: could not open {address}: {e}");
+            let _ = channel.close().await;
+        }
+    }
 }
 
 fn friendly_io(e: &io::Error) -> String {
@@ -553,9 +598,12 @@ async fn agent_auth(
     user: &str,
 ) -> Result<Option<MethodSet>, ConnectError> {
     use russh::keys::agent::client::AgentClient;
-    let mut agent = AgentClient::connect_env()
+    let address = agent_address()
+        .ok_or_else(|| ConnectError::AuthFailed("no SSH agent: SSH_AUTH_SOCK is not set".into()))?;
+    let stream = open_agent(&address)
         .await
         .map_err(|e| ConnectError::AuthFailed(format!("no SSH agent: {e}")))?;
+    let mut agent = AgentClient::connect(stream);
     let identities = agent
         .request_identities()
         .await
