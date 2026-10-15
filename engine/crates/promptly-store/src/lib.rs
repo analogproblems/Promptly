@@ -12,5 +12,5 @@ pub mod secrets;
 pub mod store;
 
 pub use promptly_vault::model::Collection;
-pub use secrets::{MemorySecretStore, SecretError, SecretStore};
+pub use secrets::{FileSecretStore, MemorySecretStore, SecretError, SecretStore};
 pub use store::{Record, Store, StoreError};

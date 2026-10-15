@@ -76,7 +76,10 @@ Logic belongs in `promptly-term`, `promptly-ssh`, `promptly-vault` and
 ## Platform notes
 
 **Linux.** The reference platform. The app bundle is self-contained under
-`app/build/linux/x64/release/bundle/`; run `bundle/promptly` directly.
+`app/build/linux/x64/release/bundle/`; run `bundle/promptly` directly. Data
+lives in `~/.local/share/dev.promptly.promptly/`: `promptly.db` (hosts,
+groups, keys' public halves, settings), `known_hosts`, and `secrets/` (one
+owner-only file per password or private key, named by id).
 
 **Windows.** Needs Visual Studio with the C++ desktop workload and Rust's
 `x86_64-pc-windows-msvc` target. The path in

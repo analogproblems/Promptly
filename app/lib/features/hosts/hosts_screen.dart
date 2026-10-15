@@ -8,6 +8,9 @@ import '../../core/theme/tokens.dart';
 import '../sessions/session_manager.dart';
 import '../sessions/sessions_screen.dart';
 import '../shell/empty_state.dart';
+import 'host_colors.dart';
+import 'models.dart';
+import 'repositories.dart';
 
 class HostsScreen extends ConsumerStatefulWidget {
   const HostsScreen({super.key});
@@ -18,6 +21,7 @@ class HostsScreen extends ConsumerStatefulWidget {
 
 class _HostsScreenState extends ConsumerState<HostsScreen> {
   final _search = TextEditingController();
+  String _query = '';
   EndpointParse? _quickConnect;
 
   @override
@@ -26,7 +30,16 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
     super.dispose();
   }
 
-  void _connect(EndpointOk ok) {
+  void _onChanged(String text) {
+    // Anything with an @ is a quick-connect attempt; the engine decides if it is valid.
+    final parsed = text.contains('@') ? ref.read(engineProvider).parseEndpoint(text) : null;
+    setState(() {
+      _query = text.trim().toLowerCase();
+      _quickConnect = parsed;
+    });
+  }
+
+  void _quickConnectTo(EndpointOk ok) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final entry = ref.read(sessionManagerProvider.notifier).connectSsh(SshConnectRequest(
       user: ok.user,
@@ -45,19 +58,61 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
     context.go('/sessions/${entry.id}');
   }
 
-  void _onChanged(String text) {
-    // Anything with an @ is a quick-connect attempt; the engine decides if it is valid.
-    final parsed =
-        text.contains('@') ? ref.read(engineProvider).parseEndpoint(text) : null;
-    setState(() => _quickConnect = parsed);
+  void _connect(Host host) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final entry = ref.read(sessionManagerProvider.notifier).connectHost(host, dark: dark);
+    context.go('/sessions/${entry.id}');
+  }
+
+  Future<void> _delete(Host host) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Delete ${host.label}?'),
+        content: const Text('The host and its saved password are removed. Keys are kept.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: ctx.tokens.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) ref.read(hostsProvider.notifier).delete(host.id);
+  }
+
+  bool _matches(Host h) {
+    if (_query.isEmpty) return true;
+    return h.label.toLowerCase().contains(_query) ||
+        h.hostname.toLowerCase().contains(_query) ||
+        h.username.toLowerCase().contains(_query) ||
+        h.tags.any((t) => t.toLowerCase().contains(_query));
   }
 
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final hosts = ref.watch(hostsProvider);
+    final groups = ref.watch(groupsProvider);
+    final shown = hosts.where(_matches).toList();
+
+    // Sections: each group with matching hosts, then the ungrouped ones.
+    final byGroup = <String?, List<Host>>{};
+    for (final h in shown) {
+      final gid = groups.any((g) => g.id == h.groupId) ? h.groupId : null;
+      byGroup.putIfAbsent(gid, () => []).add(h);
+    }
+    final sections = <(String?, List<Host>)>[
+      for (final g in groups)
+        if (byGroup[g.id] case final list?) (g.label, list),
+      if (byGroup[null] case final list?) (groups.isEmpty ? null : 'Other', list),
+    ];
+
     return Scaffold(
       floatingActionButton: FloatingActionButton(
-        onPressed: () => notYet(context, 'The host editor lands in milestone 1.'),
+        onPressed: () => context.go('/hosts/new'),
         tooltip: 'Add host',
         child: const Icon(Icons.add),
       ),
@@ -98,9 +153,9 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                 child: ListTile(
                   leading: Icon(Icons.bolt_outlined, color: t.accent),
                   title: Text('Connect to ${ok.display}', style: monoStyle(context, size: 14)),
-                  subtitle: Text('Port ${ok.port} · parsed by the engine'),
+                  subtitle: Text('Port ${ok.port} · not saved'),
                   trailing: FilledButton(
-                    onPressed: () => _connect(ok),
+                    onPressed: () => _quickConnectTo(ok),
                     child: const Text('Connect'),
                   ),
                 ),
@@ -112,32 +167,174 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
               child: Text(err.message, style: TextStyle(color: t.danger, fontSize: 13)),
             ),
           Expanded(
-            child: EmptyState(
-              icon: Icons.dns_outlined,
-              title: 'No hosts yet',
-              message:
-                  'Add a host, or type user@host above to connect straight away. Hosts you add will sync to your other devices once the vault is set up.',
-              action: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () => notYet(context, 'The host editor lands in milestone 1.'),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Add host'),
-                  ),
-                  if (supportsLocalShell)
-                    FilledButton.icon(
-                      onPressed: () => openLocalShell(context, ref),
-                      icon: const Icon(Icons.terminal),
-                      label: const Text('Local shell'),
+            child: hosts.isEmpty
+                ? EmptyState(
+                    icon: Icons.dns_outlined,
+                    title: 'No hosts yet',
+                    message:
+                        'Add a host, or type user@host above to connect straight away. Hosts you add will sync to your other devices once the vault is set up.',
+                    action: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      alignment: WrapAlignment.center,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () => context.go('/hosts/new'),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Add host'),
+                        ),
+                        if (supportsLocalShell)
+                          FilledButton.icon(
+                            onPressed: () => openLocalShell(context, ref),
+                            icon: const Icon(Icons.terminal),
+                            label: const Text('Local shell'),
+                          ),
+                      ],
                     ),
+                  )
+                : shown.isEmpty
+                    ? EmptyState(
+                        icon: Icons.search_off,
+                        title: 'No hosts match',
+                        message: 'Nothing matches "$_query". Type user@host to connect to somewhere new.',
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 96),
+                        children: [
+                          for (final (title, list) in sections) ...[
+                            if (title != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        title.toUpperCase(),
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w600,
+                                          letterSpacing: 0.8,
+                                          color: t.muted,
+                                        ),
+                                      ),
+                                    ),
+                                    Text('${list.length}', style: TextStyle(fontSize: 11, color: t.muted)),
+                                  ],
+                                ),
+                              ),
+                            for (final h in list)
+                              _HostRow(
+                                host: h,
+                                onConnect: () => _connect(h),
+                                onEdit: () => context.go('/hosts/${h.id}'),
+                                onDelete: () => _delete(h),
+                                onFavourite: () => ref.read(hostsProvider.notifier).toggleFavourite(h.id),
+                              ),
+                          ],
+                        ],
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HostRow extends StatelessWidget {
+  const _HostRow({
+    required this.host,
+    required this.onConnect,
+    required this.onEdit,
+    required this.onDelete,
+    required this.onFavourite,
+  });
+
+  final Host host;
+  final VoidCallback onConnect;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+  final VoidCallback onFavourite;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final color = hostColor(host.color ?? defaultColorFor(host.label), Theme.of(context).brightness);
+    final initial = host.label.isNotEmpty ? host.label[0].toUpperCase() : '?';
+    final auth = switch (host.auth.kind) {
+      AuthKind.identity => 'key',
+      AuthKind.password => host.auth.passwordSecretId != null ? 'password saved' : 'password',
+      AuthKind.agent => 'agent',
+      AuthKind.interactive => 'ask',
+    };
+    return InkWell(
+      key: Key('host-row-${host.id}'),
+      onTap: onConnect,
+      borderRadius: BorderRadius.circular(PromptlyTokens.panelRadius),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              alignment: Alignment.center,
+              child: Text(initial, style: monoStyle(context, size: 15, weight: FontWeight.w600, color: color)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          host.label,
+                          overflow: TextOverflow.ellipsis,
+                          style: monoStyle(context, size: 15, weight: FontWeight.w500, color: t.text),
+                        ),
+                      ),
+                      if (host.favourite) ...[
+                        const SizedBox(width: 6),
+                        Icon(Icons.star, size: 14, color: t.warning),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '${host.endpoint} · $auth',
+                    overflow: TextOverflow.ellipsis,
+                    style: monoStyle(context, size: 12, color: t.muted),
+                  ),
                 ],
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Text(relativeTime(host.lastConnectedAt), style: TextStyle(fontSize: 11, color: t.muted)),
+            PopupMenuButton<String>(
+              tooltip: 'Host actions',
+              onSelected: (v) {
+                switch (v) {
+                  case 'edit':
+                    onEdit();
+                  case 'favourite':
+                    onFavourite();
+                  case 'delete':
+                    onDelete();
+                }
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(value: 'edit', child: Text('Edit')),
+                PopupMenuItem(value: 'favourite', child: Text(host.favourite ? 'Unfavourite' : 'Favourite')),
+                const PopupMenuItem(value: 'delete', child: Text('Delete')),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }

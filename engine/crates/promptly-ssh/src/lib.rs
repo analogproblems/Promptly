@@ -13,6 +13,7 @@
 pub mod connect;
 pub mod endpoint;
 pub mod hostkey;
+pub mod keys;
 pub mod transport;
 
 use std::sync::LazyLock;
@@ -22,6 +23,10 @@ pub use connect::{
 };
 pub use endpoint::{Endpoint, ParseError};
 pub use hostkey::{FileKnownHosts, HostKeyInfo, HostKeyStatus, KnownHosts};
+pub use keys::{
+    generate as generate_key, inspect as inspect_key, public_fingerprint, Generated, Inspected,
+    KeyKind,
+};
 pub use transport::{SshReader, SshTransport};
 
 /// The runtime every SSH connection runs on. Two worker threads are plenty:

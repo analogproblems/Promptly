@@ -1,9 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../src/rust/api/engine.dart' as rust;
+import '../../src/rust/api/keys.dart' as rust_keys;
 import '../../src/rust/api/ssh.dart' as rust_ssh;
+import '../../src/rust/api/store.dart' as rust_store;
 import '../../src/rust/api/terminal.dart' as rust_term;
 
+export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
+export '../../src/rust/api/store.dart' show StoreRecord;
 export '../../src/rust/api/ssh.dart'
     show
         SshAuthKind,
@@ -58,6 +62,23 @@ abstract class Engine {
   void sshAnswerSecret(int attemptId, String? secret);
   void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers);
   void sshCancel(int attemptId);
+
+  /// Records in the local store, as JSON in the vault's format.
+  List<rust_store.StoreRecord> recordsList(String collection);
+  rust_store.StoreRecord? recordGet(String collection, String id);
+  void recordPut(String collection, String id, String json);
+  bool recordDelete(String collection, String id);
+  String? settingGet(String key);
+  void settingSet(String key, String json);
+
+  /// Secrets (passwords, private keys) by id. Never in the record store.
+  void secretPut(String id, String value);
+  String? secretGet(String id);
+  void secretDelete(String id);
+
+  rust_keys.GeneratedKey keyGenerate(rust_keys.SshKeyKind kind, String comment);
+  rust_keys.KeyInfo keyInspect(String privateKey, String? passphrase);
+  String keyFingerprint(String publicKey);
 }
 
 sealed class EndpointParse {
@@ -155,6 +176,48 @@ class RustEngine implements Engine {
 
   @override
   void sshCancel(int attemptId) => rust_ssh.sshCancel(attemptId: attemptId);
+
+  @override
+  List<rust_store.StoreRecord> recordsList(String collection) =>
+      rust_store.recordsList(collectionName: collection);
+
+  @override
+  rust_store.StoreRecord? recordGet(String collection, String id) =>
+      rust_store.recordGet(collectionName: collection, id: id);
+
+  @override
+  void recordPut(String collection, String id, String json) =>
+      rust_store.recordPut(collectionName: collection, id: id, json: json);
+
+  @override
+  bool recordDelete(String collection, String id) =>
+      rust_store.recordDelete(collectionName: collection, id: id);
+
+  @override
+  String? settingGet(String key) => rust_store.settingGet(key: key);
+
+  @override
+  void settingSet(String key, String json) => rust_store.settingSet(key: key, json: json);
+
+  @override
+  void secretPut(String id, String value) => rust_store.secretPut(id: id, value: value);
+
+  @override
+  String? secretGet(String id) => rust_store.secretGet(id: id);
+
+  @override
+  void secretDelete(String id) => rust_store.secretDelete(id: id);
+
+  @override
+  rust_keys.GeneratedKey keyGenerate(rust_keys.SshKeyKind kind, String comment) =>
+      rust_keys.keyGenerate(kind: kind, comment: comment);
+
+  @override
+  rust_keys.KeyInfo keyInspect(String privateKey, String? passphrase) =>
+      rust_keys.keyInspect(privateKey: privateKey, passphrase: passphrase);
+
+  @override
+  String keyFingerprint(String publicKey) => rust_keys.keyFingerprint(publicKey: publicKey);
 }
 
 final engineProvider = Provider<Engine>((_) => const RustEngine());

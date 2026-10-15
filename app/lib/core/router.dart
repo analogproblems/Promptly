@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/hosts/host_editor_screen.dart';
 import '../features/hosts/hosts_screen.dart';
 import '../features/keys/keys_screen.dart';
 import '../features/sessions/session_screen.dart';
@@ -21,7 +22,17 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state, shell) => ShellScaffold(shell: shell),
         branches: [
           StatefulShellBranch(routes: [
-            GoRoute(path: '/hosts', builder: (_, _) => const HostsScreen()),
+            GoRoute(
+              path: '/hosts',
+              builder: (_, _) => const HostsScreen(),
+              routes: [
+                GoRoute(path: 'new', builder: (_, _) => const HostEditorScreen()),
+                GoRoute(
+                  path: ':id',
+                  builder: (_, state) => HostEditorScreen(hostId: state.pathParameters['id']),
+                ),
+              ],
+            ),
           ]),
           StatefulShellBranch(routes: [
             GoRoute(

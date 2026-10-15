@@ -1827,6 +1827,7 @@ version = "0.1.0"
 dependencies = [
  "promptly-session",
  "promptly-term",
+ "rand",
  "russh",
  "serde",
  "thiserror 2.0.21",
@@ -1875,6 +1876,8 @@ dependencies = [
  "promptly-store",
  "promptly-term",
  "promptly-vault",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

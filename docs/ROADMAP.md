@@ -26,8 +26,8 @@ Goal: you can use it daily on your Linux desktop, for local shells and SSH, and 
 - Gestures: two-finger session switch, pinch zoom, double tap to select a word.
 - `promptly-ssh`: connect, password, key and keyboard-interactive auth, shell channel, resize, keep-alive. **Done** (auto-reconnect still to come).
 - Host key verification flow and known-host storage. **Done** (OpenSSH files; moves into the vault in M2).
-- Hosts list, search and quick connect, host editor (basics and auth), flat groups.
-- Identities: generate, import by paste or file, export the public key, biometric gate.
+- Hosts list, search and quick connect, host editor (basics and auth), flat groups. **Done.**
+- Identities: generate, import by paste, copy the public key. **Done** (import from file and the biometric gate come with the mobile builds).
 - Sessions tab with live thumbnails.
 - Themes: Promptly Dark and Light plus eight popular themes, live preview, JetBrains Mono bundled.
 - Connection progress inside the terminal and plain-language errors. **Done.**

@@ -4,7 +4,9 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/engine.dart';
+import 'api/keys.dart';
 import 'api/ssh.dart';
+import 'api/store.dart';
 import 'api/terminal.dart';
 
 import 'dart:async';
@@ -53,13 +55,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SshStep dco_decode_box_autoadd_ssh_step(dynamic raw);
 
   @protected
+  StoreRecord dco_decode_box_autoadd_store_record(dynamic raw);
+
+  @protected
   TerminalFrame dco_decode_box_autoadd_terminal_frame(dynamic raw);
 
   @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
+  GeneratedKey dco_decode_generated_key(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
+
+  @protected
+  KeyInfo dco_decode_key_info(dynamic raw);
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
@@ -83,6 +94,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SshKbPrompt> dco_decode_list_ssh_kb_prompt(dynamic raw);
 
   @protected
+  List<StoreRecord> dco_decode_list_store_record(dynamic raw);
+
+  @protected
   List<TerminalRow> dco_decode_list_terminal_row(dynamic raw);
 
   @protected
@@ -96,6 +110,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SshStep? dco_decode_opt_box_autoadd_ssh_step(dynamic raw);
+
+  @protected
+  StoreRecord? dco_decode_opt_box_autoadd_store_record(dynamic raw);
 
   @protected
   TerminalFrame? dco_decode_opt_box_autoadd_terminal_frame(dynamic raw);
@@ -137,7 +154,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SshKbPrompt dco_decode_ssh_kb_prompt(dynamic raw);
 
   @protected
+  SshKeyKind dco_decode_ssh_key_kind(dynamic raw);
+
+  @protected
   SshStep dco_decode_ssh_step(dynamic raw);
+
+  @protected
+  StoreRecord dco_decode_store_record(dynamic raw);
 
   @protected
   TerminalCursor dco_decode_terminal_cursor(dynamic raw);
@@ -203,6 +226,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SshStep sse_decode_box_autoadd_ssh_step(SseDeserializer deserializer);
 
   @protected
+  StoreRecord sse_decode_box_autoadd_store_record(SseDeserializer deserializer);
+
+  @protected
   TerminalFrame sse_decode_box_autoadd_terminal_frame(
     SseDeserializer deserializer,
   );
@@ -211,7 +237,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
+  GeneratedKey sse_decode_generated_key(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
+
+  @protected
+  KeyInfo sse_decode_key_info(SseDeserializer deserializer);
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
@@ -235,6 +267,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<SshKbPrompt> sse_decode_list_ssh_kb_prompt(SseDeserializer deserializer);
 
   @protected
+  List<StoreRecord> sse_decode_list_store_record(SseDeserializer deserializer);
+
+  @protected
   List<TerminalRow> sse_decode_list_terminal_row(SseDeserializer deserializer);
 
   @protected
@@ -250,6 +285,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   SshStep? sse_decode_opt_box_autoadd_ssh_step(SseDeserializer deserializer);
+
+  @protected
+  StoreRecord? sse_decode_opt_box_autoadd_store_record(
+    SseDeserializer deserializer,
+  );
 
   @protected
   TerminalFrame? sse_decode_opt_box_autoadd_terminal_frame(
@@ -297,7 +337,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   SshKbPrompt sse_decode_ssh_kb_prompt(SseDeserializer deserializer);
 
   @protected
+  SshKeyKind sse_decode_ssh_key_kind(SseDeserializer deserializer);
+
+  @protected
   SshStep sse_decode_ssh_step(SseDeserializer deserializer);
+
+  @protected
+  StoreRecord sse_decode_store_record(SseDeserializer deserializer);
 
   @protected
   TerminalCursor sse_decode_terminal_cursor(SseDeserializer deserializer);
@@ -376,6 +422,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_ssh_step(SshStep self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_store_record(
+    StoreRecord self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_terminal_frame(
     TerminalFrame self,
     SseSerializer serializer,
@@ -385,7 +437,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_generated_key(GeneratedKey self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_key_info(KeyInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
@@ -424,6 +482,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_store_record(
+    List<StoreRecord> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_terminal_row(
     List<TerminalRow> self,
     SseSerializer serializer,
@@ -444,6 +508,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_ssh_step(
     SshStep? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_store_record(
+    StoreRecord? self,
     SseSerializer serializer,
   );
 
@@ -502,7 +572,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_ssh_kb_prompt(SshKbPrompt self, SseSerializer serializer);
 
   @protected
+  void sse_encode_ssh_key_kind(SshKeyKind self, SseSerializer serializer);
+
+  @protected
   void sse_encode_ssh_step(SshStep self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_store_record(StoreRecord self, SseSerializer serializer);
 
   @protected
   void sse_encode_terminal_cursor(

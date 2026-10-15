@@ -17,6 +17,8 @@ promptly-term = { workspace = true }
 promptly-ssh = { workspace = true }
 promptly-vault = { workspace = true }
 promptly-store = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 promptly-session = { workspace = true }
 tokio = { version = "1", features = ["sync"] }
 anyhow = { workspace = true }

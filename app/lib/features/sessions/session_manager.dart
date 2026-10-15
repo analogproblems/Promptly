@@ -2,18 +2,23 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
+import '../hosts/models.dart';
+import '../hosts/repositories.dart';
 import '../terminal/terminal_controller.dart';
 import 'connect_flow.dart';
 
 /// One session as the app sees it: connecting, live, failed or exited.
 /// Notifies when it changes state; the controller notifies on every frame.
 class SessionEntry extends ChangeNotifier {
-  SessionEntry({required this.id, required this.label, required this.isLocal});
+  SessionEntry({required this.id, required this.label, required this.isLocal, this.hostId});
 
   /// The app's own id, stable for the session's whole life. Not the engine's.
   final int id;
   String label;
   final bool isLocal;
+
+  /// The saved host this session was opened from, if any.
+  final String? hostId;
 
   TerminalController? _controller;
   ConnectFlow? _flow;
@@ -85,6 +90,64 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     return entry;
   }
 
+  /// Connect to a saved host with its stored auth. A missing key is reported
+  /// as an error on the entry rather than thrown.
+  SessionEntry connectHost(Host host, {required bool dark}) {
+    final engine = ref.read(engineProvider);
+    var kind = SshAuthKind.interactive;
+    String? password;
+    String? privateKey;
+    String? problem;
+    switch (host.auth.kind) {
+      case AuthKind.identity:
+        kind = SshAuthKind.key;
+        final identity = ref.read(identitiesProvider.notifier).byId(host.auth.identityId);
+        final secretId = identity?.privateKeySecretId;
+        privateKey = secretId == null ? null : _secret(engine, secretId);
+        if (privateKey == null) {
+          problem = 'The key for this host is missing. Edit the host and pick a key.';
+        }
+      case AuthKind.password:
+        kind = SshAuthKind.password;
+        final secretId = host.auth.passwordSecretId;
+        password = secretId == null ? null : _secret(engine, secretId);
+      case AuthKind.agent:
+      case AuthKind.interactive:
+        kind = SshAuthKind.interactive;
+    }
+    final entry = SessionEntry(id: _nextId++, label: host.label, isLocal: false, hostId: host.id);
+    if (problem != null) {
+      entry.setError(problem);
+      state = [...state, entry];
+      return entry;
+    }
+    final request = SshConnectRequest(
+      user: host.username,
+      host: host.hostname,
+      port: host.port,
+      auth: kind,
+      password: password,
+      privateKey: privateKey,
+      passphrase: null,
+      cols: 80,
+      rows: 24,
+      dark: dark,
+      label: host.label,
+      keepaliveSeconds: host.keepaliveSeconds,
+    );
+    _startFlow(entry, engine, request);
+    state = [...state, entry];
+    return entry;
+  }
+
+  String? _secret(Engine engine, String id) {
+    try {
+      return engine.secretGet(id);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Try the same connection again after a failure.
   void retry(int id) {
     final entry = byId(id);
@@ -99,6 +162,11 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     flow.addListener(() {
       if (flow.sessionId != null && entry.controller == null) {
         entry.setController(TerminalController(engine: engine, id: flow.sessionId!, label: entry.label)..start());
+        if (entry.hostId != null) {
+          try {
+            ref.read(hostsProvider.notifier).markConnected(entry.hostId!);
+          } catch (_) {}
+        }
       } else if (flow.error != null && entry.error == null) {
         entry.setError(flow.error);
       } else if (flow.cancelled && entry.error == null) {

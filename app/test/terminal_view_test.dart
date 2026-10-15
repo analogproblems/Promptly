@@ -54,6 +54,30 @@ class RecordingEngine implements Engine {
   void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers) {}
   @override
   void sshCancel(int attemptId) {}
+  @override
+  List<StoreRecord> recordsList(String collection) => const [];
+  @override
+  StoreRecord? recordGet(String collection, String id) => null;
+  @override
+  void recordPut(String collection, String id, String json) {}
+  @override
+  bool recordDelete(String collection, String id) => false;
+  @override
+  String? settingGet(String key) => null;
+  @override
+  void settingSet(String key, String json) {}
+  @override
+  void secretPut(String id, String value) {}
+  @override
+  String? secretGet(String id) => null;
+  @override
+  void secretDelete(String id) {}
+  @override
+  GeneratedKey keyGenerate(SshKeyKind kind, String comment) => throw UnimplementedError();
+  @override
+  KeyInfo keyInspect(String privateKey, String? passphrase) => throw UnimplementedError();
+  @override
+  String keyFingerprint(String publicKey) => 'SHA256:test';
 }
 
 void main() {
