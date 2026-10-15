@@ -2,6 +2,10 @@
 
 Each release's section is what the GitHub Release says; keep it in plain words.
 
+## 1.0.1
+
+- Promptly for Mac: a free `.dmg` for Apple silicon and Intel Macs. It is not signed by Apple yet, so the first launch needs one trip to System Settings, then Privacy & Security, then *Open Anyway*.
+
 ## 1.0.0
 
 The first release: everything from the four milestones.
