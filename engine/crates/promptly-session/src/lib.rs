@@ -1,0 +1,268 @@
+//! A live terminal session.
+//!
+//! A [`Session`] pairs a [`Transport`] (where bytes go: a local shell today,
+//! an SSH channel in the next step) with an [`Emulator`] (what the bytes mean).
+//! [`pump`] runs the read loop on its own thread and hands frames to whoever
+//! is drawing them.
+
+pub mod local;
+
+use std::io::{self, Read};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
+
+use promptly_term::{Emulator, EmulatorEvent, Frame, Palette, TermSize};
+
+pub use local::LocalShell;
+
+/// Where a session's bytes come from and go to.
+pub trait Transport: Send {
+    fn write(&mut self, data: &[u8]) -> io::Result<()>;
+    fn resize(&mut self, size: TermSize) -> io::Result<()>;
+    /// Exit code once the other end has gone, if it reports one.
+    fn exit_code(&mut self) -> Option<i32>;
+    /// Ask the other end to stop. Idempotent.
+    fn close(&mut self);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionKind {
+    LocalShell { program: String },
+    Ssh { host: String },
+}
+
+/// What a session reports to its viewer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionEvent {
+    Frame(Frame),
+    /// The program asked to put text on the clipboard (OSC 52).
+    Clipboard(String),
+    /// The other end has gone. No more frames follow.
+    Exited {
+        code: Option<i32>,
+    },
+}
+
+pub struct Session {
+    kind: SessionKind,
+    emulator: Mutex<Emulator>,
+    transport: Mutex<Box<dyn Transport>>,
+    exited: Mutex<Option<Option<i32>>>,
+}
+
+impl Session {
+    pub fn new(
+        kind: SessionKind,
+        size: TermSize,
+        palette: Palette,
+        transport: Box<dyn Transport>,
+    ) -> Self {
+        Self {
+            kind,
+            emulator: Mutex::new(Emulator::new(size, palette)),
+            transport: Mutex::new(transport),
+            exited: Mutex::new(None),
+        }
+    }
+
+    pub fn kind(&self) -> &SessionKind {
+        &self.kind
+    }
+
+    /// `Some(code)` once the other end has gone.
+    pub fn exited(&self) -> Option<Option<i32>> {
+        *self.exited.lock().unwrap()
+    }
+
+    pub fn write(&self, data: &[u8]) -> io::Result<()> {
+        self.transport.lock().unwrap().write(data)
+    }
+
+    /// Paste text the way the running program expects: wrapped in bracketed
+    /// paste markers when it asked for them, with newlines as carriage returns.
+    pub fn paste(&self, text: &str) -> io::Result<()> {
+        let bracketed = self.emulator.lock().unwrap().bracketed_paste();
+        let mut t = self.transport.lock().unwrap();
+        if bracketed {
+            t.write(b"\x1b[200~")?;
+            t.write(text.as_bytes())?;
+            t.write(b"\x1b[201~")
+        } else {
+            t.write(text.replace("\r\n", "\r").replace('\n', "\r").as_bytes())
+        }
+    }
+
+    /// Resize, then build the frame that shows the new layout.
+    pub fn resize(&self, size: TermSize, emit: impl FnOnce(Frame)) -> io::Result<()> {
+        let mut emu = self.emulator.lock().unwrap();
+        emu.resize(size);
+        let result = self.transport.lock().unwrap().resize(size);
+        emit(emu.frame());
+        result
+    }
+
+    /// Scroll the viewport and build the frame that shows it.
+    pub fn scroll(&self, delta: i32, emit: impl FnOnce(Frame)) {
+        let mut emu = self.emulator.lock().unwrap();
+        emu.scroll(delta);
+        emit(emu.frame());
+    }
+
+    pub fn scroll_to_bottom(&self, emit: impl FnOnce(Frame)) {
+        let mut emu = self.emulator.lock().unwrap();
+        emu.scroll_to_bottom();
+        emit(emu.frame());
+    }
+
+    pub fn set_palette(&self, palette: Palette, emit: impl FnOnce(Frame)) {
+        let mut emu = self.emulator.lock().unwrap();
+        emu.set_palette(palette);
+        emit(emu.frame());
+    }
+
+    /// Build a complete frame regardless of what changed.
+    pub fn full_frame(&self, emit: impl FnOnce(Frame)) {
+        let mut emu = self.emulator.lock().unwrap();
+        emu.invalidate();
+        emit(emu.frame());
+    }
+
+    /// The whole screen as text, for tests and thumbnails.
+    pub fn screen_text(&self) -> String {
+        self.emulator.lock().unwrap().screen_text()
+    }
+
+    pub fn close(&self) {
+        self.transport.lock().unwrap().close();
+    }
+
+    fn mark_exited(&self, code: Option<i32>) {
+        *self.exited.lock().unwrap() = Some(code);
+    }
+}
+
+/// Smallest gap between two frames while output is streaming. Reading pauses
+/// for the remainder, which lets the pty buffer coalesce bursts (a `cat` of a
+/// large file) into a few hundred frames a second at most.
+const MIN_FRAME_GAP: Duration = Duration::from_millis(6);
+
+/// Run the read loop for `session` on a new thread. `emit` is called with
+/// every event, in order, until `Exited`.
+pub fn pump(
+    session: Arc<Session>,
+    mut reader: Box<dyn Read + Send>,
+    emit: impl Fn(SessionEvent) + Send + 'static,
+) -> JoinHandle<()> {
+    thread::Builder::new()
+        .name("promptly-session".into())
+        .spawn(move || {
+            let mut buf = vec![0u8; 64 * 1024];
+            let mut last = Instant::now();
+            // The first frame shows the empty screen with the right size.
+            session.full_frame(|f| emit(SessionEvent::Frame(f)));
+            loop {
+                let n = match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        // A pty reports EIO when the child has gone; that is a normal exit.
+                        if e.raw_os_error() != Some(5) {
+                            tracing::warn!("session read failed: {e}");
+                        }
+                        break;
+                    }
+                };
+                let elapsed = last.elapsed();
+                if elapsed < MIN_FRAME_GAP {
+                    thread::sleep(MIN_FRAME_GAP - elapsed);
+                }
+                let mut emu = session.emulator.lock().unwrap();
+                let events = emu.feed(&buf[..n]);
+                let mut exit = false;
+                for event in events {
+                    match event {
+                        EmulatorEvent::PtyWrite(bytes) => {
+                            if let Err(e) = session.transport.lock().unwrap().write(&bytes) {
+                                tracing::warn!("reply to program failed: {e}");
+                            }
+                        }
+                        EmulatorEvent::ClipboardStore(text) => emit(SessionEvent::Clipboard(text)),
+                        EmulatorEvent::Exit => exit = true,
+                        EmulatorEvent::Title(_) | EmulatorEvent::Bell => {}
+                    }
+                }
+                emit(SessionEvent::Frame(emu.frame()));
+                drop(emu);
+                last = Instant::now();
+                if exit {
+                    session.close();
+                    break;
+                }
+            }
+            let code = session.transport.lock().unwrap().exit_code();
+            session.mark_exited(code);
+            emit(SessionEvent::Exited { code });
+        })
+        .expect("spawn session thread")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    #[cfg(unix)]
+    fn local_shell_round_trip() {
+        let size = TermSize::new(40, 6);
+        let (shell, reader) =
+            LocalShell::spawn(size, Some("/bin/sh".into()), None).expect("spawn /bin/sh");
+        let session = Arc::new(Session::new(
+            SessionKind::LocalShell {
+                program: "/bin/sh".into(),
+            },
+            size,
+            Palette::promptly_dark(),
+            Box::new(shell),
+        ));
+        let (tx, rx) = mpsc::channel();
+        let _handle = pump(session.clone(), reader, move |e| {
+            let _ = tx.send(e);
+        });
+        session.write(b"echo hello-$((20+22))\n").unwrap();
+
+        // Wait until the output shows up, then exit.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(SessionEvent::Frame(_)) => {
+                    if session.screen_text().contains("hello-42") {
+                        break;
+                    }
+                }
+                Ok(other) => panic!("unexpected event before output: {other:?}"),
+                Err(_) => {}
+            }
+            assert!(
+                Instant::now() < deadline,
+                "shell output never arrived:\n{}",
+                session.screen_text()
+            );
+        }
+        session.write(b"exit 7\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(SessionEvent::Exited { code }) => {
+                    assert_eq!(code, Some(7));
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => assert!(Instant::now() < deadline, "shell never exited"),
+            }
+        }
+        assert_eq!(session.exited(), Some(Some(7)));
+    }
+}

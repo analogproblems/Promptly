@@ -21,37 +21,43 @@ class EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: t.surface,
-                  border: Border.all(color: t.border),
-                  borderRadius: BorderRadius.circular(16),
+      child: SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: t.surface,
+                    border: Border.all(color: t.border),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Icon(icon, color: t.muted, size: 26),
                 ),
-                child: Icon(icon, color: t.muted, size: 26),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: t.text),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, height: 1.45, color: t.muted),
-              ),
-              if (action != null) ...[const SizedBox(height: 18), action!],
-            ],
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: t.text,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14, height: 1.45, color: t.muted),
+                ),
+                if (action != null) ...[const SizedBox(height: 18), action!],
+              ],
+            ),
           ),
         ),
       ),

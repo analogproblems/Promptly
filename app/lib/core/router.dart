@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/hosts/hosts_screen.dart';
 import '../features/keys/keys_screen.dart';
+import '../features/sessions/session_screen.dart';
 import '../features/sessions/sessions_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/shell/shell_scaffold.dart';
@@ -23,7 +24,17 @@ final routerProvider = Provider<GoRouter>((ref) {
             GoRoute(path: '/hosts', builder: (_, _) => const HostsScreen()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/sessions', builder: (_, _) => const SessionsScreen()),
+            GoRoute(
+              path: '/sessions',
+              builder: (_, _) => const SessionsScreen(),
+              routes: [
+                GoRoute(
+                  path: ':id',
+                  builder: (_, state) =>
+                      SessionScreen(id: int.tryParse(state.pathParameters['id'] ?? '') ?? -1),
+                ),
+              ],
+            ),
           ]),
           StatefulShellBranch(routes: [
             GoRoute(path: '/snippets', builder: (_, _) => const SnippetsScreen()),

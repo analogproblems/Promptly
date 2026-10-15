@@ -8,5 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+russh = "0.63.1"
 serde = { workspace = true }
 thiserror = { workspace = true }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "sync", "io-util", "net", "time", "macros"] }

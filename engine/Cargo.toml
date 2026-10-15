@@ -20,6 +20,7 @@ time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
 
 # Internal crates
 promptly-term = { path = "crates/promptly-term" }
+promptly-session = { path = "crates/promptly-session" }
 promptly-ssh = { path = "crates/promptly-ssh" }
 promptly-vault = { path = "crates/promptly-vault" }
 promptly-store = { path = "crates/promptly-store" }

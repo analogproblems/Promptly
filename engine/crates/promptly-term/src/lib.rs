@@ -1,9 +1,18 @@
 //! Terminal emulation for Promptly.
 //!
 //! This crate owns the screen grid, scrollback, cursor and terminal modes, and
-//! turns raw bytes from a shell or SSH channel into frame updates the UI can
-//! paint. Milestone 1 wraps `alacritty_terminal` here; milestone 0 only fixes
-//! the public shapes that the rest of the engine and the app depend on.
+//! turns raw bytes from a shell or SSH channel into [`Frame`] updates the UI
+//! can paint. Emulation itself is `alacritty_terminal`, the engine behind the
+//! Alacritty terminal; this crate adapts it, resolves colours against a
+//! [`Palette`] and tracks which rows changed so the UI repaints only those.
+
+pub mod emulator;
+pub mod frame;
+pub mod palette;
+
+pub use emulator::{Emulator, EmulatorEvent};
+pub use frame::{flags, CursorShape, CursorState, Frame, RowUpdate};
+pub use palette::{Palette, Rgb};
 
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +41,18 @@ impl TermSize {
 impl Default for TermSize {
     fn default() -> Self {
         Self::new(80, 24)
+    }
+}
+
+impl alacritty_terminal::grid::Dimensions for TermSize {
+    fn total_lines(&self) -> usize {
+        self.rows as usize
+    }
+    fn screen_lines(&self) -> usize {
+        self.rows as usize
+    }
+    fn columns(&self) -> usize {
+        self.cols as usize
     }
 }
 

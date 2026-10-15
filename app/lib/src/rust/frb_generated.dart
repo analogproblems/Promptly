@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/engine.dart';
+import 'api/terminal.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -69,7 +70,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1121260693;
+  int get rustContentHash => -300643059;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -88,6 +89,43 @@ abstract class RustLibApi extends BaseApi {
   ParsedEndpoint crateApiEngineParseEndpoint({required String input});
 
   String crateApiEnginePing({required String name});
+
+  void crateApiTerminalTerminalClose({required int id});
+
+  Stream<TerminalEvent> crateApiTerminalTerminalEvents({required int id});
+
+  List<SessionInfo> crateApiTerminalTerminalList();
+
+  int crateApiTerminalTerminalOpenLocal({
+    required int cols,
+    required int rows,
+    required bool dark,
+    String? program,
+    String? cwd,
+  });
+
+  void crateApiTerminalTerminalPaste({required int id, required String text});
+
+  void crateApiTerminalTerminalRefresh({required int id});
+
+  void crateApiTerminalTerminalResize({
+    required int id,
+    required int cols,
+    required int rows,
+  });
+
+  String crateApiTerminalTerminalScreenText({required int id});
+
+  void crateApiTerminalTerminalScroll({required int id, required int delta});
+
+  void crateApiTerminalTerminalScrollToBottom({required int id});
+
+  void crateApiTerminalTerminalSetDark({required int id, required bool dark});
+
+  void crateApiTerminalTerminalWrite({
+    required int id,
+    required List<int> data,
+  });
 }
 
 class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
@@ -193,6 +231,352 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiEnginePingConstMeta =>
       const TaskConstMeta(debugName: "ping", argNames: ["name"]);
 
+  @override
+  void crateApiTerminalTerminalClose({required int id}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalCloseConstMeta,
+        argValues: [id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalCloseConstMeta =>
+      const TaskConstMeta(debugName: "terminal_close", argNames: ["id"]);
+
+  @override
+  Stream<TerminalEvent> crateApiTerminalTerminalEvents({required int id}) {
+    final sink = RustStreamSink<TerminalEvent>();
+    unawaited(
+      handler.executeNormal(
+        NormalTask(
+          callFfi: (port_) {
+            final serializer = SseSerializer(generalizedFrbRustBinding);
+            sse_encode_u_32(id, serializer);
+            sse_encode_StreamSink_terminal_event_Sse(sink, serializer);
+            pdeCallFfi(
+              generalizedFrbRustBinding,
+              serializer,
+              funcId: 6,
+              port: port_,
+            );
+          },
+          codec: SseCodec(
+            decodeSuccessData: sse_decode_unit,
+            decodeErrorData: sse_decode_AnyhowException,
+          ),
+          constMeta: kCrateApiTerminalTerminalEventsConstMeta,
+          argValues: [id, sink],
+          apiImpl: this,
+        ),
+      ),
+    );
+    return sink.stream;
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalEventsConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_events",
+        argNames: ["id", "sink"],
+      );
+
+  @override
+  List<SessionInfo> crateApiTerminalTerminalList() {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_list_session_info,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTerminalTerminalListConstMeta,
+        argValues: [],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalListConstMeta =>
+      const TaskConstMeta(debugName: "terminal_list", argNames: []);
+
+  @override
+  int crateApiTerminalTerminalOpenLocal({
+    required int cols,
+    required int rows,
+    required bool dark,
+    String? program,
+    String? cwd,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_16(cols, serializer);
+          sse_encode_u_16(rows, serializer);
+          sse_encode_bool(dark, serializer);
+          sse_encode_opt_String(program, serializer);
+          sse_encode_opt_String(cwd, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_u_32,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalOpenLocalConstMeta,
+        argValues: [cols, rows, dark, program, cwd],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalOpenLocalConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_open_local",
+        argNames: ["cols", "rows", "dark", "program", "cwd"],
+      );
+
+  @override
+  void crateApiTerminalTerminalPaste({required int id, required String text}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          sse_encode_String(text, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalPasteConstMeta,
+        argValues: [id, text],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalPasteConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_paste",
+        argNames: ["id", "text"],
+      );
+
+  @override
+  void crateApiTerminalTerminalRefresh({required int id}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalRefreshConstMeta,
+        argValues: [id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalRefreshConstMeta =>
+      const TaskConstMeta(debugName: "terminal_refresh", argNames: ["id"]);
+
+  @override
+  void crateApiTerminalTerminalResize({
+    required int id,
+    required int cols,
+    required int rows,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          sse_encode_u_16(cols, serializer);
+          sse_encode_u_16(rows, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalResizeConstMeta,
+        argValues: [id, cols, rows],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalResizeConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_resize",
+        argNames: ["id", "cols", "rows"],
+      );
+
+  @override
+  String crateApiTerminalTerminalScreenText({required int id}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_String,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalScreenTextConstMeta,
+        argValues: [id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalScreenTextConstMeta =>
+      const TaskConstMeta(debugName: "terminal_screen_text", argNames: ["id"]);
+
+  @override
+  void crateApiTerminalTerminalScroll({required int id, required int delta}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          sse_encode_i_32(delta, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalScrollConstMeta,
+        argValues: [id, delta],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalScrollConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_scroll",
+        argNames: ["id", "delta"],
+      );
+
+  @override
+  void crateApiTerminalTerminalScrollToBottom({required int id}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalScrollToBottomConstMeta,
+        argValues: [id],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalScrollToBottomConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_scroll_to_bottom",
+        argNames: ["id"],
+      );
+
+  @override
+  void crateApiTerminalTerminalSetDark({required int id, required bool dark}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          sse_encode_bool(dark, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalSetDarkConstMeta,
+        argValues: [id, dark],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalSetDarkConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_set_dark",
+        argNames: ["id", "dark"],
+      );
+
+  @override
+  void crateApiTerminalTerminalWrite({
+    required int id,
+    required List<int> data,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          sse_encode_list_prim_u_8_loose(data, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalWriteConstMeta,
+        argValues: [id, data],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalWriteConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_write",
+        argNames: ["id", "data"],
+      );
+
+  @protected
+  AnyhowException dco_decode_AnyhowException(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return AnyhowException(raw as String);
+  }
+
+  @protected
+  RustStreamSink<TerminalEvent> dco_decode_StreamSink_terminal_event_Sse(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    throw UnimplementedError();
+  }
+
   @protected
   String dco_decode_String(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -200,9 +584,87 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool dco_decode_bool(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as bool;
+  }
+
+  @protected
+  int dco_decode_box_autoadd_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  TerminalFrame dco_decode_box_autoadd_terminal_frame(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_terminal_frame(raw);
+  }
+
+  @protected
+  int dco_decode_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_String).toList();
+  }
+
+  @protected
+  Uint16List dco_decode_list_prim_u_16_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Uint16List;
+  }
+
+  @protected
+  Uint32List dco_decode_list_prim_u_32_strict(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as Uint32List;
+  }
+
+  @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as List<int>;
+  }
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as Uint8List;
+  }
+
+  @protected
+  List<SessionInfo> dco_decode_list_session_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_session_info).toList();
+  }
+
+  @protected
+  List<TerminalRow> dco_decode_list_terminal_row(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_terminal_row).toList();
+  }
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_String(raw);
+  }
+
+  @protected
+  int? dco_decode_opt_box_autoadd_i_32(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_i_32(raw);
+  }
+
+  @protected
+  TerminalFrame? dco_decode_opt_box_autoadd_terminal_frame(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_terminal_frame(raw);
   }
 
   @protected
@@ -219,7 +681,108 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SessionInfo dco_decode_session_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return SessionInfo(
+      id: dco_decode_u_32(arr[0]),
+      label: dco_decode_String(arr[1]),
+      isLocal: dco_decode_bool(arr[2]),
+      exited: dco_decode_bool(arr[3]),
+      exitCode: dco_decode_opt_box_autoadd_i_32(arr[4]),
+    );
+  }
+
+  @protected
+  TerminalCursor dco_decode_terminal_cursor(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return TerminalCursor(
+      line: dco_decode_i_32(arr[0]),
+      col: dco_decode_u_16(arr[1]),
+      shape: dco_decode_terminal_cursor_shape(arr[2]),
+    );
+  }
+
+  @protected
+  TerminalCursorShape dco_decode_terminal_cursor_shape(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TerminalCursorShape.values[raw as int];
+  }
+
+  @protected
+  TerminalEvent dco_decode_terminal_event(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    return TerminalEvent(
+      kind: dco_decode_terminal_event_kind(arr[0]),
+      frame: dco_decode_opt_box_autoadd_terminal_frame(arr[1]),
+      clipboard: dco_decode_opt_String(arr[2]),
+      exitCode: dco_decode_opt_box_autoadd_i_32(arr[3]),
+    );
+  }
+
+  @protected
+  TerminalEventKind dco_decode_terminal_event_kind(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TerminalEventKind.values[raw as int];
+  }
+
+  @protected
+  TerminalFrame dco_decode_terminal_frame(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 16)
+      throw Exception('unexpected arr length: expect 16 but see ${arr.length}');
+    return TerminalFrame(
+      cols: dco_decode_u_16(arr[0]),
+      rows: dco_decode_u_16(arr[1]),
+      full: dco_decode_bool(arr[2]),
+      rowsChanged: dco_decode_list_terminal_row(arr[3]),
+      cursor: dco_decode_terminal_cursor(arr[4]),
+      displayOffset: dco_decode_u_32(arr[5]),
+      historyLen: dco_decode_u_32(arr[6]),
+      defaultFg: dco_decode_u_32(arr[7]),
+      defaultBg: dco_decode_u_32(arr[8]),
+      cursorColor: dco_decode_u_32(arr[9]),
+      title: dco_decode_opt_String(arr[10]),
+      bell: dco_decode_bool(arr[11]),
+      appCursor: dco_decode_bool(arr[12]),
+      altScreen: dco_decode_bool(arr[13]),
+      bracketedPaste: dco_decode_bool(arr[14]),
+      mouseReporting: dco_decode_bool(arr[15]),
+    );
+  }
+
+  @protected
+  TerminalRow dco_decode_terminal_row(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    return TerminalRow(
+      line: dco_decode_u_16(arr[0]),
+      glyphs: dco_decode_list_String(arr[1]),
+      fg: dco_decode_list_prim_u_32_strict(arr[2]),
+      bg: dco_decode_list_prim_u_32_strict(arr[3]),
+      flags: dco_decode_list_prim_u_16_strict(arr[4]),
+    );
+  }
+
+  @protected
   int dco_decode_u_16(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as int;
+  }
+
+  @protected
+  int dco_decode_u_32(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as int;
   }
@@ -237,6 +800,21 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_String(deserializer);
+    return AnyhowException(inner);
+  }
+
+  @protected
+  RustStreamSink<TerminalEvent> sse_decode_StreamSink_terminal_event_Sse(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    throw UnimplementedError('Unreachable ()');
+  }
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var inner = sse_decode_list_prim_u_8_strict(deserializer);
@@ -244,10 +822,128 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  bool sse_decode_bool(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint8() != 0;
+  }
+
+  @protected
+  int sse_decode_box_autoadd_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  TerminalFrame sse_decode_box_autoadd_terminal_frame(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_terminal_frame(deserializer));
+  }
+
+  @protected
+  int sse_decode_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getInt32();
+  }
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <String>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  Uint16List sse_decode_list_prim_u_16_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint16List(len_);
+  }
+
+  @protected
+  Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint32List(len_);
+  }
+
+  @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var len_ = sse_decode_i_32(deserializer);
+    return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var len_ = sse_decode_i_32(deserializer);
     return deserializer.buffer.getUint8List(len_);
+  }
+
+  @protected
+  List<SessionInfo> sse_decode_list_session_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <SessionInfo>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_session_info(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<TerminalRow> sse_decode_list_terminal_row(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <TerminalRow>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_terminal_row(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_String(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  int? sse_decode_opt_box_autoadd_i_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_i_32(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  TerminalFrame? sse_decode_opt_box_autoadd_terminal_frame(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_terminal_frame(deserializer));
+    } else {
+      return null;
+    }
   }
 
   @protected
@@ -260,9 +956,130 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  SessionInfo sse_decode_session_info(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_id = sse_decode_u_32(deserializer);
+    var var_label = sse_decode_String(deserializer);
+    var var_isLocal = sse_decode_bool(deserializer);
+    var var_exited = sse_decode_bool(deserializer);
+    var var_exitCode = sse_decode_opt_box_autoadd_i_32(deserializer);
+    return SessionInfo(
+      id: var_id,
+      label: var_label,
+      isLocal: var_isLocal,
+      exited: var_exited,
+      exitCode: var_exitCode,
+    );
+  }
+
+  @protected
+  TerminalCursor sse_decode_terminal_cursor(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_line = sse_decode_i_32(deserializer);
+    var var_col = sse_decode_u_16(deserializer);
+    var var_shape = sse_decode_terminal_cursor_shape(deserializer);
+    return TerminalCursor(line: var_line, col: var_col, shape: var_shape);
+  }
+
+  @protected
+  TerminalCursorShape sse_decode_terminal_cursor_shape(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return TerminalCursorShape.values[inner];
+  }
+
+  @protected
+  TerminalEvent sse_decode_terminal_event(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_kind = sse_decode_terminal_event_kind(deserializer);
+    var var_frame = sse_decode_opt_box_autoadd_terminal_frame(deserializer);
+    var var_clipboard = sse_decode_opt_String(deserializer);
+    var var_exitCode = sse_decode_opt_box_autoadd_i_32(deserializer);
+    return TerminalEvent(
+      kind: var_kind,
+      frame: var_frame,
+      clipboard: var_clipboard,
+      exitCode: var_exitCode,
+    );
+  }
+
+  @protected
+  TerminalEventKind sse_decode_terminal_event_kind(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return TerminalEventKind.values[inner];
+  }
+
+  @protected
+  TerminalFrame sse_decode_terminal_frame(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_cols = sse_decode_u_16(deserializer);
+    var var_rows = sse_decode_u_16(deserializer);
+    var var_full = sse_decode_bool(deserializer);
+    var var_rowsChanged = sse_decode_list_terminal_row(deserializer);
+    var var_cursor = sse_decode_terminal_cursor(deserializer);
+    var var_displayOffset = sse_decode_u_32(deserializer);
+    var var_historyLen = sse_decode_u_32(deserializer);
+    var var_defaultFg = sse_decode_u_32(deserializer);
+    var var_defaultBg = sse_decode_u_32(deserializer);
+    var var_cursorColor = sse_decode_u_32(deserializer);
+    var var_title = sse_decode_opt_String(deserializer);
+    var var_bell = sse_decode_bool(deserializer);
+    var var_appCursor = sse_decode_bool(deserializer);
+    var var_altScreen = sse_decode_bool(deserializer);
+    var var_bracketedPaste = sse_decode_bool(deserializer);
+    var var_mouseReporting = sse_decode_bool(deserializer);
+    return TerminalFrame(
+      cols: var_cols,
+      rows: var_rows,
+      full: var_full,
+      rowsChanged: var_rowsChanged,
+      cursor: var_cursor,
+      displayOffset: var_displayOffset,
+      historyLen: var_historyLen,
+      defaultFg: var_defaultFg,
+      defaultBg: var_defaultBg,
+      cursorColor: var_cursorColor,
+      title: var_title,
+      bell: var_bell,
+      appCursor: var_appCursor,
+      altScreen: var_altScreen,
+      bracketedPaste: var_bracketedPaste,
+      mouseReporting: var_mouseReporting,
+    );
+  }
+
+  @protected
+  TerminalRow sse_decode_terminal_row(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_line = sse_decode_u_16(deserializer);
+    var var_glyphs = sse_decode_list_String(deserializer);
+    var var_fg = sse_decode_list_prim_u_32_strict(deserializer);
+    var var_bg = sse_decode_list_prim_u_32_strict(deserializer);
+    var var_flags = sse_decode_list_prim_u_16_strict(deserializer);
+    return TerminalRow(
+      line: var_line,
+      glyphs: var_glyphs,
+      fg: var_fg,
+      bg: var_bg,
+      flags: var_flags,
+    );
+  }
+
+  @protected
   int sse_decode_u_16(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint16();
+  }
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getUint32();
   }
 
   @protected
@@ -277,21 +1094,103 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  int sse_decode_i_32(SseDeserializer deserializer) {
+  void sse_encode_AnyhowException(
+    AnyhowException self,
+    SseSerializer serializer,
+  ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getInt32();
+    sse_encode_String(self.message, serializer);
   }
 
   @protected
-  bool sse_decode_bool(SseDeserializer deserializer) {
+  void sse_encode_StreamSink_terminal_event_Sse(
+    RustStreamSink<TerminalEvent> self,
+    SseSerializer serializer,
+  ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return deserializer.buffer.getUint8() != 0;
+    sse_encode_String(
+      self.setupAndSerialize(
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_terminal_event,
+          decodeErrorData: sse_decode_AnyhowException,
+        ),
+      ),
+      serializer,
+    );
   }
 
   @protected
   void sse_encode_String(String self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_list_prim_u_8_strict(utf8.encoder.convert(self), serializer);
+  }
+
+  @protected
+  void sse_encode_bool(bool self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint8(self ? 1 : 0);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_terminal_frame(
+    TerminalFrame self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_terminal_frame(self, serializer);
+  }
+
+  @protected
+  void sse_encode_i_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putInt32(self);
+  }
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_String(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_prim_u_16_strict(
+    Uint16List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint16List(self);
+  }
+
+  @protected
+  void sse_encode_list_prim_u_32_strict(
+    Uint32List self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint32List(self);
+  }
+
+  @protected
+  void sse_encode_list_prim_u_8_loose(
+    List<int> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    serializer.buffer.putUint8List(
+      self is Uint8List ? self : Uint8List.fromList(self),
+    );
   }
 
   @protected
@@ -302,6 +1201,63 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     serializer.buffer.putUint8List(self);
+  }
+
+  @protected
+  void sse_encode_list_session_info(
+    List<SessionInfo> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_session_info(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_terminal_row(
+    List<TerminalRow> self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_terminal_row(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_String(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_i_32(int? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_i_32(self, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_opt_box_autoadd_terminal_frame(
+    TerminalFrame? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_terminal_frame(self, serializer);
+    }
   }
 
   @protected
@@ -316,9 +1272,94 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_session_info(SessionInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.id, serializer);
+    sse_encode_String(self.label, serializer);
+    sse_encode_bool(self.isLocal, serializer);
+    sse_encode_bool(self.exited, serializer);
+    sse_encode_opt_box_autoadd_i_32(self.exitCode, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_cursor(
+    TerminalCursor self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.line, serializer);
+    sse_encode_u_16(self.col, serializer);
+    sse_encode_terminal_cursor_shape(self.shape, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_cursor_shape(
+    TerminalCursorShape self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_event(TerminalEvent self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_terminal_event_kind(self.kind, serializer);
+    sse_encode_opt_box_autoadd_terminal_frame(self.frame, serializer);
+    sse_encode_opt_String(self.clipboard, serializer);
+    sse_encode_opt_box_autoadd_i_32(self.exitCode, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_event_kind(
+    TerminalEventKind self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_frame(TerminalFrame self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_16(self.cols, serializer);
+    sse_encode_u_16(self.rows, serializer);
+    sse_encode_bool(self.full, serializer);
+    sse_encode_list_terminal_row(self.rowsChanged, serializer);
+    sse_encode_terminal_cursor(self.cursor, serializer);
+    sse_encode_u_32(self.displayOffset, serializer);
+    sse_encode_u_32(self.historyLen, serializer);
+    sse_encode_u_32(self.defaultFg, serializer);
+    sse_encode_u_32(self.defaultBg, serializer);
+    sse_encode_u_32(self.cursorColor, serializer);
+    sse_encode_opt_String(self.title, serializer);
+    sse_encode_bool(self.bell, serializer);
+    sse_encode_bool(self.appCursor, serializer);
+    sse_encode_bool(self.altScreen, serializer);
+    sse_encode_bool(self.bracketedPaste, serializer);
+    sse_encode_bool(self.mouseReporting, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_row(TerminalRow self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_16(self.line, serializer);
+    sse_encode_list_String(self.glyphs, serializer);
+    sse_encode_list_prim_u_32_strict(self.fg, serializer);
+    sse_encode_list_prim_u_32_strict(self.bg, serializer);
+    sse_encode_list_prim_u_16_strict(self.flags, serializer);
+  }
+
+  @protected
   void sse_encode_u_16(int self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint16(self);
+  }
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putUint32(self);
   }
 
   @protected
@@ -330,17 +1371,5 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @protected
   void sse_encode_unit(void self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-  }
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putInt32(self);
-  }
-
-  @protected
-  void sse_encode_bool(bool self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    serializer.buffer.putUint8(self ? 1 : 0);
   }
 }

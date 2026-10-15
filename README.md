@@ -8,11 +8,11 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 
 ## Status
 
-**Milestone 0 done: foundations.** The app builds and runs on Linux with the Rust engine inside it. Linux comes first, then Windows, Android, macOS and iOS.
+**Milestone 1 in progress.** The terminal emulator works: a local shell on Linux with full colour, styles, scrollback and full-screen programs. SSH, the host list and keys are next. Linux comes first, then Windows, Android, macOS and iOS.
 
 <p>
-  <img src="docs/screenshots/m0-settings-engine-ping.png" alt="Settings screen in dark mode: a string sent through the Rust engine and back" width="640">
-  <img src="docs/screenshots/m0-hosts-quick-connect.png" alt="Hosts screen: the engine parsing user@host:port as you type" width="640">
+  <img src="docs/screenshots/m1-terminal-top.png" alt="Promptly running top in a local shell on Linux, dark theme" width="640">
+  <img src="docs/screenshots/m1-terminal-styles.png" alt="Bold, italic, underline, strikethrough, inverse, dim, 256-colour and truecolour text in the terminal" width="640">
 </p>
 
 Read the design in this order:

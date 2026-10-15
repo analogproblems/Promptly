@@ -18,6 +18,27 @@ class FakeEngine implements Engine {
     if (at <= 0) return const EndpointError('a user name is required, like user@host');
     return EndpointOk(user: input.substring(0, at), host: input.substring(at + 1), port: 22);
   }
+
+  @override
+  int terminalOpenLocal({required int cols, required int rows, required bool dark}) => 1;
+  @override
+  Stream<TerminalEvent> terminalEvents(int id) => const Stream.empty();
+  @override
+  void terminalWrite(int id, List<int> data) {}
+  @override
+  void terminalPaste(int id, String text) {}
+  @override
+  void terminalResize(int id, int cols, int rows) {}
+  @override
+  void terminalScroll(int id, int delta) {}
+  @override
+  void terminalScrollToBottom(int id) {}
+  @override
+  void terminalSetDark(int id, bool dark) {}
+  @override
+  void terminalRefresh(int id) {}
+  @override
+  void terminalClose(int id) {}
 }
 
 Widget app() => ProviderScope(

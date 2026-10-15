@@ -1,0 +1,14 @@
+[package]
+name = "promptly-session"
+description = "A live terminal session: a transport (local shell or SSH) driving an emulator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+promptly-term = { workspace = true }
+portable-pty = "0.9.0"
+thiserror = { workspace = true }
+tracing = { workspace = true }

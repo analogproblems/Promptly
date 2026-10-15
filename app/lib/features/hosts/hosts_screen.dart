@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../sessions/sessions_screen.dart';
 import '../shell/empty_state.dart';
 
 class HostsScreen extends ConsumerStatefulWidget {
@@ -95,10 +96,23 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
               title: 'No hosts yet',
               message:
                   'Add a host, or type user@host above to connect straight away. Hosts you add will sync to your other devices once the vault is set up.',
-              action: OutlinedButton.icon(
-                onPressed: () => notYet(context, 'The host editor lands in milestone 1.'),
-                icon: const Icon(Icons.add),
-                label: const Text('Add host'),
+              action: Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => notYet(context, 'The host editor lands in milestone 1.'),
+                    icon: const Icon(Icons.add),
+                    label: const Text('Add host'),
+                  ),
+                  if (supportsLocalShell)
+                    FilledButton.icon(
+                      onPressed: () => openLocalShell(context, ref),
+                      icon: const Icon(Icons.terminal),
+                      label: const Text('Local shell'),
+                    ),
+                ],
               ),
             ),
           ),
