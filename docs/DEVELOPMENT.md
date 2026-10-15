@@ -67,6 +67,10 @@ Dart code uses, and Flutter does not notice when that set changes. If a new
 `Icons.*` shows up as a small box, delete `app/build/flutter_assets` and
 build again.
 
+## The app icon
+
+`tools/icons/icon.cjs` draws the icon as SVG from a few parameters; `make icons` (Node with the `playwright` package, plus ImageMagick) renders every platform's files from it: the in-app asset, the Linux icon theme sizes, the Windows `.ico`, the Android launcher, adaptive and monochrome layers, and the macOS and iOS sets. The rendered files are committed, so this only runs when the drawing changes.
+
 ## Changing the engine API
 
 1. Add or change a function in `engine/crates/promptly-api/src/api/`. Plain

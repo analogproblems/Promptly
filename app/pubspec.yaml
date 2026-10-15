@@ -64,6 +64,8 @@ flutter:
 
   assets:
     - assets/fonts/OFL.txt
+    - assets/icon/promptly.png
+    - assets/icon/promptly.svg
 
   fonts:
     - family: JetBrains Mono

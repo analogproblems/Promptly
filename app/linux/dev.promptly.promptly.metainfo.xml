@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.promptly.promptly</id>
+  <name>Promptly</name>
+  <summary>Terminal and SSH client with free, zero-knowledge sync</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Promptly is a terminal emulator and SSH client for phone, tablet and desktop. Hosts, keys and snippets sync between your devices through an encrypted vault kept on storage you already own: a synced folder, or a server you have over SFTP. No account, no servers, no subscription.</p>
+    <p>Jump hosts, port forwards, tmux-backed persistent sessions, snippets with variables, a file browser over the session's own connection, scrollback search, themes, and a desktop workspace with tabs and split panes.</p>
+  </description>
+  <launchable type="desktop-id">dev.promptly.promptly.desktop</launchable>
+  <url type="homepage">https://github.com/analogproblems/Promptly</url>
+  <url type="bugtracker">https://github.com/analogproblems/Promptly/issues</url>
+  <categories>
+    <category>System</category>
+    <category>TerminalEmulator</category>
+    <category>Network</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="1.0.0" date="2026-10-15"/>
+  </releases>
+</component>

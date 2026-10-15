@@ -54,6 +54,30 @@ static void my_application_activate(GApplication* application) {
 
   gtk_window_set_default_size(window, 1280, 720);
 
+  // The window icon. An installed copy has it in the icon theme under the
+  // name the desktop file uses; a bundle run from anywhere finds the same
+  // picture next to the executable, in the app's assets.
+  gtk_window_set_icon_name(window, "dev.promptly.promptly");
+  g_autofree gchar* exe = g_file_read_link("/proc/self/exe", nullptr);
+  if (exe != nullptr) {
+    g_autofree gchar* dir = g_path_get_dirname(exe);
+    g_autofree gchar* icon = g_build_filename(
+        dir, "data", "flutter_assets", "assets", "icon", "promptly.png", nullptr);
+    g_autoptr(GdkPixbuf) full = gdk_pixbuf_new_from_file(icon, nullptr);
+    if (full != nullptr) {
+      // X11 drops a single icon above 256 px as too large a request, so
+      // offer the usual sizes and let the desktop pick.
+      GList* icons = nullptr;
+      const int sizes[] = {256, 128, 64, 48, 32, 16};
+      for (int size : sizes) {
+        icons = g_list_append(
+            icons, gdk_pixbuf_scale_simple(full, size, size, GDK_INTERP_BILINEAR));
+      }
+      gtk_window_set_icon_list(window, icons);
+      g_list_free_full(icons, g_object_unref);
+    }
+  }
+
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
       project, self->dart_entrypoint_arguments);

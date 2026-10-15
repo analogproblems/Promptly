@@ -49,6 +49,9 @@ app-test: ## Run the widget tests (no native library needed)
 run: ## Run the app on Linux desktop in debug mode with hot reload
 	cd $(APP) && $(FLUTTER) run -d linux
 
+icons: ## Re-render the app icon for every platform from tools/icons (needs Node + playwright, ImageMagick)
+	node tools/icons/render.cjs
+
 build-linux: ## Release bundle at app/build/linux/x64/release/bundle
 	cd $(APP) && $(FLUTTER) build linux --release
 
@@ -58,4 +61,4 @@ clean: ## Remove build output
 	cd $(ENGINE) && $(CARGO) clean
 	cd $(APP) && $(FLUTTER) clean
 
-.PHONY: help setup gen engine-build engine-test engine-lint engine-fmt engine-audit cli app-get analyze app-test run build-linux check clean
+.PHONY: help setup gen engine-build engine-test engine-lint engine-fmt engine-audit cli app-get analyze app-test run icons build-linux check clean

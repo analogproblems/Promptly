@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Promptly
+GenericName=Terminal and SSH client
+Comment=Terminal emulator and SSH client with free, zero-knowledge sync
+Exec=promptly
+Icon=dev.promptly.promptly
+Terminal=false
+Categories=System;TerminalEmulator;Network;
+Keywords=ssh;terminal;shell;sftp;tmux;
+StartupWMClass=dev.promptly.promptly
