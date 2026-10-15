@@ -31,3 +31,6 @@ app/rust_builder/**/target/
 .idea/
 *.swp
 .DS_Store
+
+# Release packages made locally
+dist/

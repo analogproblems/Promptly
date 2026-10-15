@@ -151,6 +151,21 @@ text from the system keyboard and shows a bar of the keys phones lack
 `aarch64-apple-ios` and `aarch64-apple-ios-sim`. The podspecs in
 `app/rust_builder/{ios,macos}` link the static library `libpromptly_api.a`.
 
+## Releasing
+
+1. Write the release's section in `CHANGELOG.md` (`## 1.0.1`, plain words).
+2. `make version V=1.0.1` sets the version in the app, the engine and the
+   Linux metadata, and bumps the build number.
+3. Commit, tag and push the tag: `git commit -am "Release 1.0.1" && git tag v1.0.1 && git push origin main v1.0.1`.
+4. The Release workflow builds the Linux tarball and `.deb`, the Windows
+   zip, and the Android APK and app bundle (signed with the upload key
+   when the `ANDROID_*` secrets are set), writes `SHA256SUMS`, and opens a
+   **draft** release with the changelog section as its notes. Try the
+   builds, then publish the draft.
+
+`make package-linux` makes the tarball and `.deb` locally from the release
+bundle, into `dist/`.
+
 ## Conventions
 
 - Rust: `cargo fmt` and `cargo clippy --all-targets -- -D warnings` must pass.

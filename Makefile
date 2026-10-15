@@ -55,10 +55,17 @@ icons: ## Re-render the app icon for every platform from tools/icons (needs Node
 build-linux: ## Release bundle at app/build/linux/x64/release/bundle
 	cd $(APP) && $(FLUTTER) build linux --release
 
+package-linux: ## Tarball and .deb in dist/ from the release bundle
+	tools/package-linux.sh
+
+version: ## Set the version everywhere, e.g. make version V=1.0.1
+	@test -n "$(V)" || (echo "usage: make version V=X.Y.Z" && exit 1)
+	tools/version.sh $(V)
+
 check: engine-lint engine-test engine-audit analyze app-test ## Everything CI checks, locally
 
 clean: ## Remove build output
 	cd $(ENGINE) && $(CARGO) clean
 	cd $(APP) && $(FLUTTER) clean
 
-.PHONY: help setup gen engine-build engine-test engine-lint engine-fmt engine-audit cli app-get analyze app-test run icons build-linux check clean
+.PHONY: help setup gen engine-build engine-test engine-lint engine-fmt engine-audit cli app-get analyze app-test run icons build-linux package-linux version check clean
