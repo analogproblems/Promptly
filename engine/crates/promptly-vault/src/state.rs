@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn field_by_field_last_writer_wins_in_any_order() {
-        let ops = vec![
+        let ops = [
             put("h", 1, 'a', json!({"label": "web", "port": 22})),
             put("h", 5, 'b', json!({"port": 2222})),
             put("h", 3, 'a', json!({"label": "web-1", "port": 23})),

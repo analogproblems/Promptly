@@ -254,7 +254,7 @@ impl<'a> Vault<'a> {
                         Ok(snap) => {
                             let changed = state.apply_snapshot(&snap);
                             for r in &snap.records {
-                                for (_, (_, ts)) in &r.fields {
+                                for (_, ts) in r.fields.values() {
                                     clock.observe(ts);
                                 }
                                 if let Some(d) = &r.deleted {
