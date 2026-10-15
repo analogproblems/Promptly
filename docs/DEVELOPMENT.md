@@ -122,10 +122,15 @@ side by side as two "devices" sharing one vault folder, and
 walkthrough does not wait on Argon2id. Never set the second one for real use.
 
 **Windows.** Needs Visual Studio with the C++ desktop workload and Rust's
-`x86_64-pc-windows-msvc` target. The path in
-`app/rust_builder/windows/CMakeLists.txt` climbs seven directories because
-Flutter builds plugins through a symlink under `windows/flutter/ephemeral`;
-do not "fix" it to match the Linux one.
+`x86_64-pc-windows-msvc` target; then `flutter build windows --release`
+puts a self-contained folder at `app\build\windows\x64\runner\Release\`.
+CI builds it on every push and keeps the folder as the
+`promptly-windows-x64` artifact. The local shell is PowerShell when it is
+installed, else `cmd`. Data lives under `%APPDATA%` unless
+`PROMPTLY_DATA_DIR` says otherwise. Agent forwarding is not wired up on
+Windows yet. The path in `app/rust_builder/windows/CMakeLists.txt` climbs
+seven directories because Flutter builds plugins through a symlink under
+`windows/flutter/ephemeral`; do not "fix" it to match the Linux one.
 
 **Android.** Needs Android Studio's SDK and NDK, plus the Rust targets
 `aarch64-linux-android`, `armv7-linux-androideabi` and `x86_64-linux-android`.

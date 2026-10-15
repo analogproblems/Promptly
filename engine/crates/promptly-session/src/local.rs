@@ -28,7 +28,7 @@ impl LocalShell {
 
         let mut cmd = match &program {
             Some(p) => CommandBuilder::new(p),
-            None => CommandBuilder::new_default_prog(),
+            None => default_shell(),
         };
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
@@ -38,7 +38,7 @@ impl LocalShell {
         }
         let program_name = program
             .clone()
-            .or_else(|| std::env::var("SHELL").ok())
+            .or_else(default_shell_name)
             .unwrap_or_else(|| "shell".into());
 
         let child = pair.slave.spawn_command(cmd).map_err(other)?;
@@ -60,6 +60,42 @@ impl LocalShell {
     pub fn program(&self) -> &str {
         &self.program
     }
+}
+
+/// The shell to start when none is named: `$SHELL` on Unix (the pty crate
+/// reads it), PowerShell on Windows when it is installed, else cmd.
+fn default_shell() -> CommandBuilder {
+    if cfg!(windows) {
+        if let Some(name) = default_shell_name() {
+            let mut cmd = CommandBuilder::new(&name);
+            if name.to_ascii_lowercase().contains("pwsh")
+                || name.to_ascii_lowercase().contains("powershell")
+            {
+                cmd.arg("-NoLogo");
+            }
+            return cmd;
+        }
+    }
+    CommandBuilder::new_default_prog()
+}
+
+fn default_shell_name() -> Option<String> {
+    if cfg!(windows) {
+        ["pwsh.exe", "powershell.exe"]
+            .into_iter()
+            .find(|name| find_on_path(name).is_some())
+            .map(str::to_string)
+            .or_else(|| std::env::var("COMSPEC").ok())
+    } else {
+        std::env::var("SHELL").ok()
+    }
+}
+
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|p| p.is_file())
 }
 
 impl Transport for LocalShell {

@@ -72,3 +72,30 @@ jobs:
           name: promptly-linux-x64
           path: app/build/linux/x64/release/bundle
           if-no-files-found: error
+
+  app-windows:
+    name: Flutter app (Windows)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Dependencies
+        run: flutter pub get
+      - name: Build
+        run: flutter build windows --release
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptly-windows-x64
+          path: app/build/windows/x64/runner/Release
+          if-no-files-found: error

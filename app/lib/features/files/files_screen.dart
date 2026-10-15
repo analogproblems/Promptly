@@ -1024,6 +1024,8 @@ class _TextEditorDialogState extends State<TextEditorDialog> {
                           style: monoStyle(context, size: 13, color: t.text),
                           decoration: const InputDecoration(
                             border: InputBorder.none,
+                            enabledBorder: InputBorder.none,
+                            focusedBorder: InputBorder.none,
                             contentPadding: EdgeInsets.all(16),
                           ),
                         ),
