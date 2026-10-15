@@ -137,8 +137,6 @@ jobs:
 
   macos:
     name: macOS disk image
-    # Runs on tags only: GitHub's Mac runners cost ten times a Linux minute
-    # while the repository is private.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

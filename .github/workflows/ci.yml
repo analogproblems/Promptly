@@ -105,6 +105,38 @@ jobs:
           path: app/build/windows/x64/runner/Release
           if-no-files-found: error
 
+  app-macos:
+    name: Flutter app (macOS)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # A release build is universal, so cargokit builds the engine for both.
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Dependencies
+        run: flutter pub get
+      - name: Build
+        run: flutter build macos --release
+      - name: Disk image
+        run: ../tools/package-macos.sh build/macos/Build/Products/Release/promptly.app "" ../dist
+      - name: Upload disk image
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptly-macos
+          path: dist/*.dmg
+          if-no-files-found: error
+
   app-android:
     name: Flutter app (Android)
     runs-on: ubuntu-24.04

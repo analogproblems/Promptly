@@ -13,7 +13,7 @@ How Promptly reaches people, what each channel costs, and the order we take them
 
 | Channel | Platforms | What it costs | What it needs | Status |
 |---|---|---|---|---|
-| GitHub Releases | Linux, Windows, Android, macOS | Nothing | A tag; CI does the rest. The Mac job runs on tags only, since GitHub's Mac runners are only free once the repository is public | M4; macOS in M5 |
+| GitHub Releases | Linux, Windows, Android, macOS | Nothing | A tag; CI does the rest. The Mac job builds the `.dmg` on GitHub's Mac runners, free now the repository is public | M4; macOS in M5 |
 | Google Play | Android | One-time developer registration | A Play developer account, our own upload key (the store does the signing), a privacy policy page, store text and screenshots | M4, internal testing |
 | Developer ID and notarisation | macOS | Apple's yearly developer programme | A signing certificate in CI's secrets and Apple's automated scan; no store, no review, no sandbox | Later; the first thing the one-time price pays for |
 | Mac App Store | macOS | The same programme | Store review and the App Sandbox, which confines the local shell and blocks forwarding to the SSH agent | Optional, last |
@@ -41,4 +41,4 @@ How Promptly reaches people, what each channel costs, and the order we take them
 
 ## Building for the Mac
 
-CI builds the Mac app on GitHub's own Mac runners, so nobody needs a Mac on their desk. Those runners cost ten times a Linux minute on a private repository and nothing on a public one, which is why the Mac job runs only in the release workflow, on a tag, and not on every push. `tools/package-macos.sh` wraps the built app in the `.dmg`, with a shortcut to Applications. The first Mac release is the free, unsigned `.dmg`; it ships in the release after 1.0.0 so that its first runs through CI do not hold up the first tag.
+CI builds the Mac app on GitHub's own Mac runners, so nobody needs a Mac on their desk. Those runners cost ten times a Linux minute on a private repository and nothing on a public one, which is why the Mac build waited for the repository to go public; CI now builds it on every push and keeps the disk image as the `promptly-macos` artifact. `tools/package-macos.sh` wraps the built app in the `.dmg`, with a shortcut to Applications. The first Mac release is the free, unsigned `.dmg`; it ships in the release after 1.0.0 so that its first runs through CI do not hold up the first tag.
