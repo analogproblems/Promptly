@@ -178,16 +178,23 @@ class _Tab extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    color: s == null
-                        ? t.muted
-                        : live
-                        ? (accent ?? t.accent)
-                        : t.muted,
-                    shape: BoxShape.circle,
+                Semantics(
+                  label: s == null
+                      ? 'Empty'
+                      : live
+                          ? 'Connected'
+                          : 'Not connected',
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: s == null
+                          ? t.muted
+                          : live
+                              ? (accent ?? t.accent)
+                              : t.muted,
+                      shape: BoxShape.circle,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),

@@ -35,14 +35,12 @@ class SessionsScreen extends ConsumerWidget {
       children: [
         PageHeader(
           title: 'Sessions',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
+          trailing: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 6,
             children: [
-              if (sessions.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(right: 12, bottom: 6),
-                  child: _Summary(sessions: sessions),
-                ),
+              if (sessions.isNotEmpty) _Summary(sessions: sessions),
               if (supportsLocalShell)
                 FilledButton.icon(
                   onPressed: () => openLocalShell(context, ref),

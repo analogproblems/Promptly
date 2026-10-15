@@ -78,20 +78,27 @@ class PageHeader extends StatelessWidget {
     final t = context.tokens;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
+      // A Wrap, not a Row: with large text the actions drop below the title
+      // instead of running off the edge.
+      child: Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.end,
+        runSpacing: 8,
         children: [
-          if (leading != null) ...[leading!, const SizedBox(width: 4)],
-          Expanded(
-            child: Text(
-              title,
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.5,
-                color: t.text,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (leading != null) ...[leading!, const SizedBox(width: 4)],
+              Text(
+                title,
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.5,
+                  color: t.text,
+                ),
               ),
-            ),
+            ],
           ),
           ?trailing,
         ],

@@ -193,16 +193,23 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                       )
                     else
                       const SizedBox(width: 8),
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: live
-                            ? t.accent
-                            : entry.isConnecting
-                                ? t.warning
-                                : t.muted,
-                        shape: BoxShape.circle,
+                    Semantics(
+                      label: live
+                          ? 'Connected'
+                          : entry.isConnecting
+                              ? 'Connecting'
+                              : 'Not connected',
+                      child: Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: live
+                              ? t.accent
+                              : entry.isConnecting
+                                  ? t.warning
+                                  : t.muted,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 10),

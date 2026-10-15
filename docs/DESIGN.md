@@ -354,6 +354,8 @@ A hosts panel on the left (toggled with Ctrl+Shift+B), tabs across the top, pane
 
 VoiceOver and TalkBack read the terminal line by line with a "read from cursor" action. All bar keys have labels. Colour is never the only signal: the production-host red bar also carries a label. Contrast meets WCAG AA in both built-in themes.
 
+Done in M4 (the desktop pass; phones get checked with TalkBack on the Play test): every icon-only control has a tooltip, which is also its spoken label; status dots say "Connected", "Connecting" or "Not connected"; decorative marks such as the host colour chip are hidden from screen readers; the terminal exposes its visible text as the value of one "Terminal" node, built only while a screen reader is running. Large text: the main screens lay out at double size without clipping (page headers and settings rows wrap instead of overflowing), and a widget test keeps it that way. Reduced motion: the system setting removes page transitions and the welcome tour's slides. "Read from cursor" and line-by-line navigation inside the terminal are still to do.
+
 ## 8. Security and privacy
 
 ### 8.1 Threat model

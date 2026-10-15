@@ -100,7 +100,7 @@ class ThemeCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(PromptlyTokens.panelRadius),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
+          duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 150),
           width: 236,
           decoration: BoxDecoration(
             color: t.surface,

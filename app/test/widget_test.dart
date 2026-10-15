@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/app.dart';
+import 'package:promptly/core/theme/theme.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/features/files/files_screen.dart';
 import 'package:promptly/features/files/fs.dart';
@@ -52,6 +53,39 @@ class FakeEngine implements Engine {
     openedThemes.add(theme);
     return 1;
   }
+  /// Frames pushed after the first one, by `emitText`.
+  final StreamController<TerminalEvent> laterFrames = StreamController<TerminalEvent>.broadcast();
+
+  /// Show `text` on the top row of a session, as a program printing it would.
+  void emitText(int id, String text) {
+    final glyphs = List<String>.generate(frameCols, (i) => i < text.length ? text[i] : '');
+    laterFrames.add(TerminalEvent(
+      kind: TerminalEventKind.frame,
+      frame: TerminalFrame(
+        cols: frameCols,
+        rows: frameRows,
+        full: false,
+        rowsChanged: [
+          TerminalRow(line: 0, glyphs: glyphs, fg: Uint32List(frameCols), bg: Uint32List(frameCols), flags: Uint16List(frameCols)),
+        ],
+        cursor: TerminalCursor(line: 0, col: text.length, shape: TerminalCursorShape.block),
+        displayOffset: 0,
+        historyLen: 0,
+        defaultFg: 0xE6EDF3,
+        defaultBg: 0x0E1116,
+        cursorColor: 0x7CE38B,
+        title: 'deploy@web-1: ~',
+        bell: false,
+        appCursor: false,
+        altScreen: false,
+        bracketedPaste: false,
+        mouseReporting: false,
+      ),
+      clipboard: null,
+      exitCode: null,
+    ));
+  }
+
   @override
   Stream<TerminalEvent> terminalEvents(int id) {
     if (id != connectedSessionId) return const Stream.empty();
@@ -65,7 +99,7 @@ class FakeEngine implements Engine {
           flags: Uint16List(frameCols),
         ),
     ];
-    return Stream.fromIterable([
+    final first = [
       TerminalEvent(
         kind: TerminalEventKind.frame,
         frame: TerminalFrame(
@@ -91,7 +125,13 @@ class FakeEngine implements Engine {
       ),
       if (dropAfterFrame)
         const TerminalEvent(kind: TerminalEventKind.exited, frame: null, clipboard: null, exitCode: null),
-    ]);
+    ];
+    Stream<TerminalEvent> events() async* {
+      yield* Stream.fromIterable(first);
+      if (!dropAfterFrame) yield* laterFrames.stream;
+    }
+
+    return events();
   }
   /// Everything typed or pasted into sessions.
   final List<List<int>> written = [];
@@ -1488,5 +1528,91 @@ void main() {
     await scrollTap(tester, find.byKey(const Key('about-licences')));
     await tester.pumpAndSettle();
     expect(find.byType(LicensePage), findsOneWidget);
+  });
+
+  testWidgets('every main screen lays out at double text size without overflowing', (tester) async {
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final engine = FakeEngine()
+      ..records['hosts'] = {
+        'h1': hostJson('h1', 'web-1', color: 'blue', favourite: true, lastConnected: DateTime.now().toUtc().toIso8601String()),
+        'h2': hostJson('h2', 'db-primary'),
+      }
+      ..records['snippets'] = {'s1': snippetJson('s1', 'Disk space', 'df -h {{path}}')};
+    await tester.pumpWidget(appWith(engine, onboarded: false));
+    await tester.pumpAndSettle();
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(find.byKey(const Key('onboarding-next')));
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(find.byKey(const Key('onboarding-start')));
+    await tester.pumpAndSettle();
+    expect(find.text('web-1'), findsWidgets);
+    await tester.tap(find.text('web-1').first);
+    await tester.pumpAndSettle();
+    for (final tab in ['Sessions', 'Snippets', 'Keys', 'Settings']) {
+      await tester.tap(find.text(tab).first);
+      await tester.pumpAndSettle();
+    }
+    await scrollTap(tester, find.byKey(const Key('settings-help')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Back to settings'));
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('settings-about')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hosts').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Add host'));
+    await tester.pumpAndSettle();
+    expect(find.text('New host'), findsOneWidget);
+    // An overflow anywhere above would have failed the test with a RenderFlex error.
+  });
+
+  testWidgets('a phone-sized window at larger text still shows the hosts list and a session', (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final engine = FakeEngine()
+      ..connectedSessionId = 1
+      ..records['hosts'] = {'h1': hostJson('h1', 'web-1')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.text('web-1'), findsOneWidget);
+    await tester.tap(find.text('Sessions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open a local shell'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('session-search')), findsOneWidget);
+  });
+
+  testWidgets('the terminal exposes its text to screen readers', (tester) async {
+    final handle = tester.ensureSemantics();
+    final engine = FakeEngine()..connectedSessionId = 1;
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sessions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Local shell'));
+    await tester.pumpAndSettle();
+    engine.emitText(1, 'hello from the shell');
+    await tester.pumpAndSettle();
+    expect(find.bySemanticsLabel(RegExp('Terminal')), findsWidgets);
+    final node = tester.getSemantics(find.bySemanticsLabel(RegExp('Terminal')).first);
+    expect(node.value, contains('hello from the shell'));
+    handle.dispose();
+  });
+
+  testWidgets('reduced motion turns off page transitions and the tour slides', (tester) async {
+    tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+    await tester.pumpWidget(appWith(FakeEngine(), onboarded: false));
+    await tester.pumpAndSettle();
+    final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(materialApp.theme!.pageTransitionsTheme.builders[TargetPlatform.linux], isA<NoMotionPageTransitionsBuilder>());
+    await tester.tap(find.byKey(const Key('onboarding-next')));
+    await tester.pump();
+    expect(find.text('Your data, yours.'), findsOneWidget, reason: 'the page jumps instead of sliding');
   });
 }

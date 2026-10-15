@@ -64,11 +64,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     Padding(
                       padding: const EdgeInsets.all(12),
-                      child: Row(
+                      child: Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        runSpacing: 8,
                         children: [
-                          Expanded(
-                            child: Text('App look', style: TextStyle(color: t.text)),
-                          ),
+                          Text('App look', style: TextStyle(color: t.text)),
                           SegmentedButton<ThemeMode>(
                             showSelectedIcon: false,
                             segments: const [
@@ -177,9 +178,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         children: [
                           Icon(Icons.memory_outlined, color: t.muted, size: 20),
                           const SizedBox(width: 8),
-                          Text(
-                            'Rust engine ${engine.version()}',
-                            style: monoStyle(context, size: 13, color: t.text),
+                          Expanded(
+                            child: Text(
+                              'Rust engine ${engine.version()}',
+                              style: monoStyle(context, size: 13, color: t.text),
+                            ),
                           ),
                         ],
                       ),

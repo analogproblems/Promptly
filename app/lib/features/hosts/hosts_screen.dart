@@ -374,15 +374,17 @@ class _HostRow extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
         child: Row(
           children: [
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(10),
+            ExcludeSemantics(
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: Text(initial, style: monoStyle(context, size: 15, weight: FontWeight.w600, color: color)),
               ),
-              alignment: Alignment.center,
-              child: Text(initial, style: monoStyle(context, size: 15, weight: FontWeight.w600, color: color)),
             ),
             const SizedBox(width: 12),
             Expanded(

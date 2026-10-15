@@ -4,7 +4,23 @@ import 'package:flutter/material.dart';
 import 'tokens.dart';
 
 /// Builds the app theme for one brightness from the design tokens.
-ThemeData buildPromptlyTheme(Brightness brightness) {
+/// Route changes cut straight to the new screen when the system asks for
+/// reduced motion.
+class NoMotionPageTransitionsBuilder extends PageTransitionsBuilder {
+  const NoMotionPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) =>
+      child;
+}
+
+ThemeData buildPromptlyTheme(Brightness brightness, {bool reducedMotion = false}) {
   final t = brightness == Brightness.dark
       ? PromptlyTokens.dark
       : PromptlyTokens.light;
@@ -150,15 +166,25 @@ ThemeData buildPromptlyTheme(Brightness brightness) {
         borderRadius: BorderRadius.circular(PromptlyTokens.panelRadius),
       ),
     ),
-    pageTransitionsTheme: const PageTransitionsTheme(
-      builders: {
-        TargetPlatform.linux: FadeForwardsPageTransitionsBuilder(),
-        TargetPlatform.windows: FadeForwardsPageTransitionsBuilder(),
-        TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(),
-        TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
-        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-      },
-    ),
+    pageTransitionsTheme: reducedMotion
+        ? const PageTransitionsTheme(
+            builders: {
+              TargetPlatform.linux: NoMotionPageTransitionsBuilder(),
+              TargetPlatform.windows: NoMotionPageTransitionsBuilder(),
+              TargetPlatform.macOS: NoMotionPageTransitionsBuilder(),
+              TargetPlatform.android: NoMotionPageTransitionsBuilder(),
+              TargetPlatform.iOS: NoMotionPageTransitionsBuilder(),
+            },
+          )
+        : const PageTransitionsTheme(
+            builders: {
+              TargetPlatform.linux: FadeForwardsPageTransitionsBuilder(),
+              TargetPlatform.windows: FadeForwardsPageTransitionsBuilder(),
+              TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(),
+              TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
+              TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+            },
+          ),
   );
 }
 

@@ -49,7 +49,7 @@ class HelpScreen extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         SizedBox(
-                          width: 190,
+                          width: 215,
                           child: Text(s.keys, style: monoStyle(context, size: 12.5, color: t.text)),
                         ),
                         Expanded(child: Text(s.what, style: TextStyle(fontSize: 14, color: t.muted))),

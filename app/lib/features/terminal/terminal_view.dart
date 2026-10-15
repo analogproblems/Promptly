@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/engine/engine.dart' show TerminalSelectKind;
@@ -14,13 +15,7 @@ import 'terminal_painter.dart';
 /// The terminal itself: paints the controller's grid, sizes the session to
 /// fit, and turns keys, mouse, scrolls and pastes into engine calls.
 class TerminalView extends StatefulWidget {
-  const TerminalView({
-    super.key,
-    required this.controller,
-    this.autofocus = true,
-    this.onFind,
-    this.onOpenLink,
-  });
+  const TerminalView({super.key, required this.controller, this.autofocus = true, this.onFind, this.onOpenLink});
 
   final TerminalController controller;
   final bool autofocus;
@@ -310,6 +305,20 @@ class _TerminalViewState extends State<TerminalView> {
     }
   }
 
+  /// The screen as text, for screen readers; empty when none is running,
+  /// so a frame costs nothing extra the rest of the time.
+  String _spokenScreen() {
+    if (!SemanticsBinding.instance.semanticsEnabled) return '';
+    final lines = <String>[];
+    for (final row in widget.controller.grid.lines) {
+      lines.add(row.glyphs.map((g) => g.isEmpty ? ' ' : g).join().trimRight());
+    }
+    while (lines.isNotEmpty && lines.last.isEmpty) {
+      lines.removeLast();
+    }
+    return lines.join('\n');
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
@@ -318,30 +327,36 @@ class _TerminalViewState extends State<TerminalView> {
         final cols = _metrics.colsFor(constraints.maxWidth);
         final rows = _metrics.rowsFor(constraints.maxHeight);
         c.resize(cols, rows);
-        return Focus(
-          focusNode: _focus,
-          autofocus: widget.autofocus,
-          onKeyEvent: _onKey,
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerSignal: _onPointerSignal,
-            onPointerDown: _onPointerDown,
-            onPointerMove: _onPointerMove,
-            onPointerUp: _onPointerUp,
-            onPointerCancel: _onPointerUp,
-            child: MouseRegion(
-              cursor: _overLink ? SystemMouseCursors.click : SystemMouseCursors.text,
-              onHover: _onHover,
-              child: ClipRect(
-                child: CustomPaint(
-                  size: Size(constraints.maxWidth, constraints.maxHeight),
-                  painter: TerminalPainter(
-                    grid: c.grid,
-                    metrics: _metrics,
-                    glyphs: _glyphs,
-                    cursorVisible: _cursorOn,
-                    focused: _focus.hasFocus,
-                    generation: c.grid.generation,
+        return Semantics(
+          container: true,
+          label: 'Terminal',
+          value: _spokenScreen(),
+          multiline: true,
+          child: Focus(
+            focusNode: _focus,
+            autofocus: widget.autofocus,
+            onKeyEvent: _onKey,
+            child: Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerSignal: _onPointerSignal,
+              onPointerDown: _onPointerDown,
+              onPointerMove: _onPointerMove,
+              onPointerUp: _onPointerUp,
+              onPointerCancel: _onPointerUp,
+              child: MouseRegion(
+                cursor: _overLink ? SystemMouseCursors.click : SystemMouseCursors.text,
+                onHover: _onHover,
+                child: ClipRect(
+                  child: CustomPaint(
+                    size: Size(constraints.maxWidth, constraints.maxHeight),
+                    painter: TerminalPainter(
+                      grid: c.grid,
+                      metrics: _metrics,
+                      glyphs: _glyphs,
+                      cursorVisible: _cursorOn,
+                      focused: _focus.hasFocus,
+                      generation: c.grid.generation,
+                    ),
                   ),
                 ),
               ),
