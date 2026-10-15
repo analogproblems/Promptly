@@ -72,7 +72,7 @@ class TerminalController extends ChangeNotifier {
 
   void scrollToBottom() => _guard(() => engine.terminalScrollToBottom(id));
 
-  void setDark(bool dark) => _guard(() => engine.terminalSetDark(id, dark));
+  void setTheme(String theme) => _guard(() => engine.terminalSetTheme(id, theme));
 
   void refresh() => _guard(() => engine.terminalRefresh(id));
 

@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit`, `entry`, `frame`, `palette`, `register_session`
+// These functions are ignored because they are not marked as `pub`: `emit`, `entry`, `frame`, `palette_for`, `register_session`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Entry`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`
 
@@ -16,13 +16,13 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 int terminalOpenLocal({
   required int cols,
   required int rows,
-  required bool dark,
+  required String theme,
   String? program,
   String? cwd,
 }) => RustLib.instance.api.crateApiTerminalTerminalOpenLocal(
   cols: cols,
   rows: rows,
-  dark: dark,
+  theme: theme,
   program: program,
   cwd: cwd,
 );
@@ -53,9 +53,45 @@ void terminalScroll({required int id, required int delta}) =>
 void terminalScrollToBottom({required int id}) =>
     RustLib.instance.api.crateApiTerminalTerminalScrollToBottom(id: id);
 
-/// Switch the session's colours between the dark and light palette.
-void terminalSetDark({required int id, required bool dark}) =>
-    RustLib.instance.api.crateApiTerminalTerminalSetDark(id: id, dark: dark);
+/// Switch the session to another theme by id.
+void terminalSetTheme({required int id, required String theme}) =>
+    RustLib.instance.api.crateApiTerminalTerminalSetTheme(id: id, theme: theme);
+
+/// Start a selection at a viewport cell (`line` 0 is the top row).
+/// `side_right` is true when the pointer is in the right half of the cell.
+void terminalSelectBegin({
+  required int id,
+  required int col,
+  required int line,
+  required bool sideRight,
+  required TerminalSelectKind kind,
+}) => RustLib.instance.api.crateApiTerminalTerminalSelectBegin(
+  id: id,
+  col: col,
+  line: line,
+  sideRight: sideRight,
+  kind: kind,
+);
+
+/// Move the free end of the selection.
+void terminalSelectUpdate({
+  required int id,
+  required int col,
+  required int line,
+  required bool sideRight,
+}) => RustLib.instance.api.crateApiTerminalTerminalSelectUpdate(
+  id: id,
+  col: col,
+  line: line,
+  sideRight: sideRight,
+);
+
+void terminalSelectClear({required int id}) =>
+    RustLib.instance.api.crateApiTerminalTerminalSelectClear(id: id);
+
+/// The selected text, or `None` when nothing is selected.
+String? terminalSelectionText({required int id}) =>
+    RustLib.instance.api.crateApiTerminalTerminalSelectionText(id: id);
 
 /// Ask for a complete frame, for example after the view was recreated.
 void terminalRefresh({required int id}) =>
@@ -282,3 +318,6 @@ class TerminalRow {
           bg == other.bg &&
           flags == other.flags;
 }
+
+/// How a selection grows from where it started.
+enum TerminalSelectKind { simple, word, line, block }

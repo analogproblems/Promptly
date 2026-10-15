@@ -15,7 +15,13 @@ const fn rgb(r: u8, g: u8, b: u8) -> Rgb {
 /// vault; the vault stores hex strings, this is the resolved form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Palette {
+    /// Stable identifier: a slug such as `promptly-dark` for a built-in
+    /// theme, a record id for one the user added.
+    pub id: String,
     pub name: String,
+    /// True when the background is dark. The app uses it to pick chrome
+    /// colours that sit well next to the terminal.
+    pub dark: bool,
     pub foreground: Rgb,
     pub background: Rgb,
     pub cursor: Rgb,
@@ -32,7 +38,9 @@ impl Palette {
     /// Promptly's own dark theme, matched to the app's design tokens.
     pub fn promptly_dark() -> Self {
         Self {
+            id: "promptly-dark".into(),
             name: "Promptly Dark".into(),
+            dark: true,
             foreground: rgb(0xE6, 0xED, 0xF3),
             background: rgb(0x0E, 0x11, 0x16),
             cursor: rgb(0x7C, 0xE3, 0x8B),
@@ -63,7 +71,9 @@ impl Palette {
     /// Promptly's light theme.
     pub fn promptly_light() -> Self {
         Self {
+            id: "promptly-light".into(),
             name: "Promptly Light".into(),
+            dark: false,
             foreground: rgb(0x1F, 0x23, 0x28),
             background: rgb(0xFA, 0xFA, 0xF7),
             cursor: rgb(0x1A, 0x7F, 0x37),
@@ -89,6 +99,11 @@ impl Palette {
             ],
             bright_bold: false,
         }
+    }
+
+    /// A built-in theme by id, or `None` if there is no such theme.
+    pub fn builtin(id: &str) -> Option<Palette> {
+        crate::themes::builtin().into_iter().find(|p| p.id == id)
     }
 
     /// The colour for one of the 256 indexed colours, before any override the

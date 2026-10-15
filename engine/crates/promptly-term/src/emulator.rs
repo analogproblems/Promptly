@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Line, Point};
+use alacritty_terminal::index::{Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{self, Processor};
@@ -28,6 +29,27 @@ pub enum EmulatorEvent {
     Exit,
 }
 
+/// How a selection grows from its anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectKind {
+    /// Cell by cell, the usual drag.
+    Simple,
+    /// Whole words, a double click.
+    Word,
+    /// Whole lines, a triple click.
+    Line,
+    /// A rectangle, for columns of text.
+    Block,
+}
+
+fn side(right: bool) -> Side {
+    if right {
+        Side::Right
+    } else {
+        Side::Left
+    }
+}
+
 #[derive(Clone, Default)]
 struct Listener(Arc<Mutex<Vec<Event>>>);
 
@@ -47,6 +69,8 @@ pub struct Emulator {
     bell: bool,
     /// Set after a palette change or resize so the next frame is complete.
     force_full: bool,
+    /// The selection as of the last frame, so rows it left are repainted.
+    last_selection: Option<SelectionRange>,
 }
 
 impl Emulator {
@@ -66,7 +90,50 @@ impl Emulator {
             title: None,
             bell: false,
             force_full: true,
+            last_selection: None,
         }
+    }
+
+    /// A viewport position as a grid point, clamped to cells that exist.
+    /// `line` 0 is the top of the viewport; it may be negative or past the
+    /// bottom while the pointer is dragged outside the terminal.
+    fn point_at(&self, col: u16, line: i32) -> Point {
+        let grid = self.term.grid();
+        let line = Line(line - grid.display_offset() as i32)
+            .clamp(self.term.topmost_line(), self.term.bottommost_line());
+        let col = Column((col as usize).min(self.term.columns().saturating_sub(1)));
+        Point::new(line, col)
+    }
+
+    /// Start a selection at a viewport cell. `side_right` is true when the
+    /// pointer is in the right half of the cell.
+    pub fn select_begin(&mut self, col: u16, line: i32, side_right: bool, kind: SelectKind) {
+        let point = self.point_at(col, line);
+        let ty = match kind {
+            SelectKind::Simple => SelectionType::Simple,
+            SelectKind::Word => SelectionType::Semantic,
+            SelectKind::Line => SelectionType::Lines,
+            SelectKind::Block => SelectionType::Block,
+        };
+        self.term.selection = Some(Selection::new(ty, point, side(side_right)));
+    }
+
+    /// Move the free end of the selection.
+    pub fn select_update(&mut self, col: u16, line: i32, side_right: bool) {
+        let point = self.point_at(col, line);
+        if let Some(sel) = self.term.selection.as_mut() {
+            sel.update(point, side(side_right));
+        }
+    }
+
+    pub fn select_clear(&mut self) {
+        self.term.selection = None;
+    }
+
+    /// The selected text, with trailing blanks trimmed and lines joined by
+    /// newlines, or `None` when nothing is selected.
+    pub fn selection_text(&self) -> Option<String> {
+        self.term.selection_to_string()
     }
 
     pub fn size(&self) -> TermSize {
@@ -132,7 +199,7 @@ impl Emulator {
         let screen_lines = self.term.screen_lines();
 
         let full = self.force_full || matches!(self.term.damage(), TermDamage::Full);
-        let lines: Vec<usize> = if full {
+        let mut lines: Vec<usize> = if full {
             (0..screen_lines).collect()
         } else {
             let mut lines: Vec<usize> = match self.term.damage() {
@@ -161,6 +228,22 @@ impl Emulator {
             };
             (cursor, content.mode, content.selection)
         };
+
+        // Rows the selection covered or now covers must be repainted too.
+        if selection != self.last_selection {
+            if !full {
+                for range in [self.last_selection, selection].into_iter().flatten() {
+                    let first = range.start.line.0 + display_offset as i32;
+                    let last = range.end.line.0 + display_offset as i32;
+                    for l in first.max(0)..=last.min(screen_lines as i32 - 1) {
+                        lines.push(l as usize);
+                    }
+                }
+                lines.sort_unstable();
+                lines.dedup();
+            }
+            self.last_selection = selection;
+        }
 
         let rows_changed = lines
             .into_iter()
@@ -479,6 +562,59 @@ mod tests {
         assert!(!f.alt_screen);
         assert!(f.full, "leaving the alternate screen repaints everything");
         assert!(e.screen_text().starts_with("primary"));
+    }
+
+    #[test]
+    fn selection_marks_cells_and_reads_back_as_text() {
+        let mut e = emu();
+        e.feed(b"hello world\r\nsecond line");
+        let _ = e.frame();
+        e.select_begin(0, 0, false, SelectKind::Simple);
+        e.select_update(4, 0, true);
+        let f = e.frame();
+        assert!(!f.full);
+        // The selected row is resent (so is the cursor's row, which the
+        // emulator always reports); untouched rows are not.
+        let lines: Vec<u16> = f.rows_changed.iter().map(|r| r.line).collect();
+        assert!(lines.contains(&0), "selected row is resent: {lines:?}");
+        assert!(!lines.contains(&2), "untouched row is not: {lines:?}");
+        let r = f.rows_changed.iter().find(|r| r.line == 0).unwrap();
+        assert_ne!(r.flags[0] & frame::flags::SELECTED, 0);
+        assert_eq!(r.bg[0], Palette::promptly_dark().selection);
+        assert_eq!(r.flags[5] & frame::flags::SELECTED, 0);
+        assert_eq!(e.selection_text().as_deref(), Some("hello"));
+
+        // Extend onto the next line: both rows are resent.
+        e.select_update(5, 1, true);
+        let f = e.frame();
+        let lines: Vec<u16> = f.rows_changed.iter().map(|r| r.line).collect();
+        assert_eq!(lines, vec![0, 1]);
+        assert_eq!(e.selection_text().as_deref(), Some("hello world\nsecond"));
+
+        e.select_clear();
+        let f = e.frame();
+        let lines: Vec<u16> = f.rows_changed.iter().map(|r| r.line).collect();
+        assert_eq!(lines, vec![0, 1], "rows the selection left are resent");
+        assert_eq!(f.rows_changed[0].flags[0] & frame::flags::SELECTED, 0);
+        assert!(e.selection_text().is_none());
+    }
+
+    #[test]
+    fn word_and_line_selection_and_out_of_range_points() {
+        let mut e = emu();
+        e.feed(b"cd /srv/app && ls\r\nnext");
+        e.select_begin(5, 0, false, SelectKind::Word);
+        assert_eq!(e.selection_text().as_deref(), Some("/srv/app"));
+        // Whole lines end with a newline, so pasting them runs them.
+        e.select_begin(3, 0, false, SelectKind::Line);
+        assert_eq!(e.selection_text().as_deref(), Some("cd /srv/app && ls\n"));
+        // Dragging far outside the viewport clamps to the last row, so the
+        // two blank rows under "next" come along.
+        e.select_update(999, 99, true);
+        assert_eq!(
+            e.selection_text().as_deref(),
+            Some("cd /srv/app && ls\nnext\n\n\n")
+        );
     }
 
     #[test]

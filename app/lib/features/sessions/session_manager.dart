@@ -70,11 +70,12 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   @override
   List<SessionEntry> build() => [];
 
-  SessionEntry openLocalShell({required bool dark}) {
+  /// Open a local shell with the given terminal theme id.
+  SessionEntry openLocalShell({required String theme}) {
     final engine = ref.read(engineProvider);
     final entry = SessionEntry(id: _nextId++, label: 'Local shell', isLocal: true);
     try {
-      final engineId = engine.terminalOpenLocal(cols: 80, rows: 24, dark: dark);
+      final engineId = engine.terminalOpenLocal(cols: 80, rows: 24, theme: theme);
       entry.setController(TerminalController(engine: engine, id: engineId, label: entry.label)..start());
     } catch (e) {
       entry.setError(e is String ? e : e.toString());
@@ -96,7 +97,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
 
   /// Connect to a saved host with its stored auth. A missing key is reported
   /// as an error on the entry rather than thrown.
-  SessionEntry connectHost(Host host, {required bool dark}) {
+  SessionEntry connectHost(Host host, {required String theme}) {
     final engine = ref.read(engineProvider);
     var kind = SshAuthKind.interactive;
     String? password;
@@ -135,7 +136,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       passphrase: null,
       cols: 80,
       rows: 24,
-      dark: dark,
+      theme: theme,
       label: host.label,
       keepaliveSeconds: host.keepaliveSeconds,
     );
@@ -178,6 +179,14 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       }
     });
     flow.start();
+  }
+
+  /// Recolour every live session, for a theme change or a gallery preview.
+  void applyTheme(String theme) {
+    for (final e in state) {
+      final c = e.controller;
+      if (c != null && !c.exited) c.setTheme(theme);
+    }
   }
 
   SessionEntry? byId(int id) {

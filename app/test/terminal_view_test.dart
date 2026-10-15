@@ -17,7 +17,7 @@ class RecordingEngine implements Engine {
   @override
   EndpointParse parseEndpoint(String input) => const EndpointError('n/a');
   @override
-  int terminalOpenLocal({required int cols, required int rows, required bool dark}) => 1;
+  int terminalOpenLocal({required int cols, required int rows, required String theme}) => 1;
   @override
   Stream<TerminalEvent> terminalEvents(int id) {
     calls.add('events');
@@ -35,13 +35,15 @@ class RecordingEngine implements Engine {
   @override
   void terminalScrollToBottom(int id) => calls.add('bottom');
   @override
-  void terminalSetDark(int id, bool dark) => calls.add('dark $dark');
+  void terminalSetTheme(int id, String theme) => calls.add('theme $theme');
   @override
   void terminalRefresh(int id) => calls.add('refresh');
   @override
   void terminalClose(int id) => calls.add('close');
   @override
   void setDataDir(String path) {}
+  @override
+  List<ThemeInfo> themesList() => const [];
   @override
   int sshConnectBegin(SshConnectRequest request) => 1;
   @override

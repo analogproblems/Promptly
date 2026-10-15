@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../shell/empty_state.dart';
 import 'settings_providers.dart';
+import 'themes_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -34,6 +36,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final t = context.tokens;
     final engine = ref.watch(engineProvider);
     final themeMode = ref.watch(themeModeProvider);
+    final terminalSetting = ref.watch(terminalThemeProvider);
+    final terminalId = resolveTerminalTheme(terminalSetting, Theme.of(context).brightness);
+    final themes = ref.watch(themesProvider);
+    final terminalTheme = themes.cast<ThemeInfo?>().firstWhere(
+          (th) => th!.id == terminalId,
+          orElse: () => themes.isEmpty ? null : themes.first,
+        );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -45,26 +54,43 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             children: [
               _Section(
                 title: 'Appearance',
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text('Theme', style: TextStyle(color: t.text)),
-                      ),
-                      SegmentedButton<ThemeMode>(
-                        showSelectedIcon: false,
-                        segments: const [
-                          ButtonSegment(value: ThemeMode.system, label: Text('System')),
-                          ButtonSegment(value: ThemeMode.light, label: Text('Light')),
-                          ButtonSegment(value: ThemeMode.dark, label: Text('Dark')),
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text('App look', style: TextStyle(color: t.text)),
+                          ),
+                          SegmentedButton<ThemeMode>(
+                            showSelectedIcon: false,
+                            segments: const [
+                              ButtonSegment(value: ThemeMode.system, label: Text('System')),
+                              ButtonSegment(value: ThemeMode.light, label: Text('Light')),
+                              ButtonSegment(value: ThemeMode.dark, label: Text('Dark')),
+                            ],
+                            selected: {themeMode},
+                            onSelectionChanged: (s) =>
+                                ref.read(themeModeProvider.notifier).set(s.first),
+                          ),
                         ],
-                        selected: {themeMode},
-                        onSelectionChanged: (s) =>
-                            ref.read(themeModeProvider.notifier).set(s.first),
                       ),
-                    ],
-                  ),
+                    ),
+                    Divider(height: 1, color: t.border),
+                    ListTile(
+                      key: const Key('terminal-theme'),
+                      leading: terminalTheme == null ? null : ThemeSwatches(theme: terminalTheme),
+                      title: const Text('Terminal theme'),
+                      subtitle: Text(
+                        terminalSetting == TerminalThemeNotifier.auto
+                            ? 'Matches the app · ${terminalTheme?.name ?? ''}'
+                            : terminalTheme?.name ?? terminalId,
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.go('/settings/themes'),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 16),

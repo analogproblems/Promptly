@@ -11,7 +11,12 @@ import 'package:promptly/core/engine/engine.dart';
 class FakeEngine implements Engine {
   final Map<String, Map<String, String>> records = {};
   final Map<String, String> secrets = {};
+  final Map<String, String> settings = {};
   int generated = 0;
+
+  /// Theme ids sessions were opened with, and "id theme" for later changes.
+  final List<String> openedThemes = [];
+  final List<String> themeCalls = [];
 
   @override
   String version() => '9.9.9-test';
@@ -27,7 +32,10 @@ class FakeEngine implements Engine {
   }
 
   @override
-  int terminalOpenLocal({required int cols, required int rows, required bool dark}) => 1;
+  int terminalOpenLocal({required int cols, required int rows, required String theme}) {
+    openedThemes.add(theme);
+    return 1;
+  }
   @override
   Stream<TerminalEvent> terminalEvents(int id) {
     if (id != connectedSessionId) return const Stream.empty();
@@ -78,13 +86,32 @@ class FakeEngine implements Engine {
   @override
   void terminalScrollToBottom(int id) {}
   @override
-  void terminalSetDark(int id, bool dark) {}
+  void terminalSetTheme(int id, String theme) => themeCalls.add('$id $theme');
   @override
   void terminalRefresh(int id) {}
   @override
   void terminalClose(int id) {}
   @override
   void setDataDir(String path) {}
+
+  static ThemeInfo _theme(String id, String name, bool dark, int bg, int fg) => ThemeInfo(
+        id: id,
+        name: name,
+        dark: dark,
+        foreground: fg,
+        background: bg,
+        cursor: fg,
+        selection: 0x444444,
+        ansi: Uint32List.fromList(List.generate(16, (i) => 0x0F0F0F * (i + 1))),
+      );
+
+  @override
+  List<ThemeInfo> themesList() => [
+        _theme('promptly-dark', 'Promptly Dark', true, 0x0E1116, 0xE6EDF3),
+        _theme('promptly-light', 'Promptly Light', false, 0xFAFAF7, 0x1F2328),
+        _theme('dracula', 'Dracula', true, 0x282A36, 0xF8F8F2),
+      ];
+
   /// When set, SSH attempts succeed with this engine session id, and that
   /// session emits one full frame of the given size.
   int? connectedSessionId;
@@ -128,9 +155,9 @@ class FakeEngine implements Engine {
   @override
   bool recordDelete(String collection, String id) => (records[collection] ?? {}).remove(id) != null;
   @override
-  String? settingGet(String key) => null;
+  String? settingGet(String key) => settings[key];
   @override
-  void settingSet(String key, String json) {}
+  void settingSet(String key, String json) => settings[key] = json;
   @override
   void secretPut(String id, String value) => secrets[id] = value;
   @override
@@ -204,15 +231,58 @@ void main() {
     expect(find.text('pong: Ada'), findsOneWidget);
   });
 
-  testWidgets('theme can be switched to dark', (tester) async {
-    await tester.pumpWidget(app());
+  testWidgets('theme can be switched to dark and is remembered for the next start', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Dark'));
     await tester.pumpAndSettle();
-    final materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    var materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
     expect(materialApp.themeMode, ThemeMode.dark);
+    expect(engine.settings['theme_mode'], '"dark"');
+
+    // A fresh app on the same store starts dark.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    materialApp = tester.widget<MaterialApp>(find.byType(MaterialApp));
+    expect(materialApp.themeMode, ThemeMode.dark);
+  });
+
+  testWidgets('picking a terminal theme saves it and recolours open sessions', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 1;
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sessions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Local shell'));
+    await tester.pumpAndSettle();
+    expect(engine.openedThemes, ['promptly-light'], reason: 'auto follows the light app look');
+
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Matches the app · Promptly Light'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('terminal-theme')));
+    await tester.pumpAndSettle();
+    expect(find.text('Terminal theme'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('theme-dracula')));
+    await tester.pumpAndSettle();
+    expect(engine.settings['terminal_theme'], '"dracula"');
+    expect(engine.themeCalls, contains('1 dracula'), reason: 'the open session is recoloured');
+
+    // Back on settings the row names the pick; a new shell opens with it.
+    await tester.tap(find.byTooltip('Back to settings'));
+    await tester.pumpAndSettle();
+    expect(find.text('Dracula'), findsOneWidget);
+    await tester.tap(find.text('Sessions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Back to sessions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Local shell').first);
+    await tester.pumpAndSettle();
+    expect(engine.openedThemes.last, 'dracula');
   });
 
   testWidgets('saved hosts show grouped, searchable, with the ungrouped under Other', (tester) async {

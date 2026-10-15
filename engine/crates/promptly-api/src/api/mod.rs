@@ -3,3 +3,4 @@ pub mod keys;
 pub mod ssh;
 pub mod store;
 pub mod terminal;
+pub mod themes;

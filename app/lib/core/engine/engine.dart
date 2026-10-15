@@ -5,9 +5,11 @@ import '../../src/rust/api/keys.dart' as rust_keys;
 import '../../src/rust/api/ssh.dart' as rust_ssh;
 import '../../src/rust/api/store.dart' as rust_store;
 import '../../src/rust/api/terminal.dart' as rust_term;
+import '../../src/rust/api/themes.dart' as rust_themes;
 
 export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
 export '../../src/rust/api/store.dart' show StoreRecord;
+export '../../src/rust/api/themes.dart' show ThemeInfo;
 export '../../src/rust/api/ssh.dart'
     show
         SshAuthKind,
@@ -35,8 +37,9 @@ abstract class Engine {
   String ping(String name);
   EndpointParse parseEndpoint(String input);
 
-  /// Start the user's shell in a new session and return its id.
-  int terminalOpenLocal({required int cols, required int rows, required bool dark});
+  /// Start the user's shell in a new session and return its id. `theme` is
+  /// a theme id from [themesList].
+  int terminalOpenLocal({required int cols, required int rows, required String theme});
 
   /// Frames and lifecycle events for a session, in order.
   Stream<rust_term.TerminalEvent> terminalEvents(int id);
@@ -47,12 +50,15 @@ abstract class Engine {
   /// Positive scrolls up into history.
   void terminalScroll(int id, int delta);
   void terminalScrollToBottom(int id);
-  void terminalSetDark(int id, bool dark);
+  void terminalSetTheme(int id, String theme);
   void terminalRefresh(int id);
   void terminalClose(int id);
 
   /// Where the engine keeps its files. Called once at startup.
   void setDataDir(String path);
+
+  /// The built-in terminal themes, Promptly's own first.
+  List<rust_themes.ThemeInfo> themesList();
 
   /// Register an SSH connection attempt; nothing happens until its events
   /// are subscribed.
@@ -121,8 +127,8 @@ class RustEngine implements Engine {
   }
 
   @override
-  int terminalOpenLocal({required int cols, required int rows, required bool dark}) =>
-      rust_term.terminalOpenLocal(cols: cols, rows: rows, dark: dark);
+  int terminalOpenLocal({required int cols, required int rows, required String theme}) =>
+      rust_term.terminalOpenLocal(cols: cols, rows: rows, theme: theme);
 
   @override
   Stream<rust_term.TerminalEvent> terminalEvents(int id) => rust_term.terminalEvents(id: id);
@@ -144,7 +150,7 @@ class RustEngine implements Engine {
   void terminalScrollToBottom(int id) => rust_term.terminalScrollToBottom(id: id);
 
   @override
-  void terminalSetDark(int id, bool dark) => rust_term.terminalSetDark(id: id, dark: dark);
+  void terminalSetTheme(int id, String theme) => rust_term.terminalSetTheme(id: id, theme: theme);
 
   @override
   void terminalRefresh(int id) => rust_term.terminalRefresh(id: id);
@@ -154,6 +160,9 @@ class RustEngine implements Engine {
 
   @override
   void setDataDir(String path) => rust.setDataDir(path: path);
+
+  @override
+  List<rust_themes.ThemeInfo> themesList() => rust_themes.themesList();
 
   @override
   int sshConnectBegin(rust_ssh.SshConnectRequest request) => rust_ssh.sshConnectBegin(request: request);

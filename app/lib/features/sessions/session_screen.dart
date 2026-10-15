@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../settings/settings_providers.dart';
 import '../terminal/terminal_view.dart';
 import 'connecting_view.dart';
 import 'session_manager.dart';
@@ -115,9 +116,9 @@ class SessionScreen extends ConsumerWidget {
                             onAgain: () {
                               final manager = ref.read(sessionManagerProvider.notifier);
                               if (entry.isLocal) {
-                                final dark = Theme.of(context).brightness == Brightness.dark;
+                                final theme = terminalThemeFor(ref, context);
                                 manager.close(id);
-                                final fresh = manager.openLocalShell(dark: dark);
+                                final fresh = manager.openLocalShell(theme: theme);
                                 context.go('/sessions/${fresh.id}');
                               } else {
                                 final request = entry.flow?.request;

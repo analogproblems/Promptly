@@ -29,7 +29,7 @@ Goal: you can use it daily on your Linux desktop, for local shells and SSH, and 
 - Hosts list, search and quick connect, host editor (basics and auth), flat groups. **Done.**
 - Identities: generate, import by paste, copy the public key. **Done** (import from file and the biometric gate come with the mobile builds).
 - Sessions tab with live thumbnails.
-- Themes: Promptly Dark and Light plus eight popular themes, live preview, JetBrains Mono bundled.
+- Themes: Promptly Dark and Light plus Catppuccin (four flavours), Dracula, Nord, Gruvbox, Solarized, One Dark, Tokyo Night and Rosé Pine; live preview; JetBrains Mono bundled. **Done.**
 - Connection progress inside the terminal and plain-language errors. **Done.**
 
 Done when: you have replaced your current terminal and SSH client on Linux for a week.

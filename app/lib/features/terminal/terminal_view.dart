@@ -26,7 +26,6 @@ class _TerminalViewState extends State<TerminalView> {
   late GlyphCache _glyphs = GlyphCache(_metrics);
   Timer? _blink;
   bool _cursorOn = true;
-  bool? _lastDark;
   double _scrollRemainder = 0;
 
   @override
@@ -35,16 +34,6 @@ class _TerminalViewState extends State<TerminalView> {
     widget.controller.addListener(_onController);
     _focus.addListener(_onFocus);
     widget.controller.start();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    if (_lastDark != dark) {
-      _lastDark = dark;
-      widget.controller.setDark(dark);
-    }
   }
 
   @override

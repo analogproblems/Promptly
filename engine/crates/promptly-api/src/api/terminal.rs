@@ -13,7 +13,7 @@ use flutter_rust_bridge::frb;
 
 use crate::frb_generated::StreamSink;
 use promptly_session::{pump, LocalShell, Session, SessionEvent, SessionKind};
-use promptly_term::{CursorShape, Frame, Palette, TermSize};
+use promptly_term::{CursorShape, Frame, Palette, SelectKind, TermSize};
 
 struct Entry {
     session: Arc<Session>,
@@ -92,6 +92,14 @@ pub enum TerminalEventKind {
     Frame,
     Clipboard,
     Exited,
+}
+
+/// How a selection grows from where it started.
+pub enum TerminalSelectKind {
+    Simple,
+    Word,
+    Line,
+    Block,
 }
 
 /// One event from a session. Exactly one of the payload fields is set,
@@ -186,12 +194,10 @@ impl From<SessionEvent> for TerminalEvent {
     }
 }
 
-pub(crate) fn palette(dark: bool) -> Palette {
-    if dark {
-        Palette::promptly_dark()
-    } else {
-        Palette::promptly_light()
-    }
+/// The palette for a theme id; an unknown id falls back to Promptly Dark so
+/// a stale setting never leaves a session without colours.
+pub(crate) fn palette_for(theme: &str) -> Palette {
+    Palette::builtin(theme).unwrap_or_else(Palette::promptly_dark)
 }
 
 /// Put a session into the registry and return its id. Frames start when
@@ -220,7 +226,7 @@ pub(crate) fn register_session(
 pub fn terminal_open_local(
     cols: u16,
     rows: u16,
-    dark: bool,
+    theme: String,
     program: Option<String>,
     cwd: Option<String>,
 ) -> Result<u32, String> {
@@ -230,7 +236,12 @@ pub fn terminal_open_local(
     let kind = SessionKind::LocalShell {
         program: shell.program().to_string(),
     };
-    let session = Arc::new(Session::new(kind, size, palette(dark), Box::new(shell)));
+    let session = Arc::new(Session::new(
+        kind,
+        size,
+        palette_for(&theme),
+        Box::new(shell),
+    ));
     Ok(register_session(session, reader))
 }
 
@@ -293,14 +304,69 @@ pub fn terminal_scroll_to_bottom(id: u32) -> Result<(), String> {
     Ok(())
 }
 
-/// Switch the session's colours between the dark and light palette.
+/// Switch the session to another theme by id.
 #[frb(sync)]
-pub fn terminal_set_dark(id: u32, dark: bool) -> Result<(), String> {
+pub fn terminal_set_theme(id: u32, theme: String) -> Result<(), String> {
     let entry = entry(id)?;
-    entry.session.set_palette(palette(dark), |f| {
+    entry.session.set_palette(palette_for(&theme), |f| {
         entry.emit(TerminalEvent::frame(f.into()))
     });
     Ok(())
+}
+
+/// Start a selection at a viewport cell (`line` 0 is the top row).
+/// `side_right` is true when the pointer is in the right half of the cell.
+#[frb(sync)]
+pub fn terminal_select_begin(
+    id: u32,
+    col: u16,
+    line: i32,
+    side_right: bool,
+    kind: TerminalSelectKind,
+) -> Result<(), String> {
+    let entry = entry(id)?;
+    let kind = match kind {
+        TerminalSelectKind::Simple => SelectKind::Simple,
+        TerminalSelectKind::Word => SelectKind::Word,
+        TerminalSelectKind::Line => SelectKind::Line,
+        TerminalSelectKind::Block => SelectKind::Block,
+    };
+    entry
+        .session
+        .select_begin(col, line, side_right, kind, |f| {
+            entry.emit(TerminalEvent::frame(f.into()))
+        });
+    Ok(())
+}
+
+/// Move the free end of the selection.
+#[frb(sync)]
+pub fn terminal_select_update(
+    id: u32,
+    col: u16,
+    line: i32,
+    side_right: bool,
+) -> Result<(), String> {
+    let entry = entry(id)?;
+    entry.session.select_update(col, line, side_right, |f| {
+        entry.emit(TerminalEvent::frame(f.into()))
+    });
+    Ok(())
+}
+
+#[frb(sync)]
+pub fn terminal_select_clear(id: u32) -> Result<(), String> {
+    let entry = entry(id)?;
+    entry
+        .session
+        .select_clear(|f| entry.emit(TerminalEvent::frame(f.into())));
+    Ok(())
+}
+
+/// The selected text, or `None` when nothing is selected.
+#[frb(sync)]
+pub fn terminal_selection_text(id: u32) -> Result<Option<String>, String> {
+    Ok(entry(id)?.session.selection_text())
 }
 
 /// Ask for a complete frame, for example after the view was recreated.

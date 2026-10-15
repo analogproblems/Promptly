@@ -8,7 +8,7 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 
 ## Status
 
-**Milestone 1 in progress.** On Linux you can save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Themes, text selection and the Sessions thumbnails are what remain in this milestone. Linux comes first, then Windows, Android, macOS and iOS.
+**Milestone 1 in progress.** On Linux you can save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Text selection, the Sessions thumbnails and automatic reconnect are what remain in this milestone. Linux comes first, then Windows, Android, macOS and iOS.
 
 <p>
   <img src="docs/screenshots/m1-hosts-list.png" alt="The saved hosts list on Linux, dark theme" width="640">
@@ -17,6 +17,10 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 <p>
   <img src="docs/screenshots/m1-ssh-shell.png" alt="An SSH session connected and running commands on Linux, dark theme" width="640">
   <img src="docs/screenshots/m1-ssh-host-key.png" alt="The first-time host key prompt with fingerprint and randomart" width="640">
+</p>
+<p>
+  <img src="docs/screenshots/m1-themes-gallery.png" alt="The terminal theme gallery with Dracula selected" width="640">
+  <img src="docs/screenshots/m1-theme-dracula.png" alt="A local shell recoloured to Dracula" width="640">
 </p>
 <p>
   <img src="docs/screenshots/m1-terminal-top.png" alt="Promptly running top in a local shell on Linux" width="640">

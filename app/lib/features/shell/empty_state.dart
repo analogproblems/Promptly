@@ -67,9 +67,10 @@ class EmptyState extends StatelessWidget {
 
 /// Page header used by every tab: a big title with an optional trailing widget.
 class PageHeader extends StatelessWidget {
-  const PageHeader({super.key, required this.title, this.trailing});
+  const PageHeader({super.key, required this.title, this.leading, this.trailing});
 
   final String title;
+  final Widget? leading;
   final Widget? trailing;
 
   @override
@@ -80,6 +81,7 @@ class PageHeader extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
+          if (leading != null) ...[leading!, const SizedBox(width: 4)],
           Expanded(
             child: Text(
               title,

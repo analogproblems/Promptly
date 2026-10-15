@@ -61,7 +61,9 @@ class SshConnectRequest {
   final String? passphrase;
   final int cols;
   final int rows;
-  final bool dark;
+
+  /// Theme id for the terminal; see `themes_list`.
+  final String theme;
 
   /// What to call the session; defaults to `user@host`.
   final String? label;
@@ -77,7 +79,7 @@ class SshConnectRequest {
     this.passphrase,
     required this.cols,
     required this.rows,
-    required this.dark,
+    required this.theme,
     this.label,
     required this.keepaliveSeconds,
   });
@@ -93,7 +95,7 @@ class SshConnectRequest {
       passphrase.hashCode ^
       cols.hashCode ^
       rows.hashCode ^
-      dark.hashCode ^
+      theme.hashCode ^
       label.hashCode ^
       keepaliveSeconds.hashCode;
 
@@ -111,7 +113,7 @@ class SshConnectRequest {
           passphrase == other.passphrase &&
           cols == other.cols &&
           rows == other.rows &&
-          dark == other.dark &&
+          theme == other.theme &&
           label == other.label &&
           keepaliveSeconds == other.keepaliveSeconds;
 }

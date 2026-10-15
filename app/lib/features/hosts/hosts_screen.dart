@@ -6,6 +6,7 @@ import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../sessions/session_manager.dart';
+import '../settings/settings_providers.dart';
 import '../sessions/sessions_screen.dart';
 import '../shell/empty_state.dart';
 import 'host_colors.dart';
@@ -40,7 +41,6 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
   }
 
   void _quickConnectTo(EndpointOk ok) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
     final entry = ref.read(sessionManagerProvider.notifier).connectSsh(SshConnectRequest(
       user: ok.user,
       host: ok.host,
@@ -51,7 +51,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
       passphrase: null,
       cols: 80,
       rows: 24,
-      dark: dark,
+      theme: terminalThemeFor(ref, context),
       label: null,
       keepaliveSeconds: 30,
     ));
@@ -59,8 +59,8 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
   }
 
   void _connect(Host host) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    final entry = ref.read(sessionManagerProvider.notifier).connectHost(host, dark: dark);
+    final theme = terminalThemeFor(ref, context);
+    final entry = ref.read(sessionManagerProvider.notifier).connectHost(host, theme: theme);
     context.go('/sessions/${entry.id}');
   }
 

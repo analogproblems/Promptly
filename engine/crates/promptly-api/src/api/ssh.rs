@@ -14,7 +14,7 @@ use promptly_session::{Session, SessionKind};
 use promptly_ssh::{connect, AuthMethod, ConnectParams, Endpoint, FileKnownHosts, Prompter};
 use promptly_term::TermSize;
 
-use crate::api::terminal::{palette, register_session};
+use crate::api::terminal::{palette_for, register_session};
 use crate::frb_generated::StreamSink;
 use crate::ssh_flow::{attempt, Attempt, Pending, UiPrompter, ATTEMPTS, NEXT_ATTEMPT};
 
@@ -39,7 +39,8 @@ pub struct SshConnectRequest {
     pub passphrase: Option<String>,
     pub cols: u16,
     pub rows: u16,
-    pub dark: bool,
+    /// Theme id for the terminal; see `themes_list`.
+    pub theme: String,
     /// What to call the session; defaults to `user@host`.
     pub label: Option<String>,
     pub keepalive_seconds: u32,
@@ -163,7 +164,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
         .label
         .clone()
         .unwrap_or_else(|| endpoint.to_string());
-    let dark = request.dark;
+    let palette = palette_for(&request.theme);
 
     let known_hosts = Arc::new(FileKnownHosts::default_paths(
         &crate::api::engine::data_dir(),
@@ -177,7 +178,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
                 let session = Arc::new(Session::new(
                     SessionKind::Ssh { host: label },
                     size,
-                    palette(dark),
+                    palette,
                     Box::new(transport),
                 ));
                 let session_id = register_session(session, Box::new(reader));

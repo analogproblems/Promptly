@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use promptly_term::{Emulator, EmulatorEvent, Frame, Palette, TermSize};
+use promptly_term::{Emulator, EmulatorEvent, Frame, Palette, SelectKind, TermSize};
 
 pub use local::LocalShell;
 
@@ -119,6 +119,37 @@ impl Session {
         let mut emu = self.emulator.lock().unwrap();
         emu.set_palette(palette);
         emit(emu.frame());
+    }
+
+    /// Start a selection at a viewport cell and show it.
+    pub fn select_begin(
+        &self,
+        col: u16,
+        line: i32,
+        side_right: bool,
+        kind: SelectKind,
+        emit: impl FnOnce(Frame),
+    ) {
+        let mut emu = self.emulator.lock().unwrap();
+        emu.select_begin(col, line, side_right, kind);
+        emit(emu.frame());
+    }
+
+    pub fn select_update(&self, col: u16, line: i32, side_right: bool, emit: impl FnOnce(Frame)) {
+        let mut emu = self.emulator.lock().unwrap();
+        emu.select_update(col, line, side_right);
+        emit(emu.frame());
+    }
+
+    pub fn select_clear(&self, emit: impl FnOnce(Frame)) {
+        let mut emu = self.emulator.lock().unwrap();
+        emu.select_clear();
+        emit(emu.frame());
+    }
+
+    /// The selected text, or `None` when nothing is selected.
+    pub fn selection_text(&self) -> Option<String> {
+        self.emulator.lock().unwrap().selection_text()
     }
 
     /// Build a complete frame regardless of what changed.

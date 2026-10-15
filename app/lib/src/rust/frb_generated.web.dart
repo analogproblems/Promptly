@@ -11,6 +11,7 @@ import 'api/keys.dart';
 import 'api/ssh.dart';
 import 'api/store.dart';
 import 'api/terminal.dart';
+import 'api/themes.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -102,6 +103,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TerminalRow> dco_decode_list_terminal_row(dynamic raw);
 
   @protected
+  List<ThemeInfo> dco_decode_list_theme_info(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
@@ -181,6 +185,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TerminalRow dco_decode_terminal_row(dynamic raw);
+
+  @protected
+  TerminalSelectKind dco_decode_terminal_select_kind(dynamic raw);
+
+  @protected
+  ThemeInfo dco_decode_theme_info(dynamic raw);
 
   @protected
   int dco_decode_u_16(dynamic raw);
@@ -273,6 +283,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   List<TerminalRow> sse_decode_list_terminal_row(SseDeserializer deserializer);
+
+  @protected
+  List<ThemeInfo> sse_decode_list_theme_info(SseDeserializer deserializer);
 
   @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
@@ -368,6 +381,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TerminalRow sse_decode_terminal_row(SseDeserializer deserializer);
+
+  @protected
+  TerminalSelectKind sse_decode_terminal_select_kind(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ThemeInfo sse_decode_theme_info(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_16(SseDeserializer deserializer);
@@ -496,6 +517,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_theme_info(
+    List<ThemeInfo> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
@@ -608,6 +635,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_terminal_row(TerminalRow self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_terminal_select_kind(
+    TerminalSelectKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_theme_info(ThemeInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_16(int self, SseSerializer serializer);

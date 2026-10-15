@@ -8,6 +8,7 @@ import '../features/keys/keys_screen.dart';
 import '../features/sessions/session_screen.dart';
 import '../features/sessions/sessions_screen.dart';
 import '../features/settings/settings_screen.dart';
+import '../features/settings/themes_screen.dart';
 import '../features/shell/shell_scaffold.dart';
 import '../features/snippets/snippets_screen.dart';
 
@@ -54,7 +55,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             GoRoute(path: '/keys', builder: (_, _) => const KeysScreen()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/settings', builder: (_, _) => const SettingsScreen()),
+            GoRoute(
+              path: '/settings',
+              builder: (_, _) => const SettingsScreen(),
+              routes: [
+                GoRoute(path: 'themes', builder: (_, _) => const ThemesScreen()),
+              ],
+            ),
           ]),
         ],
       ),

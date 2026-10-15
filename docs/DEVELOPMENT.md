@@ -48,6 +48,11 @@ make gen           # after changing the engine's API (see below)
 
 `make` on its own lists every target.
 
+One cache to know about: a release build keeps only the Material icons the
+Dart code uses, and Flutter does not notice when that set changes. If a new
+`Icons.*` shows up as a small box, delete `app/build/flutter_assets` and
+build again.
+
 ## Changing the engine API
 
 1. Add or change a function in `engine/crates/promptly-api/src/api/`. Plain

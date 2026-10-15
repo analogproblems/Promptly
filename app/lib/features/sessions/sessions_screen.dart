@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../settings/settings_providers.dart';
 import '../shell/empty_state.dart';
 import 'session_manager.dart';
 
@@ -15,8 +16,8 @@ bool get supportsLocalShell => !kIsWeb && (Platform.isLinux || Platform.isMacOS 
 
 /// Open a local shell and show it. Shared by the Sessions and Hosts screens.
 void openLocalShell(BuildContext context, WidgetRef ref) {
-  final dark = Theme.of(context).brightness == Brightness.dark;
-  final entry = ref.read(sessionManagerProvider.notifier).openLocalShell(dark: dark);
+  final theme = terminalThemeFor(ref, context);
+  final entry = ref.read(sessionManagerProvider.notifier).openLocalShell(theme: theme);
   context.go('/sessions/${entry.id}');
 }
 
