@@ -8,13 +8,21 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 
 ## Status
 
-**Design phase.** Nothing runs yet. This repository currently holds the design, best read in this order:
+**Milestone 0 done: foundations.** The app builds and runs on Linux with the Rust engine inside it. Linux comes first, then Windows, Android, macOS and iOS.
+
+<p>
+  <img src="docs/screenshots/m0-settings-engine-ping.png" alt="Settings screen in dark mode: a string sent through the Rust engine and back" width="640">
+  <img src="docs/screenshots/m0-hosts-quick-connect.png" alt="Hosts screen: the engine parsing user@host:port as you type" width="640">
+</p>
+
+Read the design in this order:
 
 | Document | What it covers |
 |---|---|
 | [docs/DESIGN.md](docs/DESIGN.md) | Vision, principles, features, architecture, look and feel, security |
 | [docs/VAULT.md](docs/VAULT.md) | The sync design: vault format, encryption, conflict handling, storage backends |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones from empty repo to app store |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | How to build, run and change it |
 
 ## The pitch in one table
 
@@ -32,6 +40,14 @@ Everything you set up in Promptly lives in an encrypted **vault**: a small folde
 2. **Feel first.** Smooth scrolling at the display's refresh rate, instant connect, a keyboard that works on a phone, themes that look right.
 3. **Open format.** The vault is documented; the CLI can decrypt and export everything. You can leave at any time.
 4. **Secure by default.** Client-side encryption, hardware-backed keys where available, host key verification you cannot miss.
+
+## Build it
+
+On Ubuntu: `tools/setup.sh`, then `make run`. Everything else is in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
+## Licence
+
+MIT. Free, open source, no paid tier. See [LICENSE](LICENSE).
 
 ## Stack
 

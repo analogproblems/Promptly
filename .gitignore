@@ -1,0 +1,31 @@
+# Rust
+engine/target/
+**/*.rs.bk
+
+# Flutter / Dart
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.packages
+app/build/
+app/.idea/
+app/*.iml
+app/android/.gradle/
+app/android/local.properties
+app/android/key.properties
+app/ios/Pods/
+app/ios/.symlinks/
+app/macos/Pods/
+app/linux/flutter/ephemeral/
+app/windows/flutter/ephemeral/
+app/macos/Flutter/ephemeral/
+
+# Generated bridge code is checked in on purpose (see docs/DEVELOPMENT.md),
+# but its scratch files are not.
+app/rust_builder/**/target/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

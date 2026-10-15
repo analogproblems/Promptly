@@ -1,0 +1,11 @@
+[package]
+name = "promptly-store"
+description = "Local state for Promptly: the materialised SQLite view and platform secret storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror = { workspace = true }

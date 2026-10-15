@@ -1,0 +1,30 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/analogproblems/Promptly"
+rust-version = "1.85"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
+
+# Internal crates
+promptly-term = { path = "crates/promptly-term" }
+promptly-ssh = { path = "crates/promptly-ssh" }
+promptly-vault = { path = "crates/promptly-vault" }
+promptly-store = { path = "crates/promptly-store" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

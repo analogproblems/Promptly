@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Rust engine
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test
+      - name: Audit dependencies
+        uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: engine
+
+  app-linux:
+    name: Flutter app (Linux)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Dependencies
+        run: flutter pub get
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
+      - name: Build
+        run: flutter build linux --release
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptly-linux-x64
+          path: app/build/linux/x64/release/bundle
+          if-no-files-found: error

@@ -1,0 +1,23 @@
+[package]
+# Underscored on purpose: cargokit and the Dart loader use the package name as the library file stem.
+name = "promptly_api"
+description = "The flutter_rust_bridge surface of the Promptly engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+flutter_rust_bridge = "=2.13.0"
+promptly-term = { workspace = true }
+promptly-ssh = { workspace = true }
+promptly-vault = { workspace = true }
+promptly-store = { workspace = true }
+
+# The frb attribute macro expands a `cfg(frb_expand)` probe; tell rustc it is expected.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
