@@ -10,7 +10,7 @@ import 'connect_flow.dart';
 /// One session as the app sees it: connecting, live, failed or exited.
 /// Notifies when it changes state; the controller notifies on every frame.
 class SessionEntry extends ChangeNotifier {
-  SessionEntry({required this.id, required this.label, required this.isLocal, this.hostId});
+  SessionEntry({required this.id, required this.label, required this.isLocal, this.hostId, this.color});
 
   /// The app's own id, stable for the session's whole life. Not the engine's.
   final int id;
@@ -19,6 +19,10 @@ class SessionEntry extends ChangeNotifier {
 
   /// The saved host this session was opened from, if any.
   final String? hostId;
+
+  /// The host's colour name, so you always know which box you are typing
+  /// into. Null for local shells and one-off connections.
+  final String? color;
 
   TerminalController? _controller;
   ConnectFlow? _flow;
@@ -120,7 +124,13 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       case AuthKind.interactive:
         kind = SshAuthKind.interactive;
     }
-    final entry = SessionEntry(id: _nextId++, label: host.label, isLocal: false, hostId: host.id);
+    final entry = SessionEntry(
+      id: _nextId++,
+      label: host.label,
+      isLocal: false,
+      hostId: host.id,
+      color: host.color ?? defaultColorFor(host.label),
+    );
     if (problem != null) {
       entry.setError(problem);
       state = [...state, entry];

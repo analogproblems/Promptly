@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/app.dart';
 import 'package:promptly/core/engine/engine.dart';
+import 'package:promptly/features/sessions/session_thumbnail.dart';
 
 /// A stand-in for the Rust engine so widget tests need no native library.
 /// Records and secrets live in maps so the hosts and keys screens work.
@@ -200,9 +201,10 @@ Widget app([FakeEngine? engine]) => ProviderScope(
       child: const PromptlyApp(),
     );
 
-String hostJson(String id, String label, {String? group}) =>
+String hostJson(String id, String label, {String? group, String? color}) =>
     '{"id":"$id","label":"$label","hostname":"$label.example","port":22,"username":"ops",'
-    '"auth":{"kind":"interactive"},"group_id":${group == null ? 'null' : '"$group"'},"tags":[],"color":null,'
+    '"auth":{"kind":"interactive"},"group_id":${group == null ? 'null' : '"$group"'},"tags":[],'
+    '"color":${color == null ? 'null' : '"$color"'},'
     '"icon":null,"notes":"","jump_host_id":null,"keepalive_seconds":30,"startup_command":null,"env":{},'
     '"persistent_session":false,"port_forwards":[],"last_connected_at":null,"favourite":false,"sync":"vault"}';
 
@@ -350,6 +352,34 @@ void main() {
     expect(engine.secrets.values.first, contains('OPENSSH PRIVATE KEY'));
     expect(engine.secrets.keys.first, matches(RegExp(r'^[0-9a-f-]{36}$')), reason: 'secret ids are UUIDs');
     expect(find.text('laptop'), findsOneWidget);
+  });
+
+  testWidgets('the sessions list shows a live thumbnail and a summary', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 1;
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sessions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Local shell'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Back to sessions'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SessionThumbnail), findsOneWidget);
+    expect(find.text('1 live'), findsOneWidget);
+    expect(find.text('Local shell · 142×37'), findsOneWidget);
+  });
+
+  testWidgets("a saved host's colour runs along the top of its session", (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {'h1': hostJson('h1', 'prod-db', color: 'red')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('host-colour-bar')), findsOneWidget);
+    expect(find.text('deploy@web-1: ~'), findsOneWidget, reason: 'the session is live');
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

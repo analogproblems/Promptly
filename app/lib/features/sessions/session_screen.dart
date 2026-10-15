@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../hosts/host_colors.dart';
 import '../settings/settings_providers.dart';
 import '../terminal/terminal_view.dart';
 import 'connecting_view.dart';
@@ -43,8 +44,11 @@ class SessionScreen extends ConsumerWidget {
       builder: (context, _) {
         final c = entry.controller;
         final live = c != null && !c.exited;
+        final accent = entry.color == null ? null : hostColor(entry.color, Theme.of(context).brightness);
         return Column(
           children: [
+            if (accent != null)
+              Container(key: const Key('host-colour-bar'), height: 3, color: accent),
             Container(
               height: 44,
               padding: const EdgeInsets.symmetric(horizontal: 4),
