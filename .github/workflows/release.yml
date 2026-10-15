@@ -7,8 +7,10 @@ on:
   push:
     tags: ["v*"]
 
+# The build jobs only read the code. Only the last job, which makes the
+# draft release, gets to write.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   linux:
@@ -171,6 +173,8 @@ jobs:
     name: Draft the release
     needs: [linux, windows, android, macos]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -195,7 +199,8 @@ jobs:
           **Installing.** Linux: the `.deb` installs with your package manager, or unpack the tarball and run `./promptly`. Windows: unzip and run `promptly.exe`; the first run shows SmartScreen's "Windows protected your PC" because the build is not signed with a bought certificate, and *More info*, then *Run anyway*, gets past it. The zip carries the Microsoft C++ runtime it needs; if Windows still reports a missing `.dll`, install [the Visual C++ Redistributable (x64)](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) once. macOS: open the `.dmg` and drag Promptly to Applications; the first launch is blocked because the build is not signed with an Apple Developer ID, so open System Settings, then Privacy & Security, click *Open Anyway* next to the line about Promptly and confirm with your password (once). Android: open the `.apk` on the phone and allow installing from that app when asked. `SHA256SUMS` lets you check a download.
           TXT
           cat notes.md
-      - uses: softprops/action-gh-release@v2
+      # Pinned to an exact commit (v2.6.2), since this step holds write access.
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           draft: true
           name: Promptly ${{ github.ref_name }}
