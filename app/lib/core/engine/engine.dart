@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../src/rust/api/engine.dart' as rust;
 import '../../src/rust/api/files.dart' as rust_files;
+import '../../src/rust/api/hosts.dart' as rust_hosts;
 import '../../src/rust/api/import.dart' as rust_import;
 import '../../src/rust/api/keys.dart' as rust_keys;
 import '../../src/rust/api/ssh.dart' as rust_ssh;
@@ -11,6 +12,7 @@ import '../../src/rust/api/terminal.dart' as rust_term;
 import '../../src/rust/api/themes.dart' as rust_themes;
 
 export '../../src/rust/api/files.dart' show FileEntry, FileTransfer;
+export '../../src/rust/api/hosts.dart' show ReachTarget, Reachability;
 export '../../src/rust/api/import.dart' show ImportReport, SshConfigHost;
 export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
 export '../../src/rust/api/store.dart' show StoreRecord;
@@ -111,6 +113,9 @@ abstract class Engine {
 
   /// Run one command on a host with its stored login and no terminal.
   Future<rust_ssh.SshExecResult> sshExec(rust_ssh.SshConnectRequest request, String command, int timeoutSeconds);
+
+  /// Knock on every host's port at once; nothing is sent beyond that.
+  Future<List<rust_hosts.Reachability>> hostsReachability(List<rust_hosts.ReachTarget> targets, int timeoutMs);
 
   // ---- The file browser, over a live session's connection ----------------
 
@@ -305,6 +310,10 @@ class RustEngine implements Engine {
   @override
   Future<rust_ssh.SshExecResult> sshExec(rust_ssh.SshConnectRequest request, String command, int timeoutSeconds) =>
       rust_ssh.sshExec(request: request, command: command, timeoutSeconds: timeoutSeconds);
+
+  @override
+  Future<List<rust_hosts.Reachability>> hostsReachability(List<rust_hosts.ReachTarget> targets, int timeoutMs) =>
+      rust_hosts.hostsReachability(targets: targets, timeoutMs: timeoutMs);
 
   @override
   Future<int> filesOpen(int sessionId) => rust_files.filesOpen(sessionId: sessionId);

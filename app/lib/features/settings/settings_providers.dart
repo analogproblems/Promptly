@@ -11,6 +11,7 @@ abstract final class SettingKeys {
   static const themeMode = 'theme_mode';
   static const terminalTheme = 'terminal_theme';
   static const programClipboard = 'program_clipboard';
+  static const reachability = 'reachability_check';
 }
 
 String? _readString(Engine engine, String key) {
@@ -107,3 +108,25 @@ class ProgramClipboardNotifier extends Notifier<bool> {
 
 final programClipboardProvider =
     NotifierProvider<ProgramClipboardNotifier, bool>(ProgramClipboardNotifier.new);
+
+/// Whether the hosts list knocks on each host's port to show which are up.
+class ReachabilityNotifier extends Notifier<bool> {
+  @override
+  bool build() {
+    try {
+      final raw = ref.watch(engineProvider).settingGet(SettingKeys.reachability);
+      return raw != null && jsonDecode(raw) == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void set(bool on) {
+    state = on;
+    try {
+      ref.read(engineProvider).settingSet(SettingKeys.reachability, jsonEncode(on));
+    } catch (_) {}
+  }
+}
+
+final reachabilityProvider = NotifierProvider<ReachabilityNotifier, bool>(ReachabilityNotifier.new);

@@ -13,6 +13,7 @@ import '../sync/sync_providers.dart';
 import 'group_editor.dart';
 import 'host_colors.dart';
 import 'models.dart';
+import 'reachability.dart';
 import 'repositories.dart';
 
 class HostsScreen extends ConsumerStatefulWidget {
@@ -107,6 +108,20 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
     final hosts = ref.watch(hostsProvider);
     final groups = ref.watch(groupsProvider);
     final shown = hosts.where(_matches).toList();
+    final reachOn = ref.watch(reachabilityProvider);
+    final reach = ref.watch(hostReachabilityProvider);
+
+    // Shortcuts above the full list, while nothing is being searched for.
+    final favourites = _query.isEmpty ? hosts.where((h) => h.favourite).toList() : const <Host>[];
+    final cutoff = DateTime.now().subtract(const Duration(days: 30));
+    final recent = _query.isEmpty && hosts.length >= 4
+        ? (hosts.where((h) => h.lastConnectedAt != null && h.lastConnectedAt!.isAfter(cutoff)).toList()
+          ..sort((a, b) => b.lastConnectedAt!.compareTo(a.lastConnectedAt!)))
+        : const <Host>[];
+    final shortcuts = <(String, String, List<Host>)>[
+      if (favourites.isNotEmpty) ('Favourites', 'favourite', favourites),
+      if (recent.isNotEmpty) ('Recent', 'recent', recent.take(5).toList()),
+    ];
 
     // Sections: each group with matching hosts, then the ungrouped ones.
     final byGroup = <String?, List<Host>>{};
@@ -223,6 +238,34 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                     : ListView(
                         padding: const EdgeInsets.fromLTRB(12, 0, 12, 96),
                         children: [
+                          for (final (title, prefix, list) in shortcuts) ...[
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+                              child: Text(
+                                title.toUpperCase(),
+                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted),
+                              ),
+                            ),
+                            for (final h in list)
+                              _HostRow(
+                                host: h,
+                                keyPrefix: prefix,
+                                reachOn: reachOn,
+                                reach: reach[h.id],
+                                onConnect: () => _connect(h),
+                                onEdit: () => context.go('/hosts/${h.id}'),
+                                onDelete: () => _delete(h),
+                                onFavourite: () => ref.read(hostsProvider.notifier).toggleFavourite(h.id),
+                              ),
+                          ],
+                          if (shortcuts.isNotEmpty && sections.first.$1 == null)
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+                              child: Text(
+                                'ALL HOSTS',
+                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted),
+                              ),
+                            ),
                           for (final (title, group, list) in sections) ...[
                             if (title != null)
                               Padding(
@@ -256,6 +299,8 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                             for (final h in list)
                               _HostRow(
                                 host: h,
+                                reachOn: reachOn,
+                                reach: reach[h.id],
                                 onConnect: () => _connect(h),
                                 onEdit: () => context.go('/hosts/${h.id}'),
                                 onDelete: () => _delete(h),
@@ -278,6 +323,9 @@ class _HostRow extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onFavourite,
+    this.keyPrefix = 'host',
+    this.reachOn = false,
+    this.reach,
   });
 
   final Host host;
@@ -285,6 +333,11 @@ class _HostRow extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onFavourite;
+
+  /// Rows in the Favourites and Recent sections carry their own keys.
+  final String keyPrefix;
+  final bool reachOn;
+  final HostReach? reach;
 
   @override
   Widget build(BuildContext context) {
@@ -297,8 +350,16 @@ class _HostRow extends StatelessWidget {
       AuthKind.agent => 'agent',
       AuthKind.interactive => 'ask',
     };
+    final r = reach;
+    final reachLabel = !reachOn
+        ? null
+        : r == null
+            ? 'Checking…'
+            : r.up
+                ? 'Up · ${r.millis} ms'
+                : 'Not reachable';
     return InkWell(
-      key: Key('host-row-${host.id}'),
+      key: Key('$keyPrefix-row-${host.id}'),
       onTap: onConnect,
       borderRadius: BorderRadius.circular(PromptlyTokens.panelRadius),
       child: Padding(
@@ -329,23 +390,53 @@ class _HostRow extends StatelessWidget {
                           style: monoStyle(context, size: 15, weight: FontWeight.w500, color: t.text),
                         ),
                       ),
-                      if (host.favourite) ...[
-                        const SizedBox(width: 6),
-                        Icon(Icons.star, size: 14, color: t.warning),
-                      ],
                     ],
                   ),
                   const SizedBox(height: 3),
-                  Text(
-                    '${host.endpoint} · $auth',
-                    overflow: TextOverflow.ellipsis,
-                    style: monoStyle(context, size: 12, color: t.muted),
+                  Row(
+                    children: [
+                      if (reachLabel != null) ...[
+                        Tooltip(
+                          message: reachLabel,
+                          child: Container(
+                            key: Key('$keyPrefix-reach-${host.id}'),
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(
+                              color: r == null
+                                  ? Colors.transparent
+                                  : r.up
+                                      ? t.accent
+                                      : t.danger,
+                              border: Border.all(color: r == null ? t.muted : Colors.transparent),
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Flexible(
+                        child: Text(
+                          '${host.endpoint} · $auth',
+                          overflow: TextOverflow.ellipsis,
+                          style: monoStyle(context, size: 12, color: t.muted),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
             const SizedBox(width: 8),
             Text(relativeTime(host.lastConnectedAt), style: TextStyle(fontSize: 11, color: t.muted)),
+            IconButton(
+              key: Key('$keyPrefix-fav-${host.id}'),
+              tooltip: host.favourite ? 'Unfavourite' : 'Favourite',
+              visualDensity: VisualDensity.compact,
+              iconSize: 18,
+              onPressed: onFavourite,
+              icon: Icon(host.favourite ? Icons.star : Icons.star_border, color: host.favourite ? t.warning : t.muted),
+            ),
             PopupMenuButton<String>(
               tooltip: 'Host actions',
               onSelected: (v) {

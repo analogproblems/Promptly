@@ -90,7 +90,18 @@ Logic belongs in `promptly-term`, `promptly-ssh`, `promptly-vault` and
 - `flutter test` in `app/` runs widget tests against a fake engine, so they
   need no native library and run anywhere Flutter runs.
 - A full-stack smoke test (real engine loaded into the app) is the Linux build
-  in CI; milestone 1 adds an integration test that drives a real local shell.
+  in CI.
+- The SSH tests run only when a server is named: set
+  `PROMPTLY_TEST_SSH=user:password@host:port` (and `PROMPTLY_TEST_SSH_KEY` to
+  a private key that server accepts) and `cargo test` covers password, key,
+  keyboard-interactive and agent logins, jump hosts (the server jumps through
+  itself), each kind of port forward, `exec`, the SFTP backend and the file
+  browser. The persistent-session test needs `tmux` on that server; the file
+  browser test writes under the login's home and tidies up after itself. A
+  throwaway `sshd` on a high port with one test user is all it takes.
+- Before a milestone commit the Linux release build is driven on a virtual
+  display (`xvfb-run`, `xdotool`, ImageMagick's `import`) through the real
+  screens, and the screenshots in `docs/screenshots/` come from those runs.
 
 ## Platform notes
 

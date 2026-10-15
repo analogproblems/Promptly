@@ -5,6 +5,7 @@
 
 import 'api/engine.dart';
 import 'api/files.dart';
+import 'api/hosts.dart';
 import 'api/import.dart';
 import 'api/keys.dart';
 import 'api/ssh.dart';
@@ -116,6 +117,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
+  List<ReachTarget> dco_decode_list_reach_target(dynamic raw);
+
+  @protected
+  List<Reachability> dco_decode_list_reachability(dynamic raw);
+
+  @protected
   List<SessionInfo> dco_decode_list_session_info(dynamic raw);
 
   @protected
@@ -185,6 +192,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ParsedEndpoint dco_decode_parsed_endpoint(dynamic raw);
+
+  @protected
+  ReachTarget dco_decode_reach_target(dynamic raw);
+
+  @protected
+  Reachability dco_decode_reachability(dynamic raw);
 
   @protected
   SessionInfo dco_decode_session_info(dynamic raw);
@@ -395,6 +408,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
+  List<ReachTarget> sse_decode_list_reach_target(SseDeserializer deserializer);
+
+  @protected
+  List<Reachability> sse_decode_list_reachability(SseDeserializer deserializer);
+
+  @protected
   List<SessionInfo> sse_decode_list_session_info(SseDeserializer deserializer);
 
   @protected
@@ -478,6 +497,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ParsedEndpoint sse_decode_parsed_endpoint(SseDeserializer deserializer);
+
+  @protected
+  ReachTarget sse_decode_reach_target(SseDeserializer deserializer);
+
+  @protected
+  Reachability sse_decode_reachability(SseDeserializer deserializer);
 
   @protected
   SessionInfo sse_decode_session_info(SseDeserializer deserializer);
@@ -727,6 +752,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_reach_target(
+    List<ReachTarget> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_reachability(
+    List<Reachability> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_session_info(
     List<SessionInfo> self,
     SseSerializer serializer,
@@ -848,6 +885,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     ParsedEndpoint self,
     SseSerializer serializer,
   );
+
+  @protected
+  void sse_encode_reach_target(ReachTarget self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_reachability(Reachability self, SseSerializer serializer);
 
   @protected
   void sse_encode_session_info(SessionInfo self, SseSerializer serializer);

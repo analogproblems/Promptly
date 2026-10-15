@@ -111,22 +111,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   onChanged: (v) => ref.read(programClipboardProvider.notifier).set(v),
                 ),
               ),
-              if (supportsLocalShell) ...[
-                const SizedBox(height: 16),
-                _Section(
-                  title: 'Hosts',
-                  child: ListTile(
-                    key: const Key('import-ssh-config'),
-                    leading: Icon(Icons.file_download_outlined, color: t.muted),
-                    title: const Text('Import from ~/.ssh/config'),
-                    subtitle: const Text('Hosts, users, ports, jump hosts and the keys they name.'),
-                    trailing: TextButton(
-                      onPressed: () => showSshConfigImport(context, ref),
-                      child: const Text('Import'),
+              const SizedBox(height: 16),
+              _Section(
+                title: 'Hosts',
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      key: const Key('reachability-check'),
+                      title: const Text('Show which hosts are up'),
+                      subtitle: const Text(
+                        'A quick knock on each host\'s port once a minute, from this device. Nothing else is sent.',
+                      ),
+                      value: ref.watch(reachabilityProvider),
+                      onChanged: (v) => ref.read(reachabilityProvider.notifier).set(v),
                     ),
-                  ),
+                    if (supportsLocalShell)
+                      ListTile(
+                        key: const Key('import-ssh-config'),
+                        leading: Icon(Icons.file_download_outlined, color: t.muted),
+                        title: const Text('Import from ~/.ssh/config'),
+                        subtitle: const Text('Hosts, users, ports, jump hosts and the keys they name.'),
+                        trailing: TextButton(
+                          onPressed: () => showSshConfigImport(context, ref),
+                          child: const Text('Import'),
+                        ),
+                      ),
+                  ],
                 ),
-              ],
+              ),
               const SizedBox(height: 16),
               _Section(
                 title: 'Sync',

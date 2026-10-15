@@ -56,10 +56,12 @@ Goal: parity with the paid apps on the features people actually use.
 - Port forwarding (local, remote, dynamic) and jump hosts. **Done.** Forwards are saved per host, start on connect when marked so, and toggle from the session bar; jump hosts chain, each with its own login. Agent forwarding, a startup command and environment variables came with it, and `~/.ssh/config` import picks up `ProxyJump`, the forward lines and `ForwardAgent`.
 - Persistent sessions via tmux. **Done.** A per-host switch attaches to `tmux new-session -A -s promptly`, falling back to a plain login shell where tmux is missing.
 - Scrollback search. **Done.** Ctrl+Shift+F opens a bar in the session: every match is highlighted, the current one is selected (so Copy works on it) and scrolled into view, Enter walks up through history and Shift+Enter back down, with "3 of 12" alongside. Links came with it: OSC 8 hyperlinks and plain URLs are underlined, Ctrl+click opens them, and the right-click menu offers Open link and Copy link.
-- Reachability dots, favourites and recents polish.
+- Reachability dots, favourites and recents polish. **Done.** A setting turns on a once-a-minute knock on each host's port (nothing else is sent) and every row gets a dot: up with the time it took, or not reachable. Favourites and the hosts used in the last month sit in their own sections above the full list, and the star on each row toggles a favourite in one tap.
 - Desktop: tabs, split panes, command palette, drag a host onto a pane. **Done.** On a window 900 px or wider the Sessions tab is a workspace: tabs across the top, panes split right or down, an empty pane that lists the hosts, a hosts panel to drag them from, a menu bar with the shortcuts beside each item, and Ctrl+Shift+P for everything. The shortcuts all carry Shift or Alt so Ctrl+D, Ctrl+W, Ctrl+T and Ctrl+B stay with the shell and tmux.
 
 Done when: a sysadmin can do a full day of work without opening another SSH client.
+
+Status: built on Linux. What the phone builds bring with them in M4: the snippet drawer on the keyboard bar, share-sheet upload, QR enrolment scanning.
 
 ## M4 · Ship
 

@@ -94,6 +94,8 @@ class RecordingEngine implements Engine {
   Future<SshExecResult> sshExec(SshConnectRequest request, String command, int timeoutSeconds) async =>
       const SshExecResult(output: '', exitCode: 0, timedOut: false, error: null);
   @override
+  Future<List<Reachability>> hostsReachability(List<ReachTarget> targets, int timeoutMs) async => const [];
+  @override
   Future<int> filesOpen(int sessionId) async => 1;
   @override
   void filesClose(int id) {}

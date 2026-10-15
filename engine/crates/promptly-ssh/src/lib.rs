@@ -17,6 +17,7 @@ pub mod files;
 pub mod forward;
 pub mod hostkey;
 pub mod keys;
+pub mod reach;
 pub mod sftp;
 pub mod ssh_config;
 pub mod transport;
@@ -36,6 +37,7 @@ pub use keys::{
     generate as generate_key, inspect as inspect_key, public_fingerprint, Generated, Inspected,
     KeyKind,
 };
+pub use reach::{reach, reach_all};
 pub use russh::keys::PublicKey;
 pub use sftp::{QuietPrompter, SftpBackend, SftpError};
 pub use ssh_config::{

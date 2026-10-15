@@ -203,6 +203,15 @@ class FakeEngine implements Engine {
         SshExecResult(output: '', exitCode: null, timedOut: false, error: 'no result for ${request.host}');
   }
 
+  /// What the reachability knock reports, by hostname.
+  final Map<String, (bool, int)> reach = {};
+
+  @override
+  Future<List<Reachability>> hostsReachability(List<ReachTarget> targets, int timeoutMs) async => [
+        for (final t in targets)
+          Reachability(id: t.id, reachable: reach[t.host]?.$1 ?? false, millis: reach[t.host]?.$2 ?? 0),
+      ];
+
   /// A small remote file tree for the browser, by folder, and every change
   /// and transfer asked for.
   final Map<String, List<FileEntry>> remoteFiles = {
@@ -477,12 +486,21 @@ Widget appWith(FakeEngine? engine, {String? localDir, Fs? localFs}) => ProviderS
       child: const PromptlyApp(),
     );
 
-String hostJson(String id, String label, {String? group, String? color, String auth = '{"kind":"interactive"}'}) =>
+String hostJson(
+  String id,
+  String label, {
+  String? group,
+  String? color,
+  String auth = '{"kind":"interactive"}',
+  String? lastConnected,
+  bool favourite = false,
+}) =>
     '{"id":"$id","label":"$label","hostname":"$label.example","port":22,"username":"ops",'
     '"auth":$auth,"group_id":${group == null ? 'null' : '"$group"'},"tags":[],'
     '"color":${color == null ? 'null' : '"$color"'},'
     '"icon":null,"notes":"","jump_host_id":null,"keepalive_seconds":30,"startup_command":null,"env":{},'
-    '"persistent_session":false,"port_forwards":[],"last_connected_at":null,"favourite":false,"sync":"vault"}';
+    '"persistent_session":false,"port_forwards":[],'
+    '"last_connected_at":${lastConnected == null ? 'null' : '"$lastConnected"'},"favourite":$favourite,"sync":"vault"}';
 
 /// A folder tree in memory, standing in for this device's disk.
 class MemoryFs extends Fs {
@@ -1328,6 +1346,60 @@ void main() {
     await tester.tap(find.text('Upload to the server'));
     await tester.pumpAndSettle();
     expect(engine.fileCalls.last, 'upload /home/me/local.txt /home/ops/local.txt');
+  });
+
+  testWidgets('reachability dots appear once the setting is on', (tester) async {
+    final engine = FakeEngine();
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1'), 'h2': hostJson('h2', 'web-2')};
+    engine.reach['web-1.example'] = (true, 12);
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('host-reach-h1')), findsNothing, reason: 'off by default');
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('reachability-check')));
+    await tester.pumpAndSettle();
+    expect(engine.settings['reachability_check'], 'true');
+    await tester.tap(find.text('Hosts').first);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('host-reach-h1')), findsOneWidget);
+    expect(find.byTooltip('Up · 12 ms'), findsOneWidget);
+    expect(find.byTooltip('Not reachable'), findsOneWidget);
+  });
+
+  testWidgets('favourites and recent hosts sit above the full list, and the star toggles', (tester) async {
+    final engine = FakeEngine();
+    final now = DateTime.now().toUtc();
+    engine.records['hosts'] = {
+      'h1': hostJson('h1', 'alpha', lastConnected: now.subtract(const Duration(hours: 1)).toIso8601String()),
+      'h2': hostJson('h2', 'bravo', lastConnected: now.subtract(const Duration(minutes: 5)).toIso8601String()),
+      'h3': hostJson('h3', 'charlie', favourite: true),
+      'h4': hostJson('h4', 'delta'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.text('FAVOURITES'), findsOneWidget);
+    expect(find.text('RECENT'), findsOneWidget);
+    expect(find.byKey(const Key('favourite-row-h3')), findsOneWidget);
+    final recentRows = tester.widgetList(find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key as ValueKey<String>).value.startsWith('recent-row-'))).toList();
+    expect(recentRows.map((w) => (w.key as ValueKey<String>).value).toList(), ['recent-row-h2', 'recent-row-h1'], reason: 'newest first');
+    expect(find.byKey(const Key('host-row-h3')), findsOneWidget, reason: 'the full list still has it');
+
+    // The search box has a scroller of its own; aim at the list.
+    final list = find.descendant(of: find.byType(ListView), matching: find.byType(Scrollable)).first;
+    await tester.scrollUntilVisible(find.byKey(const Key('host-fav-h4')), 150, scrollable: list);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-fav-h4')));
+    await tester.pumpAndSettle();
+    expect(engine.records['hosts']!['h4'], contains('"favourite":true'));
+    await tester.scrollUntilVisible(find.byKey(const Key('favourite-row-h4')), -150, scrollable: list);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('favourite-row-h4')), findsOneWidget, reason: 'it joined the Favourites section');
+
+    await tester.enterText(find.byType(TextField).first, 'alp');
+    await tester.pumpAndSettle();
+    expect(find.text('RECENT'), findsNothing, reason: 'a search shows just the matches');
+    expect(find.byKey(const Key('host-row-h1')), findsOneWidget);
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {
