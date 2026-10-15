@@ -86,7 +86,7 @@ Status: built. What remains is in people's hands rather than the code's: tag v1.
 
 In no particular order, each independently shippable:
 
-- macOS and iOS builds, App Store and TestFlight; a signed Windows installer and the Microsoft Store. Paid listings at a flat one-time price, as the release plan in M4 says.
+- macOS: first a free, unsigned `.dmg` on GitHub Releases (CI's Mac runners are free once the repository is public), then Developer ID signing and notarisation when Apple's programme is paid for; the Mac App Store is optional and last, because its sandbox confines a terminal. iOS: the App Store and TestFlight, which need the same programme. A signed Windows installer and the Microsoft Store. Paid listings at a flat one-time price, as the release plan in M4 and docs/DISTRIBUTION.md say.
 - Flathub, winget and the other free package channels.
 - Remaining backends: Dropbox, OneDrive, WebDAV, S3, Git, device to device.
 - Hardware-backed keys (Secure Enclave, StrongBox).
