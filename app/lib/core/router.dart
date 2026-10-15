@@ -9,6 +9,7 @@ import '../features/sessions/session_screen.dart';
 import '../features/sessions/sessions_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/settings/themes_screen.dart';
+import '../features/sync/sync_screen.dart';
 import '../features/shell/shell_scaffold.dart';
 import '../features/snippets/snippets_screen.dart';
 
@@ -60,6 +61,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               builder: (_, _) => const SettingsScreen(),
               routes: [
                 GoRoute(path: 'themes', builder: (_, _) => const ThemesScreen()),
+                GoRoute(path: 'sync', builder: (_, _) => const SyncScreen()),
               ],
             ),
           ]),

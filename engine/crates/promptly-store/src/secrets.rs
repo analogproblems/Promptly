@@ -11,6 +11,8 @@ pub trait SecretStore: Send + Sync {
     fn get(&self, key: &str) -> Result<Option<Vec<u8>>, SecretError>;
     /// Remove the value under `key`. Removing a missing key is not an error.
     fn delete(&self, key: &str) -> Result<(), SecretError>;
+    /// Every key with a value, in no particular order.
+    fn list(&self) -> Result<Vec<String>, SecretError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +43,9 @@ impl SecretStore for MemorySecretStore {
     fn delete(&self, key: &str) -> Result<(), SecretError> {
         self.inner.lock().unwrap().remove(key);
         Ok(())
+    }
+    fn list(&self) -> Result<Vec<String>, SecretError> {
+        Ok(self.inner.lock().unwrap().keys().cloned().collect())
     }
 }
 
@@ -140,6 +145,24 @@ impl SecretStore for FileSecretStore {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(SecretError::Platform(e.to_string())),
         }
+    }
+    fn list(&self) -> Result<Vec<String>, SecretError> {
+        let read = match std::fs::read_dir(&self.dir) {
+            Ok(r) => r,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(SecretError::Platform(e.to_string())),
+        };
+        let mut out = Vec::new();
+        for entry in read.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || name.ends_with(".tmp") {
+                continue;
+            }
+            if self.path_for(&name).is_ok() {
+                out.push(name);
+            }
+        }
+        Ok(out)
     }
 }
 

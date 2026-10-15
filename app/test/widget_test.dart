@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -164,13 +165,12 @@ class FakeEngine implements Engine {
 
   @override
   List<StoreRecord> recordsList(String collection) => [
-        for (final e in (records[collection] ?? {}).entries)
-          StoreRecord(id: e.key, json: e.value, updatedAt: ''),
+        for (final e in (records[collection] ?? {}).entries) StoreRecord(id: e.key, json: e.value),
       ];
   @override
   StoreRecord? recordGet(String collection, String id) {
     final json = records[collection]?[id];
-    return json == null ? null : StoreRecord(id: id, json: json, updatedAt: '');
+    return json == null ? null : StoreRecord(id: id, json: json);
   }
 
   @override
@@ -183,7 +183,7 @@ class FakeEngine implements Engine {
   @override
   void settingSet(String key, String json) => settings[key] = json;
   @override
-  void secretPut(String id, String value) => secrets[id] = value;
+  void secretPut(String id, String kind, String value) => secrets[id] = value;
   @override
   String? secretGet(String id) => secrets[id];
   @override
@@ -209,6 +209,102 @@ class FakeEngine implements Engine {
       );
   @override
   String keyFingerprint(String publicKey) => 'SHA256:${publicKey.hashCode}';
+
+  // ---- Sync ----
+  static const notConfigured = SyncStatus(
+    configured: false,
+    kind: null,
+    location: null,
+    vaultId: null,
+    deviceId: 'this-device',
+    deviceName: '',
+    syncing: false,
+    lastSyncAt: null,
+    lastError: null,
+    warnings: [],
+    pendingOps: 0,
+    devices: [],
+    vaultBytes: 0,
+    recoveryHint: null,
+    changes: 0,
+  );
+  SyncStatus sync = notConfigured;
+  final StreamController<SyncStatus> syncStream = StreamController<SyncStatus>.broadcast();
+  final List<String> syncCalls = [];
+
+  /// Folders that already hold a vault, for the join path.
+  final Set<String> foldersWithVaults = {};
+
+  void _configured(String path, String name) {
+    sync = SyncStatus(
+      configured: true,
+      kind: SyncBackendKind.localFolder,
+      location: path,
+      vaultId: 'vault-1',
+      deviceId: 'this-device',
+      deviceName: name,
+      syncing: false,
+      lastSyncAt: DateTime.now().toUtc().toIso8601String(),
+      lastError: null,
+      warnings: const [],
+      pendingOps: 0,
+      devices: [
+        SyncDevice(id: 'this-device', name: name, platform: 'linux', enrolledAt: '2026-10-15T06:00:00Z', lastSeenAt: null, isThisDevice: true),
+        const SyncDevice(id: 'other', name: 'Phone', platform: 'android', enrolledAt: '2026-10-15T06:00:00Z', lastSeenAt: null, isThisDevice: false),
+      ],
+      vaultBytes: 2048,
+      recoveryHint: 'R7Q2',
+      changes: 0,
+    );
+    syncStream.add(sync);
+  }
+
+  @override
+  SyncStatus syncStatus() => sync;
+  @override
+  Stream<SyncStatus> syncEvents() => syncStream.stream;
+  @override
+  bool syncFolderHasVault(String path) => foldersWithVaults.contains(path);
+  @override
+  String syncDefaultDeviceName() => 'test-box (Linux)';
+  @override
+  Future<SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName) async {
+    syncCalls.add('create $path $deviceName');
+    _configured(path, deviceName);
+    return const SyncSetupResult(vaultId: 'vault-1', recoveryCode: 'R7Q2-K9XM-3TPA-8VBD-2NCF-7HJQ-5WZ1-6GYE');
+  }
+
+  @override
+  Future<void> syncJoinLocalFolder(String path, {String? passphrase, String? recoveryCode, required String deviceName}) async {
+    syncCalls.add('join $path pass=$passphrase code=$recoveryCode');
+    if (passphrase == 'wrong') throw 'the passphrase is wrong';
+    _configured(path, deviceName);
+  }
+
+  @override
+  Future<SyncStatus> syncNow() async {
+    syncCalls.add('sync-now');
+    return sync;
+  }
+
+  @override
+  void syncDisconnect() {
+    syncCalls.add('disconnect');
+    sync = notConfigured;
+    syncStream.add(sync);
+  }
+
+  @override
+  Future<void> syncRemoveDevice(String deviceRecordId) async => syncCalls.add('remove $deviceRecordId');
+  @override
+  String? syncQrPayload() => sync.configured ? '{"v":1}' : null;
+}
+
+/// Scroll to a widget inside a scrollable page, then tap it.
+Future<void> tapVisible(WidgetTester tester, Finder finder) async {
+  await tester.ensureVisible(finder);
+  await tester.pumpAndSettle();
+  await tester.tap(finder);
 }
 
 Widget app([FakeEngine? engine]) => ProviderScope(
@@ -446,6 +542,76 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     expect(engine.requests.length, 2);
     expect(engine.requests.last.reattachSessionId, 7);
+  });
+
+  testWidgets('setting up a vault in a folder shows the recovery code, then the sync status', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Vault not set up'), findsOneWidget);
+    await tester.tap(find.text('Set up'));
+    await tester.pumpAndSettle();
+    expect(find.text('Where should Promptly keep your vault?'), findsOneWidget);
+    await tapVisible(tester, find.byKey(const Key('sync-continue')));
+    await tester.pumpAndSettle();
+    expect(find.text('test-box (Linux)'), findsOneWidget, reason: 'the device name is suggested');
+    await tester.enterText(find.byKey(const Key('sync-path')), '/tmp/vault');
+    await tapVisible(tester, find.byKey(const Key('sync-folder-continue')));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose a passphrase'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('sync-passphrase')), 'short');
+    await tester.enterText(find.byKey(const Key('sync-passphrase-confirm')), 'short');
+    await tapVisible(tester, find.byKey(const Key('sync-create')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('at least eight'), findsOneWidget);
+    expect(engine.syncCalls, isEmpty);
+    await tester.enterText(find.byKey(const Key('sync-passphrase')), 'correct horse battery');
+    await tester.enterText(find.byKey(const Key('sync-passphrase-confirm')), 'correct horse battery');
+    await tapVisible(tester, find.byKey(const Key('sync-create')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['create /tmp/vault test-box (Linux)']);
+    expect(find.text('R7Q2-K9XM-3TPA-8VBD-2NCF-7HJQ-5WZ1-6GYE'), findsOneWidget);
+    final done = tester.widget<FilledButton>(find.byKey(const Key('sync-done')));
+    expect(done.onPressed, isNull, reason: 'Done waits for the checkbox');
+    await tapVisible(tester, find.byKey(const Key('sync-wrote-it-down')));
+    await tester.pumpAndSettle();
+    await tapVisible(tester, find.byKey(const Key('sync-done')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Synced just now · 2 devices'), findsOneWidget);
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(find.text('Phone'), findsOneWidget);
+    expect(find.byTooltip('Remove device'), findsOneWidget);
+    await tapVisible(tester, find.byKey(const Key('sync-now')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls.last, 'sync-now');
+  });
+
+  testWidgets('a folder that already holds a vault asks for the passphrase and reports a wrong one', (tester) async {
+    final engine = FakeEngine()..foldersWithVaults.add('/shared/vault');
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Set up'));
+    await tester.pumpAndSettle();
+    await tapVisible(tester, find.byKey(const Key('sync-continue')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('sync-path')), '/shared/vault');
+    await tapVisible(tester, find.byKey(const Key('sync-folder-continue')));
+    await tester.pumpAndSettle();
+    expect(find.text('This folder already holds a vault'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('sync-join-passphrase')), 'wrong');
+    await tapVisible(tester, find.byKey(const Key('sync-join')));
+    await tester.pumpAndSettle();
+    expect(find.text('the passphrase is wrong'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('sync-join-passphrase')), 'right');
+    await tapVisible(tester, find.byKey(const Key('sync-join')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls.last, 'join /shared/vault pass=right code=null');
+    expect(find.byKey(const Key('sync-summary')), findsOneWidget, reason: 'joined: the status view is up');
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

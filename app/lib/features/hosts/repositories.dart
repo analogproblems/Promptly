@@ -132,7 +132,7 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
     final generated = engine.keyGenerate(kind, label);
     // Secret ids are record ids too: the engine's model types them as UUIDs.
     final secretId = newRecordId();
-    engine.secretPut(secretId, generated.privateOpenssh);
+    engine.secretPut(secretId, 'private_key', generated.privateOpenssh);
     final identity = Identity(
       id: id,
       label: label,
@@ -157,7 +157,7 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
     final id = newRecordId();
     // Secret ids are record ids too: the engine's model types them as UUIDs.
     final secretId = newRecordId();
-    engine.secretPut(secretId, privateKey.trim());
+    engine.secretPut(secretId, 'private_key', privateKey.trim());
     final identity = Identity(
       id: id,
       label: label,

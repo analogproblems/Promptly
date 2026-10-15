@@ -9,6 +9,7 @@ import '../sessions/session_manager.dart';
 import '../settings/settings_providers.dart';
 import '../sessions/sessions_screen.dart';
 import '../shell/empty_state.dart';
+import '../sync/sync_providers.dart';
 import 'host_colors.dart';
 import 'models.dart';
 import 'repositories.dart';
@@ -94,6 +95,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final sync = ref.watch(syncStatusProvider).value;
     final t = context.tokens;
     final hosts = ref.watch(hostsProvider);
     final groups = ref.watch(groupsProvider);
@@ -122,17 +124,29 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
         children: [
           PageHeader(
             title: 'Hosts',
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(color: t.muted, shape: BoxShape.circle),
+            trailing: InkWell(
+              onTap: () => context.go('/settings/sync'),
+              borderRadius: BorderRadius.circular(PromptlyTokens.controlRadius),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: sync != null && sync.configured
+                            ? (sync.lastError == null ? t.accent : t.warning)
+                            : t.muted,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(syncSummary(sync), style: TextStyle(fontSize: 12, color: t.muted)),
+                  ],
                 ),
-                const SizedBox(width: 6),
-                Text('Sync not set up', style: TextStyle(fontSize: 12, color: t.muted)),
-              ],
+              ),
             ),
           ),
           Padding(

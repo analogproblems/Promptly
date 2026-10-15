@@ -4,11 +4,13 @@ import '../../src/rust/api/engine.dart' as rust;
 import '../../src/rust/api/keys.dart' as rust_keys;
 import '../../src/rust/api/ssh.dart' as rust_ssh;
 import '../../src/rust/api/store.dart' as rust_store;
+import '../../src/rust/api/sync.dart' as rust_sync;
 import '../../src/rust/api/terminal.dart' as rust_term;
 import '../../src/rust/api/themes.dart' as rust_themes;
 
 export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
 export '../../src/rust/api/store.dart' show StoreRecord;
+export '../../src/rust/api/sync.dart' show SyncBackendKind, SyncDevice, SyncSetupResult, SyncStatus;
 export '../../src/rust/api/themes.dart' show ThemeInfo;
 export '../../src/rust/api/ssh.dart'
     show
@@ -90,13 +92,26 @@ abstract class Engine {
   void settingSet(String key, String json);
 
   /// Secrets (passwords, private keys) by id. Never in the record store.
-  void secretPut(String id, String value);
+  /// `kind` is `password`, `private_key` or `key_passphrase`.
+  void secretPut(String id, String kind, String value);
   String? secretGet(String id);
   void secretDelete(String id);
 
   rust_keys.GeneratedKey keyGenerate(rust_keys.SshKeyKind kind, String comment);
   rust_keys.KeyInfo keyInspect(String privateKey, String? passphrase);
   String keyFingerprint(String publicKey);
+
+  /// The vault: where it is, how it is doing, and setting it up.
+  rust_sync.SyncStatus syncStatus();
+  Stream<rust_sync.SyncStatus> syncEvents();
+  bool syncFolderHasVault(String path);
+  String syncDefaultDeviceName();
+  Future<rust_sync.SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName);
+  Future<void> syncJoinLocalFolder(String path, {String? passphrase, String? recoveryCode, required String deviceName});
+  Future<rust_sync.SyncStatus> syncNow();
+  void syncDisconnect();
+  Future<void> syncRemoveDevice(String deviceRecordId);
+  String? syncQrPayload();
 }
 
 sealed class EndpointParse {
@@ -238,7 +253,8 @@ class RustEngine implements Engine {
   void settingSet(String key, String json) => rust_store.settingSet(key: key, json: json);
 
   @override
-  void secretPut(String id, String value) => rust_store.secretPut(id: id, value: value);
+  void secretPut(String id, String kind, String value) =>
+      rust_store.secretPut(id: id, kind: kind, value: value);
 
   @override
   String? secretGet(String id) => rust_store.secretGet(id: id);
@@ -256,6 +272,41 @@ class RustEngine implements Engine {
 
   @override
   String keyFingerprint(String publicKey) => rust_keys.keyFingerprint(publicKey: publicKey);
+
+  @override
+  rust_sync.SyncStatus syncStatus() => rust_sync.syncStatus();
+
+  @override
+  Stream<rust_sync.SyncStatus> syncEvents() => rust_sync.syncEvents();
+
+  @override
+  bool syncFolderHasVault(String path) => rust_sync.syncFolderHasVault(path: path);
+
+  @override
+  String syncDefaultDeviceName() => rust_sync.syncDefaultDeviceName();
+
+  @override
+  Future<rust_sync.SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName) =>
+      rust_sync.syncCreateLocalFolder(path: path, passphrase: passphrase, deviceName: deviceName);
+
+  @override
+  Future<void> syncJoinLocalFolder(String path,
+          {String? passphrase, String? recoveryCode, required String deviceName}) =>
+      rust_sync.syncJoinLocalFolder(
+          path: path, passphrase: passphrase, recoveryCode: recoveryCode, deviceName: deviceName);
+
+  @override
+  Future<rust_sync.SyncStatus> syncNow() => rust_sync.syncNow();
+
+  @override
+  void syncDisconnect() => rust_sync.syncDisconnect();
+
+  @override
+  Future<void> syncRemoveDevice(String deviceRecordId) =>
+      rust_sync.syncRemoveDevice(deviceRecordId: deviceRecordId);
+
+  @override
+  String? syncQrPayload() => rust_sync.syncQrPayload();
 }
 
 final engineProvider = Provider<Engine>((_) => const RustEngine());

@@ -21,7 +21,7 @@ StoreRecord? recordGet({required String collectionName, required String id}) =>
     );
 
 /// Insert or replace. The JSON must be a valid record of the collection
-/// with a matching `id`.
+/// with a matching `id`. Only the fields that changed are recorded.
 void recordPut({
   required String collectionName,
   required String id,
@@ -45,8 +45,17 @@ void settingSet({required String key, required String json}) =>
     RustLib.instance.api.crateApiStoreSettingSet(key: key, json: json);
 
 /// Store a secret (a password, a private key) under an id the app chooses.
-void secretPut({required String id, required String value}) =>
-    RustLib.instance.api.crateApiStoreSecretPut(id: id, value: value);
+/// `kind` is `password`, `private_key` or `key_passphrase`. With a vault set
+/// up, the secret also travels to the other devices, encrypted.
+void secretPut({
+  required String id,
+  required String kind,
+  required String value,
+}) => RustLib.instance.api.crateApiStoreSecretPut(
+  id: id,
+  kind: kind,
+  value: value,
+);
 
 String? secretGet({required String id}) =>
     RustLib.instance.api.crateApiStoreSecretGet(id: id);
@@ -57,16 +66,11 @@ void secretDelete({required String id}) =>
 class StoreRecord {
   final String id;
   final String json;
-  final String updatedAt;
 
-  const StoreRecord({
-    required this.id,
-    required this.json,
-    required this.updatedAt,
-  });
+  const StoreRecord({required this.id, required this.json});
 
   @override
-  int get hashCode => id.hashCode ^ json.hashCode ^ updatedAt.hashCode;
+  int get hashCode => id.hashCode ^ json.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -74,6 +78,5 @@ class StoreRecord {
       other is StoreRecord &&
           runtimeType == other.runtimeType &&
           id == other.id &&
-          json == other.json &&
-          updatedAt == other.updatedAt;
+          json == other.json;
 }

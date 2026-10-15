@@ -10,6 +10,7 @@ import 'api/engine.dart';
 import 'api/keys.dart';
 import 'api/ssh.dart';
 import 'api/store.dart';
+import 'api/sync.dart';
 import 'api/terminal.dart';
 import 'api/themes.dart';
 
@@ -33,6 +34,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   RustStreamSink<SshEvent> dco_decode_StreamSink_ssh_event_Sse(dynamic raw);
+
+  @protected
+  RustStreamSink<SyncStatus> dco_decode_StreamSink_sync_status_Sse(dynamic raw);
 
   @protected
   RustStreamSink<TerminalEvent> dco_decode_StreamSink_terminal_event_Sse(
@@ -59,6 +63,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   StoreRecord dco_decode_box_autoadd_store_record(dynamic raw);
+
+  @protected
+  SyncBackendKind dco_decode_box_autoadd_sync_backend_kind(dynamic raw);
 
   @protected
   TerminalFrame dco_decode_box_autoadd_terminal_frame(dynamic raw);
@@ -100,6 +107,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<StoreRecord> dco_decode_list_store_record(dynamic raw);
 
   @protected
+  List<SyncDevice> dco_decode_list_sync_device(dynamic raw);
+
+  @protected
   List<TerminalRow> dco_decode_list_terminal_row(dynamic raw);
 
   @protected
@@ -119,6 +129,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   StoreRecord? dco_decode_opt_box_autoadd_store_record(dynamic raw);
+
+  @protected
+  SyncBackendKind? dco_decode_opt_box_autoadd_sync_backend_kind(dynamic raw);
 
   @protected
   TerminalFrame? dco_decode_opt_box_autoadd_terminal_frame(dynamic raw);
@@ -169,6 +182,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   StoreRecord dco_decode_store_record(dynamic raw);
 
   @protected
+  SyncBackendKind dco_decode_sync_backend_kind(dynamic raw);
+
+  @protected
+  SyncDevice dco_decode_sync_device(dynamic raw);
+
+  @protected
+  SyncSetupResult dco_decode_sync_setup_result(dynamic raw);
+
+  @protected
+  SyncStatus dco_decode_sync_status(dynamic raw);
+
+  @protected
   TerminalCursor dco_decode_terminal_cursor(dynamic raw);
 
   @protected
@@ -213,6 +238,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  RustStreamSink<SyncStatus> sse_decode_StreamSink_sync_status_Sse(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RustStreamSink<TerminalEvent> sse_decode_StreamSink_terminal_event_Sse(
     SseDeserializer deserializer,
   );
@@ -239,6 +269,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   StoreRecord sse_decode_box_autoadd_store_record(SseDeserializer deserializer);
+
+  @protected
+  SyncBackendKind sse_decode_box_autoadd_sync_backend_kind(
+    SseDeserializer deserializer,
+  );
 
   @protected
   TerminalFrame sse_decode_box_autoadd_terminal_frame(
@@ -282,6 +317,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<StoreRecord> sse_decode_list_store_record(SseDeserializer deserializer);
 
   @protected
+  List<SyncDevice> sse_decode_list_sync_device(SseDeserializer deserializer);
+
+  @protected
   List<TerminalRow> sse_decode_list_terminal_row(SseDeserializer deserializer);
 
   @protected
@@ -303,6 +341,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   StoreRecord? sse_decode_opt_box_autoadd_store_record(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  SyncBackendKind? sse_decode_opt_box_autoadd_sync_backend_kind(
     SseDeserializer deserializer,
   );
 
@@ -361,6 +404,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   StoreRecord sse_decode_store_record(SseDeserializer deserializer);
 
   @protected
+  SyncBackendKind sse_decode_sync_backend_kind(SseDeserializer deserializer);
+
+  @protected
+  SyncDevice sse_decode_sync_device(SseDeserializer deserializer);
+
+  @protected
+  SyncSetupResult sse_decode_sync_setup_result(SseDeserializer deserializer);
+
+  @protected
+  SyncStatus sse_decode_sync_status(SseDeserializer deserializer);
+
+  @protected
   TerminalCursor sse_decode_terminal_cursor(SseDeserializer deserializer);
 
   @protected
@@ -415,6 +470,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_StreamSink_sync_status_Sse(
+    RustStreamSink<SyncStatus> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_StreamSink_terminal_event_Sse(
     RustStreamSink<TerminalEvent> self,
     SseSerializer serializer,
@@ -447,6 +508,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_store_record(
     StoreRecord self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_sync_backend_kind(
+    SyncBackendKind self,
     SseSerializer serializer,
   );
 
@@ -511,6 +578,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_sync_device(
+    List<SyncDevice> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_terminal_row(
     List<TerminalRow> self,
     SseSerializer serializer,
@@ -543,6 +616,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_store_record(
     StoreRecord? self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_opt_box_autoadd_sync_backend_kind(
+    SyncBackendKind? self,
     SseSerializer serializer,
   );
 
@@ -608,6 +687,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_store_record(StoreRecord self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sync_backend_kind(
+    SyncBackendKind self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_device(SyncDevice self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sync_setup_result(
+    SyncSetupResult self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_sync_status(SyncStatus self, SseSerializer serializer);
 
   @protected
   void sse_encode_terminal_cursor(

@@ -84,7 +84,7 @@ class RecordingEngine implements Engine {
   @override
   void settingSet(String key, String json) {}
   @override
-  void secretPut(String id, String value) {}
+  void secretPut(String id, String kind, String value) {}
   @override
   String? secretGet(String id) => null;
   @override
@@ -95,6 +95,28 @@ class RecordingEngine implements Engine {
   KeyInfo keyInspect(String privateKey, String? passphrase) => throw UnimplementedError();
   @override
   String keyFingerprint(String publicKey) => 'SHA256:test';
+  @override
+  SyncStatus syncStatus() => throw UnimplementedError();
+  @override
+  Stream<SyncStatus> syncEvents() => const Stream.empty();
+  @override
+  bool syncFolderHasVault(String path) => false;
+  @override
+  String syncDefaultDeviceName() => 'test';
+  @override
+  Future<SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName) =>
+      throw UnimplementedError();
+  @override
+  Future<void> syncJoinLocalFolder(String path, {String? passphrase, String? recoveryCode, required String deviceName}) =>
+      throw UnimplementedError();
+  @override
+  Future<SyncStatus> syncNow() => throw UnimplementedError();
+  @override
+  void syncDisconnect() {}
+  @override
+  Future<void> syncRemoveDevice(String deviceRecordId) async {}
+  @override
+  String? syncQrPayload() => null;
 }
 
 void main() {

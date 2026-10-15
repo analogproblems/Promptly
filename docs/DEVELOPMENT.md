@@ -48,6 +48,20 @@ make gen           # after changing the engine's API (see below)
 
 `make` on its own lists every target.
 
+The command-line tool works on any vault folder and is its own device,
+with a small store under `~/.local/share/promptly-cli/`:
+
+```
+promptly inspect ~/Promptly\ Vault                 # devices, files, sizes; records with a passphrase
+promptly export ~/Promptly\ Vault > vault.json     # merged state as JSON (add --with-secrets, carefully)
+promptly import ~/Promptly\ Vault hosts.json       # merge a JSON document in
+promptly sync ~/Promptly\ Vault                    # pull and push from a script
+promptly ssh-config ~/Promptly\ Vault --keys-dir ~/.ssh/promptly >> ~/.ssh/config
+promptly change-passphrase ~/Promptly\ Vault
+```
+
+The passphrase comes from `--passphrase`, `PROMPTLY_PASSPHRASE`, or a prompt.
+
 One cache to know about: a release build keeps only the Material icons the
 Dart code uses, and Flutter does not notice when that set changes. If a new
 `Icons.*` shows up as a small box, delete `app/build/flutter_assets` and
@@ -85,6 +99,12 @@ Logic belongs in `promptly-term`, `promptly-ssh`, `promptly-vault` and
 lives in `~/.local/share/dev.promptly.promptly/`: `promptly.db` (hosts,
 groups, keys' public halves, settings), `known_hosts`, and `secrets/` (one
 owner-only file per password or private key, named by id).
+
+Two environment variables help when testing sync: `PROMPTLY_DATA_DIR`
+points a copy of the app at its own data folder, so two copies can run
+side by side as two "devices" sharing one vault folder, and
+`PROMPTLY_FAST_KDF=1` makes vault creation use weak key stretching so a
+walkthrough does not wait on Argon2id. Never set the second one for real use.
 
 **Windows.** Needs Visual Studio with the C++ desktop workload and Rust's
 `x86_64-pc-windows-msvc` target. The path in

@@ -29,6 +29,15 @@ impl DeviceId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The same 16 bytes as a UUID, for the device's own record id.
+    pub fn as_uuid(&self) -> uuid::Uuid {
+        let mut bytes = [0u8; 16];
+        for (i, b) in bytes.iter_mut().enumerate() {
+            *b = u8::from_str_radix(&self.0[i * 2..i * 2 + 2], 16).unwrap_or(0);
+        }
+        uuid::Uuid::from_bytes(bytes)
+    }
 }
 
 impl fmt::Debug for DeviceId {

@@ -11,6 +11,10 @@ static DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// The app sets this from the platform's application-support directory at
 /// startup; until then a sensible per-platform default is used.
 pub(crate) fn data_dir() -> PathBuf {
+    // An override for running several copies side by side, as when testing sync.
+    if let Some(d) = std::env::var_os("PROMPTLY_DATA_DIR") {
+        return PathBuf::from(d);
+    }
     if let Some(d) = DATA_DIR.lock().unwrap().clone() {
         return d;
     }

@@ -7,6 +7,7 @@ import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../shell/empty_state.dart';
 import 'settings_providers.dart';
+import '../sync/sync_providers.dart';
 import 'themes_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -39,6 +40,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final terminalSetting = ref.watch(terminalThemeProvider);
     final terminalId = resolveTerminalTheme(terminalSetting, Theme.of(context).brightness);
     final themes = ref.watch(themesProvider);
+    final sync = ref.watch(syncStatusProvider).value;
     final terminalTheme = themes.cast<ThemeInfo?>().firstWhere(
           (th) => th!.id == terminalId,
           orElse: () => themes.isEmpty ? null : themes.first,
@@ -97,14 +99,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               _Section(
                 title: 'Sync',
                 child: ListTile(
-                  leading: Icon(Icons.cloud_off_outlined, color: t.muted),
-                  title: const Text('Vault not set up'),
-                  subtitle: const Text(
-                    'Lands in milestone 2. Until then everything stays on this device.',
+                  key: const Key('settings-sync'),
+                  leading: Icon(
+                    sync == null || !sync.configured
+                        ? Icons.cloud_off_outlined
+                        : sync.lastError != null
+                            ? Icons.cloud_off_outlined
+                            : Icons.cloud_done_outlined,
+                    color: sync != null && sync.configured && sync.lastError == null ? t.accent : t.muted,
+                  ),
+                  title: Text(syncSummary(sync)),
+                  subtitle: Text(
+                    sync != null && sync.configured
+                        ? (sync.location ?? '')
+                        : 'The same hosts on every device, through storage you already have. Free.',
                   ),
                   trailing: TextButton(
-                    onPressed: () => notYet(context, 'Sync setup lands in milestone 2.'),
-                    child: const Text('Set up'),
+                    onPressed: () => context.go('/settings/sync'),
+                    child: Text(sync != null && sync.configured ? 'Open' : 'Set up'),
                   ),
                 ),
               ),

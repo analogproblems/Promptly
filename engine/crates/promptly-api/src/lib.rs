@@ -7,6 +7,7 @@
 pub mod api;
 mod frb_generated;
 mod ssh_flow;
+mod sync_engine;
 
 /// Engine version, from the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

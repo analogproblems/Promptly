@@ -64,7 +64,7 @@ Readers tolerate files appearing out of order and files that vanish between list
 
 - The `dek` (data encryption key) is 32 random bytes generated once per vault. It is what actually encrypts the data.
 - The passphrase entry wraps the `dek` with a key derived by Argon2id from the passphrase and the salt.
-- The recovery entry wraps the `dek` with a key derived from a 128-bit recovery code shown once at setup, formatted in groups of letters and digits for writing down. `hint` is its first four characters so the user can tell which written-down code belongs to which vault.
+- The recovery entry wraps the `dek` with a key derived from a 160-bit recovery code shown once at setup, formatted as eight groups of four Crockford base32 characters (so `O`, `I` and `L` are read as the digits they resemble when typed back). `hint` is its first four characters so the user can tell which written-down code belongs to which vault.
 - Changing the passphrase rewrites only the passphrase entry. The vault's data is untouched.
 
 ## 5. File encryption
@@ -170,7 +170,7 @@ Each device stores locally, per other device, the highest segment number it has 
 
 **Compact** as in section 8, after a successful push.
 
-**When**: after any local change, debounced by two seconds; when the app comes to the foreground; on pull-to-refresh; every fifteen minutes while the app is open; and via platform background fetch where the OS offers it. A failed sync is retried with exponential backoff up to an hour and shown as a small, dismissible notice. It never interrupts the user.
+**When**: after any local change, debounced by two seconds; when the app comes to the foreground; on pull-to-refresh; every thirty seconds while the app is open on a desktop (a listing is one cheap call per device folder; phones stretch this to save battery); and via platform background fetch where the OS offers it. A failed sync is retried with exponential backoff up to an hour and shown as a small, dismissible notice. It never interrupts the user.
 
 **Offline**: everything works offline. Changes queue as pending operations and go out when a backend is reachable.
 
