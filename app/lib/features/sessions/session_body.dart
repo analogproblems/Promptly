@@ -242,6 +242,14 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                         onPressed: () => showSnippetsDrawer(context, ref, entry),
                         icon: Icon(Icons.code, size: widget.compact ? 18 : 24),
                       ),
+                    if (live && !entry.isLocal)
+                      IconButton(
+                        key: const Key('session-files'),
+                        tooltip: 'Files',
+                        visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard,
+                        onPressed: () => context.go('/sessions/${entry.id}/files'),
+                        icon: Icon(Icons.folder_open_outlined, size: widget.compact ? 18 : 24),
+                      ),
                     if (live && (entry.flow?.request.forwards.isNotEmpty ?? false))
                       IconButton(
                         key: const Key('session-forwards'),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/files/files_screen.dart';
 import '../features/hosts/host_editor_screen.dart';
 import '../features/hosts/hosts_screen.dart';
 import '../features/keys/keys_screen.dart';
@@ -46,6 +47,13 @@ final routerProvider = Provider<GoRouter>((ref) {
                   path: ':id',
                   builder: (_, state) =>
                       SessionsRoot(sessionId: int.tryParse(state.pathParameters['id'] ?? '') ?? -1),
+                  routes: [
+                    GoRoute(
+                      path: 'files',
+                      builder: (_, state) =>
+                          FilesScreen(sessionId: int.tryParse(state.pathParameters['id'] ?? '') ?? -1),
+                    ),
+                  ],
                 ),
               ],
             ),

@@ -1,4 +1,5 @@
 pub mod engine;
+pub mod files;
 pub mod import;
 pub mod keys;
 pub mod ssh;

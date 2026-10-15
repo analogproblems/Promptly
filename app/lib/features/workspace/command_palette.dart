@@ -55,6 +55,7 @@ List<PaletteItem> paletteItems(BuildContext context, WidgetRef ref) {
     PaletteItem(label: 'Hosts panel', hint: 'Ctrl+Shift+B', icon: Icons.view_sidebar_outlined, run: actions.toggleHostsPanel),
     PaletteItem(label: 'Find in session', hint: 'Ctrl+Shift+F', icon: Icons.search, run: actions.find),
     PaletteItem(label: 'Port forwards', icon: Icons.alt_route, run: actions.forwards),
+    PaletteItem(label: 'Files on this host', hint: 'SFTP', icon: Icons.folder_open_outlined, run: actions.files),
     PaletteItem(label: 'Reconnect', icon: Icons.refresh, run: actions.reconnect),
     PaletteItem(label: 'Add host', icon: Icons.add, run: () => context.go('/hosts/new')),
     PaletteItem(label: 'New snippet', icon: Icons.add, run: () => context.go('/snippets/new')),

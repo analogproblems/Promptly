@@ -203,12 +203,15 @@ impl Connection {
                 return;
             }
             state.active = false;
-            if let Some(task) = state.task.take() {
-                task.abort();
-            }
-            (state.spec.clone(), state.bound_port)
+            (state.spec.clone(), state.bound_port, state.task.take())
         };
-        let (spec, port) = stopping;
+        let (spec, port, task) = stopping;
+        if let Some(task) = task {
+            // Abort schedules the stop; waiting on the task is what makes
+            // sure the listener is gone before this returns.
+            task.abort();
+            let _ = task.await;
+        }
         if spec.kind == ForwardKind::Remote {
             self.remote_targets.lock().unwrap().remove(&u32::from(port));
             let _ = self

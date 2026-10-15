@@ -14,7 +14,7 @@ promptly-session = { workspace = true }
 russh = { version = "0.63.1", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = "3"
 promptly-vault = { workspace = true }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "time", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "io-util", "net", "time", "macros", "fs"] }
 rand = "0.10"
 serde = { workspace = true }
 thiserror = { workspace = true }

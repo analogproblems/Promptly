@@ -107,6 +107,11 @@ class DesktopActions {
     if (e != null) showSnippetsDrawer(context, ref, e);
   }
 
+  void files() {
+    final e = focused;
+    if (e != null && !e.isLocal && e.controller != null) context.go('/sessions/${e.id}/files');
+  }
+
   void quit() {
     for (final e in ref.read(sessionManagerProvider)) {
       _sessions.close(e.id);

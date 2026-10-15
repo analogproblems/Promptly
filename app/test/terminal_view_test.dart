@@ -94,6 +94,30 @@ class RecordingEngine implements Engine {
   Future<SshExecResult> sshExec(SshConnectRequest request, String command, int timeoutSeconds) async =>
       const SshExecResult(output: '', exitCode: 0, timedOut: false, error: null);
   @override
+  Future<int> filesOpen(int sessionId) async => 1;
+  @override
+  void filesClose(int id) {}
+  @override
+  Future<String> filesHome(int id) async => '/';
+  @override
+  Future<List<FileEntry>> filesList(int id, String path) async => const [];
+  @override
+  Future<void> filesMkdir(int id, String path) async {}
+  @override
+  Future<void> filesRename(int id, String from, String to) async {}
+  @override
+  Future<void> filesDelete(int id, String path) async {}
+  @override
+  Future<void> filesChmod(int id, String path, int mode) async {}
+  @override
+  int filesDownload(int id, String remote, String local) => 1;
+  @override
+  int filesUpload(int id, String local, String remote) => 1;
+  @override
+  List<FileTransfer> filesTransfers(int id) => const [];
+  @override
+  void filesClearTransfers(int id) {}
+  @override
   List<StoreRecord> recordsList(String collection) => const [];
   @override
   StoreRecord? recordGet(String collection, String id) => null;

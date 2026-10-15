@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../src/rust/api/engine.dart' as rust;
+import '../../src/rust/api/files.dart' as rust_files;
 import '../../src/rust/api/import.dart' as rust_import;
 import '../../src/rust/api/keys.dart' as rust_keys;
 import '../../src/rust/api/ssh.dart' as rust_ssh;
@@ -9,6 +10,7 @@ import '../../src/rust/api/sync.dart' as rust_sync;
 import '../../src/rust/api/terminal.dart' as rust_term;
 import '../../src/rust/api/themes.dart' as rust_themes;
 
+export '../../src/rust/api/files.dart' show FileEntry, FileTransfer;
 export '../../src/rust/api/import.dart' show ImportReport, SshConfigHost;
 export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
 export '../../src/rust/api/store.dart' show StoreRecord;
@@ -109,6 +111,23 @@ abstract class Engine {
 
   /// Run one command on a host with its stored login and no terminal.
   Future<rust_ssh.SshExecResult> sshExec(rust_ssh.SshConnectRequest request, String command, int timeoutSeconds);
+
+  // ---- The file browser, over a live session's connection ----------------
+
+  Future<int> filesOpen(int sessionId);
+  void filesClose(int id);
+  Future<String> filesHome(int id);
+  Future<List<rust_files.FileEntry>> filesList(int id, String path);
+  Future<void> filesMkdir(int id, String path);
+  Future<void> filesRename(int id, String from, String to);
+  Future<void> filesDelete(int id, String path);
+  Future<void> filesChmod(int id, String path, int mode);
+
+  /// Start a copy; returns the transfer id. `filesTransfers` follows it.
+  int filesDownload(int id, String remote, String local);
+  int filesUpload(int id, String local, String remote);
+  List<rust_files.FileTransfer> filesTransfers(int id);
+  void filesClearTransfers(int id);
 
   /// Records in the local store, as JSON in the vault's format.
   List<rust_store.StoreRecord> recordsList(String collection);
@@ -286,6 +305,31 @@ class RustEngine implements Engine {
   @override
   Future<rust_ssh.SshExecResult> sshExec(rust_ssh.SshConnectRequest request, String command, int timeoutSeconds) =>
       rust_ssh.sshExec(request: request, command: command, timeoutSeconds: timeoutSeconds);
+
+  @override
+  Future<int> filesOpen(int sessionId) => rust_files.filesOpen(sessionId: sessionId);
+  @override
+  void filesClose(int id) => rust_files.filesClose(id: id);
+  @override
+  Future<String> filesHome(int id) => rust_files.filesHome(id: id);
+  @override
+  Future<List<rust_files.FileEntry>> filesList(int id, String path) => rust_files.filesList(id: id, path: path);
+  @override
+  Future<void> filesMkdir(int id, String path) => rust_files.filesMkdir(id: id, path: path);
+  @override
+  Future<void> filesRename(int id, String from, String to) => rust_files.filesRename(id: id, from: from, to: to);
+  @override
+  Future<void> filesDelete(int id, String path) => rust_files.filesDelete(id: id, path: path);
+  @override
+  Future<void> filesChmod(int id, String path, int mode) => rust_files.filesChmod(id: id, path: path, mode: mode);
+  @override
+  int filesDownload(int id, String remote, String local) => rust_files.filesDownload(id: id, remote: remote, local: local);
+  @override
+  int filesUpload(int id, String local, String remote) => rust_files.filesUpload(id: id, local: local, remote: remote);
+  @override
+  List<rust_files.FileTransfer> filesTransfers(int id) => rust_files.filesTransfers(id: id);
+  @override
+  void filesClearTransfers(int id) => rust_files.filesClearTransfers(id: id);
 
   @override
   List<rust_store.StoreRecord> recordsList(String collection) =>

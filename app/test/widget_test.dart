@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/app.dart';
 import 'package:promptly/core/engine/engine.dart';
+import 'package:promptly/features/files/files_screen.dart';
+import 'package:promptly/features/files/fs.dart';
 import 'package:promptly/features/sessions/session_body.dart';
 import 'package:promptly/features/sessions/session_thumbnail.dart';
 import 'package:promptly/features/workspace/workspace.dart';
@@ -200,6 +202,59 @@ class FakeEngine implements Engine {
     return execResults[request.host] ??
         SshExecResult(output: '', exitCode: null, timedOut: false, error: 'no result for ${request.host}');
   }
+
+  /// A small remote file tree for the browser, by folder, and every change
+  /// and transfer asked for.
+  final Map<String, List<FileEntry>> remoteFiles = {
+    '/home/ops': [
+      FileEntry(name: 'projects', isDir: true, isSymlink: false, size: BigInt.zero, modified: BigInt.zero, permissions: 0x1ED, owner: 'ops', group: 'ops'),
+      FileEntry(name: 'notes.txt', isDir: false, isSymlink: false, size: BigInt.from(2048), modified: BigInt.zero, permissions: 0x1A4, owner: 'ops', group: 'ops'),
+    ],
+    '/home/ops/projects': [
+      FileEntry(name: 'app.py', isDir: false, isSymlink: false, size: BigInt.from(512), modified: BigInt.zero, permissions: 0x1A4, owner: 'ops', group: 'ops'),
+    ],
+  };
+  final List<String> fileCalls = [];
+  final List<FileTransfer> transfers = [];
+
+  @override
+  Future<int> filesOpen(int sessionId) async {
+    fileCalls.add('open $sessionId');
+    return 3;
+  }
+
+  @override
+  void filesClose(int id) => fileCalls.add('close $id');
+  @override
+  Future<String> filesHome(int id) async => '/home/ops';
+  @override
+  Future<List<FileEntry>> filesList(int id, String path) async => remoteFiles[path] ?? (throw 'That is not there any more.');
+  @override
+  Future<void> filesMkdir(int id, String path) async => fileCalls.add('mkdir $path');
+  @override
+  Future<void> filesRename(int id, String from, String to) async => fileCalls.add('rename $from $to');
+  @override
+  Future<void> filesDelete(int id, String path) async => fileCalls.add('delete $path');
+  @override
+  Future<void> filesChmod(int id, String path, int mode) async => fileCalls.add('chmod $path ${mode.toRadixString(8)}');
+  @override
+  int filesDownload(int id, String remote, String local) {
+    fileCalls.add('download $remote $local');
+    transfers.add(FileTransfer(id: transfers.length + 1, name: remote.split('/').last, upload: false, done: BigInt.from(2048), total: BigInt.from(2048), finished: true, error: null));
+    return transfers.length;
+  }
+
+  @override
+  int filesUpload(int id, String local, String remote) {
+    fileCalls.add('upload $local $remote');
+    transfers.add(FileTransfer(id: transfers.length + 1, name: remote.split('/').last, upload: true, done: BigInt.from(10), total: BigInt.from(10), finished: true, error: null));
+    return transfers.length;
+  }
+
+  @override
+  List<FileTransfer> filesTransfers(int id) => List.of(transfers);
+  @override
+  void filesClearTransfers(int id) => transfers.removeWhere((t) => t.finished);
 
   /// Forward statuses reported for live sessions, and every toggle asked for.
   List<SshForwardStatus> forwards = [];
@@ -411,8 +466,14 @@ Future<void> tapVisible(WidgetTester tester, Finder finder) async {
   await tester.tap(finder);
 }
 
-Widget app([FakeEngine? engine]) => ProviderScope(
-      overrides: [engineProvider.overrideWithValue(engine ?? FakeEngine())],
+Widget app([FakeEngine? engine]) => appWith(engine);
+
+Widget appWith(FakeEngine? engine, {String? localDir, Fs? localFs}) => ProviderScope(
+      overrides: [
+        engineProvider.overrideWithValue(engine ?? FakeEngine()),
+        if (localDir != null) localStartDirProvider.overrideWithValue(localDir),
+        if (localFs != null) localFsProvider.overrideWithValue(localFs),
+      ],
       child: const PromptlyApp(),
     );
 
@@ -422,6 +483,31 @@ String hostJson(String id, String label, {String? group, String? color, String a
     '"color":${color == null ? 'null' : '"$color"'},'
     '"icon":null,"notes":"","jump_host_id":null,"keepalive_seconds":30,"startup_command":null,"env":{},'
     '"persistent_session":false,"port_forwards":[],"last_connected_at":null,"favourite":false,"sync":"vault"}';
+
+/// A folder tree in memory, standing in for this device's disk.
+class MemoryFs extends Fs {
+  MemoryFs(this.tree);
+
+  final Map<String, List<FsEntry>> tree;
+  final List<String> calls = [];
+
+  @override
+  String get label => 'This device';
+  @override
+  bool get isRemote => false;
+  @override
+  Future<String> home() async => tree.keys.first;
+  @override
+  Future<List<FsEntry>> list(String dir) async => tree[dir] ?? (throw 'no such folder');
+  @override
+  Future<void> mkdir(String path) async => calls.add('mkdir $path');
+  @override
+  Future<void> rename(String from, String to) async => calls.add('rename $from $to');
+  @override
+  Future<void> delete(String path) async => calls.add('delete $path');
+  @override
+  Future<void> chmod(String path, int mode) async => calls.add('chmod $path');
+}
 
 /// A desktop-sized window, so the Sessions tab shows the workspace and the
 /// menu bar appears. Reset after the test.
@@ -1136,6 +1222,112 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.requests.length, 1);
     expect(find.byType(SessionBody), findsOneWidget);
+  });
+
+  testWidgets('the file browser lists a host, walks into folders, and makes, renames, chmods and deletes', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('session-files')));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls, ['open 7'], reason: "the engine's session id, not the app's");
+    expect(find.text('Files on web-1'), findsOneWidget);
+    expect(find.byKey(const Key('remote-entry-projects')), findsOneWidget);
+    expect(find.text('2.0 KB'), findsOneWidget, reason: 'sizes are shown');
+    expect(find.byKey(const Key('local-pane')), findsNothing, reason: 'one pane on a narrow window');
+
+    await tester.tap(find.byKey(const Key('remote-entry-projects')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('remote-entry-app.py')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('remote-up')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('remote-entry-notes.txt')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('remote-new-folder')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('files-name')), 'logs');
+    await tester.tap(find.byKey(const Key('files-name-ok')));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.last, 'mkdir /home/ops/logs');
+
+    await tester.tap(find.byKey(const Key('entry-menu-notes.txt')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rename'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('files-name')), 'todo.txt');
+    await tester.tap(find.byKey(const Key('files-name-ok')));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.last, 'rename /home/ops/notes.txt /home/ops/todo.txt');
+
+    await tester.tap(find.byKey(const Key('entry-menu-notes.txt')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Permissions'));
+    await tester.pumpAndSettle();
+    expect(find.text('rw-r--r--  644'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('perm-others-write')));
+    await tester.pumpAndSettle();
+    expect(find.text('rw-r--rw-  646'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('perm-apply')));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.last, 'chmod /home/ops/notes.txt 646');
+
+    await tester.tap(find.byKey(const Key('entry-menu-notes.txt')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('files-delete-ok')));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.last, 'delete /home/ops/notes.txt');
+
+    await tester.tap(find.byTooltip('Back to the session'));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.last, 'close 3', reason: 'leaving closes the browser');
+  });
+
+  testWidgets('on a desktop window the local files sit beside the remote ones and drag across to copy', (tester) async {
+    desktopWindow(tester);
+    final local = MemoryFs({
+      '/home/me': [const FsEntry(name: 'local.txt', path: '/home/me/local.txt', isDir: false, size: 10)],
+    });
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1')};
+    await tester.pumpWidget(appWith(engine, localDir: '/home/me', localFs: local));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('session-files')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('local-pane')), findsOneWidget);
+    expect(find.byKey(const Key('local-entry-local.txt')), findsOneWidget, reason: 'the local pane lists the disk');
+
+    // Remote file dragged onto the local side: a download into the local folder.
+    final from = tester.getCenter(find.byKey(const Key('remote-entry-notes.txt')));
+    final to = tester.getCenter(find.byKey(const Key('local-entry-local.txt')));
+    final gesture = await tester.startGesture(from);
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.moveTo(from + const Offset(-40, 0));
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.moveTo(to);
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /home/me/notes.txt');
+    expect(find.text('Transfers'), findsOneWidget);
+    expect(find.text('Done · 2.0 KB'), findsOneWidget);
+
+    // And the menu goes the other way.
+    await tester.tap(find.byKey(const Key('entry-menu-local.txt')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Upload to the server'));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.last, 'upload /home/me/local.txt /home/ops/local.txt');
   });
 
   testWidgets('an SSH session that connects after the screen opened shows its live size and title', (tester) async {

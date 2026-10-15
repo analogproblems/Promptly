@@ -24,6 +24,8 @@ pub enum SftpError {
     NoSubsystem(String),
     #[error("sftp: {0}")]
     Sftp(#[from] russh_sftp::client::error::Error),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// A prompter for unattended connections: the host key must already be

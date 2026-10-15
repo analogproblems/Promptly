@@ -154,6 +154,7 @@ class _AppMenuBarState extends ConsumerState<AppMenuBar> {
                   MenuItemButton(onPressed: hasSession ? actions.reconnect : null, child: const Text('Reconnect')),
                   MenuItemButton(onPressed: hasSession ? actions.forwards : null, child: const Text('Port forwards…')),
                   MenuItemButton(onPressed: hasSession ? actions.snippets : null, child: const Text('Snippets…')),
+                  MenuItemButton(onPressed: hasSession ? actions.files : null, child: const Text('Files…')),
                   const Divider(height: 1),
                   MenuItemButton(onPressed: hasSession ? actions.closeSession : null, child: const Text('Close session')),
                 ],
