@@ -1,0 +1,27 @@
+# Dependabot opens a pull request when something Promptly uses has a newer
+# version, and right away when a security fix comes out. CI then checks it.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /engine
+    schedule:
+      interval: weekly
+    groups:
+      engine:
+        update-types: [minor, patch]
+
+  - package-ecosystem: pub
+    directory: /app
+    schedule:
+      interval: weekly
+    groups:
+      app:
+        update-types: [minor, patch]
