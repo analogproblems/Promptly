@@ -30,6 +30,10 @@ engine-lint: ## Format check and clippy, as CI runs them
 engine-fmt: ## Format the Rust code
 	cd $(ENGINE) && $(CARGO) fmt --all
 
+engine-audit: ## Check Rust dependencies against the RustSec advisory database
+	@command -v cargo-audit >/dev/null || $(CARGO) install cargo-audit --locked
+	cd $(ENGINE) && $(CARGO) audit
+
 cli: ## Build and run the CLI, e.g. make cli ARGS="parse deploy@10.0.0.11"
 	cd $(ENGINE) && $(CARGO) run -q -p promptly-cli -- $(ARGS)
 
@@ -48,10 +52,10 @@ run: ## Run the app on Linux desktop in debug mode with hot reload
 build-linux: ## Release bundle at app/build/linux/x64/release/bundle
 	cd $(APP) && $(FLUTTER) build linux --release
 
-check: engine-lint engine-test analyze app-test ## Everything CI checks, locally
+check: engine-lint engine-test engine-audit analyze app-test ## Everything CI checks, locally
 
 clean: ## Remove build output
 	cd $(ENGINE) && $(CARGO) clean
 	cd $(APP) && $(FLUTTER) clean
 
-.PHONY: help setup gen engine-build engine-test engine-lint engine-fmt cli app-get analyze app-test run build-linux check clean
+.PHONY: help setup gen engine-build engine-test engine-lint engine-fmt engine-audit cli app-get analyze app-test run build-linux check clean

@@ -30,11 +30,13 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test
-      - name: Audit dependencies
-        uses: rustsec/audit-check@v2
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: engine
+          tool: cargo-audit
+      - name: Audit dependencies
+        # Runs in engine/, so engine/.cargo/audit.toml (documented ignores) applies.
+        run: cargo audit
 
   app-linux:
     name: Flutter app (Linux)

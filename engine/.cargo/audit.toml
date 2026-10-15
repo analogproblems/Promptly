@@ -1,0 +1,19 @@
+# cargo-audit configuration. `make engine-audit` and CI both run from engine/
+# so they share this file.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071, a timing side-channel in the `rsa` crate (the "Marvin
+    # attack"). It reaches us through russh, which needs `rsa` for RSA keys.
+    #
+    # Why it is ignored rather than fixed: no patched version exists; upstream
+    # has left it open on purpose (RustCrypto/RSA#626). The exposure is an
+    # attacker timing RSA private-key operations over the network, which is a
+    # risk for servers that sign on every connection. Promptly is a client that
+    # signs once at login. Dropping RSA would cut off servers whose only host
+    # key is RSA, which is common on older machines.
+    #
+    # Revisit when RustCrypto/RSA#626 closes: remove this entry and let the
+    # audit decide.
+    "RUSTSEC-2023-0071",
+]

@@ -96,6 +96,9 @@ The build glue installs them with `cargo-ndk` on first build.
 
 - Rust: `cargo fmt` and `cargo clippy --all-targets -- -D warnings` must pass.
   Errors are typed (`thiserror`) in library crates and `anyhow` only in the CLI.
+- `cargo audit` runs in `make check` and in CI. An advisory that cannot be
+  fixed is ignored in `engine/.cargo/audit.toml` with a comment saying why and
+  when to revisit; never ignore one silently.
 - Dart: `flutter analyze` must be clean. Riverpod for state, go_router for
   navigation. Colours come from `PromptlyTokens`; the terminal font is
   `PromptlyTokens.monoFamily`.

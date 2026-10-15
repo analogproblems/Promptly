@@ -62,6 +62,9 @@ fi
 flutter config --no-analytics --enable-linux-desktop >/dev/null
 flutter --version | head -1
 
+say "cargo-audit"
+command -v cargo-audit >/dev/null || cargo install cargo-audit --locked
+
 say "flutter_rust_bridge_codegen $FRB_VERSION"
 if ! flutter_rust_bridge_codegen --version 2>/dev/null | grep -q " $FRB_VERSION\$"; then
   cargo install flutter_rust_bridge_codegen --version "$FRB_VERSION" --locked
