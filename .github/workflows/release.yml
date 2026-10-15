@@ -135,9 +135,40 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
+  macos:
+    name: macOS disk image
+    # Runs on tags only: GitHub's Mac runners cost ten times a Linux minute
+    # while the repository is private.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # A release build is universal, so cargokit builds the engine for both.
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Build
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build macos --release
+      - name: Package
+        run: tools/package-macos.sh app/build/macos/Build/Products/Release/promptly.app "${GITHUB_REF_NAME#v}" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*
+          if-no-files-found: error
+
   release:
     name: Draft the release
-    needs: [linux, windows, android]
+    needs: [linux, windows, android, macos]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -160,7 +191,7 @@ jobs:
 
           ---
 
-          **Installing.** Linux: the `.deb` installs with your package manager, or unpack the tarball and run `./promptly`. Windows: unzip and run `promptly.exe`; the first run shows SmartScreen's "Windows protected your PC" because the build is not signed with a bought certificate, and *More info*, then *Run anyway*, gets past it. The zip carries the Microsoft C++ runtime it needs; if Windows still reports a missing `.dll`, install [the Visual C++ Redistributable (x64)](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) once. Android: open the `.apk` on the phone and allow installing from that app when asked. `SHA256SUMS` lets you check a download.
+          **Installing.** Linux: the `.deb` installs with your package manager, or unpack the tarball and run `./promptly`. Windows: unzip and run `promptly.exe`; the first run shows SmartScreen's "Windows protected your PC" because the build is not signed with a bought certificate, and *More info*, then *Run anyway*, gets past it. The zip carries the Microsoft C++ runtime it needs; if Windows still reports a missing `.dll`, install [the Visual C++ Redistributable (x64)](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) once. macOS: open the `.dmg` and drag Promptly to Applications; the first launch is blocked because the build is not signed with an Apple Developer ID, so open System Settings, then Privacy & Security, click *Open Anyway* next to the line about Promptly and confirm with your password (once). Android: open the `.apk` on the phone and allow installing from that app when asked. `SHA256SUMS` lets you check a download.
           TXT
           cat notes.md
       - uses: softprops/action-gh-release@v2
