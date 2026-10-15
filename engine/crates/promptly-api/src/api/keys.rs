@@ -23,6 +23,11 @@ pub struct KeyInfo {
     pub fingerprint: Option<String>,
     pub encrypted: bool,
     pub comment: String,
+    /// The key in OpenSSH form when it could be read in full; for a PuTTY
+    /// or PEM key this is what the app stores instead of the original.
+    pub private_openssh: Option<String>,
+    /// True when the text was not OpenSSH (PuTTY `.ppk`, PEM).
+    pub converted: bool,
 }
 
 /// Generate a key pair. The private half comes back as text for the app to
@@ -44,7 +49,8 @@ pub fn key_generate(kind: SshKeyKind, comment: String) -> Result<GeneratedKey, S
 }
 
 /// Read a pasted or imported private key: its type, public half and
-/// whether it needs a passphrase. Accepts OpenSSH, PEM and PuTTY text.
+/// whether it needs a passphrase. Accepts OpenSSH, PEM and PuTTY text, and
+/// hands back an OpenSSH conversion of the last two.
 #[frb(sync)]
 pub fn key_inspect(private_key: String, passphrase: Option<String>) -> Result<KeyInfo, String> {
     let i = promptly_ssh::inspect_key(&private_key, passphrase.as_deref())?;
@@ -54,6 +60,8 @@ pub fn key_inspect(private_key: String, passphrase: Option<String>) -> Result<Ke
         fingerprint: i.fingerprint,
         encrypted: i.encrypted,
         comment: i.comment,
+        private_openssh: i.private_openssh,
+        converted: i.converted,
     })
 }
 

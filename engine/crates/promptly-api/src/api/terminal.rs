@@ -202,10 +202,9 @@ impl From<SessionEvent> for TerminalEvent {
     }
 }
 
-/// The palette for a theme id; an unknown id falls back to Promptly Dark so
-/// a stale setting never leaves a session without colours.
+/// The palette for a theme id, built in or imported.
 pub(crate) fn palette_for(theme: &str) -> Palette {
-    Palette::builtin(theme).unwrap_or_else(Palette::promptly_dark)
+    crate::api::themes::palette_for(theme)
 }
 
 /// Put a session into the registry and return its id. Frames start when

@@ -8,6 +8,7 @@ import '../../core/theme/tokens.dart';
 import '../../core/version.dart';
 import '../shell/empty_state.dart';
 import 'settings_providers.dart';
+import '../hosts/csv_import.dart';
 import '../hosts/ssh_config_import.dart';
 import '../sessions/sessions_screen.dart' show supportsLocalShell;
 import '../sync/sync_providers.dart';
@@ -46,9 +47,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final sync = ref.watch(syncStatusProvider).value;
     final programClipboard = ref.watch(programClipboardProvider);
     final terminalTheme = themes.cast<ThemeInfo?>().firstWhere(
-          (th) => th!.id == terminalId,
-          orElse: () => themes.isEmpty ? null : themes.first,
-        );
+      (th) => th!.id == terminalId,
+      orElse: () => themes.isEmpty ? null : themes.first,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -64,24 +65,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   children: [
                     Padding(
                       padding: const EdgeInsets.all(12),
-                      child: Wrap(
-                        alignment: WrapAlignment.spaceBetween,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        runSpacing: 8,
-                        children: [
-                          Text('App look', style: TextStyle(color: t.text)),
-                          SegmentedButton<ThemeMode>(
-                            showSelectedIcon: false,
-                            segments: const [
-                              ButtonSegment(value: ThemeMode.system, label: Text('System')),
-                              ButtonSegment(value: ThemeMode.light, label: Text('Light')),
-                              ButtonSegment(value: ThemeMode.dark, label: Text('Dark')),
-                            ],
-                            selected: {themeMode},
-                            onSelectionChanged: (s) =>
-                                ref.read(themeModeProvider.notifier).set(s.first),
-                          ),
-                        ],
+                      // Full width, so the buttons sit at the far side on one
+                      // line and drop below the label with large text.
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          runSpacing: 8,
+                          children: [
+                            Text('App look', style: TextStyle(color: t.text)),
+                            SegmentedButton<ThemeMode>(
+                              showSelectedIcon: false,
+                              segments: const [
+                                ButtonSegment(value: ThemeMode.system, label: Text('System')),
+                                ButtonSegment(value: ThemeMode.light, label: Text('Light')),
+                                ButtonSegment(value: ThemeMode.dark, label: Text('Dark')),
+                              ],
+                              selected: {themeMode},
+                              onSelectionChanged: (s) => ref.read(themeModeProvider.notifier).set(s.first),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     Divider(height: 1, color: t.border),
@@ -127,6 +132,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       value: ref.watch(reachabilityProvider),
                       onChanged: (v) => ref.read(reachabilityProvider.notifier).set(v),
                     ),
+                    ListTile(
+                      key: const Key('import-csv'),
+                      leading: Icon(Icons.table_chart_outlined, color: t.muted),
+                      title: const Text('Import from a CSV file'),
+                      subtitle: const Text('The file Termius exports, or any with a Hostname column.'),
+                      trailing: TextButton(onPressed: () => showCsvImport(context, ref), child: const Text('Import')),
+                    ),
                     if (supportsLocalShell)
                       ListTile(
                         key: const Key('import-ssh-config'),
@@ -150,8 +162,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     sync == null || !sync.configured
                         ? Icons.cloud_off_outlined
                         : sync.lastError != null
-                            ? Icons.cloud_off_outlined
-                            : Icons.cloud_done_outlined,
+                        ? Icons.cloud_off_outlined
+                        : Icons.cloud_done_outlined,
                     color: sync != null && sync.configured && sync.lastError == null ? t.accent : t.muted,
                   ),
                   title: Text(syncSummary(sync)),
@@ -275,12 +287,7 @@ class _Section extends StatelessWidget {
           padding: const EdgeInsets.only(left: 4, bottom: 6),
           child: Text(
             title.toUpperCase(),
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.8,
-              color: t.muted,
-            ),
+            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted),
           ),
         ),
         Card(child: child),

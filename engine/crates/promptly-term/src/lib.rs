@@ -9,6 +9,7 @@
 pub mod emulator;
 pub mod frame;
 pub mod palette;
+pub mod theme_import;
 pub mod themes;
 
 pub use emulator::{Emulator, EmulatorEvent, SearchHit, SelectKind};

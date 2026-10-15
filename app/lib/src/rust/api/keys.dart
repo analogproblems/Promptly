@@ -13,7 +13,8 @@ GeneratedKey keyGenerate({required SshKeyKind kind, required String comment}) =>
     RustLib.instance.api.crateApiKeysKeyGenerate(kind: kind, comment: comment);
 
 /// Read a pasted or imported private key: its type, public half and
-/// whether it needs a passphrase. Accepts OpenSSH, PEM and PuTTY text.
+/// whether it needs a passphrase. Accepts OpenSSH, PEM and PuTTY text, and
+/// hands back an OpenSSH conversion of the last two.
 KeyInfo keyInspect({required String privateKey, String? passphrase}) => RustLib
     .instance
     .api
@@ -62,12 +63,21 @@ class KeyInfo {
   final bool encrypted;
   final String comment;
 
+  /// The key in OpenSSH form when it could be read in full; for a PuTTY
+  /// or PEM key this is what the app stores instead of the original.
+  final String? privateOpenssh;
+
+  /// True when the text was not OpenSSH (PuTTY `.ppk`, PEM).
+  final bool converted;
+
   const KeyInfo({
     required this.kind,
     this.publicOpenssh,
     this.fingerprint,
     required this.encrypted,
     required this.comment,
+    this.privateOpenssh,
+    required this.converted,
   });
 
   @override
@@ -76,7 +86,9 @@ class KeyInfo {
       publicOpenssh.hashCode ^
       fingerprint.hashCode ^
       encrypted.hashCode ^
-      comment.hashCode;
+      comment.hashCode ^
+      privateOpenssh.hashCode ^
+      converted.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -87,7 +99,9 @@ class KeyInfo {
           publicOpenssh == other.publicOpenssh &&
           fingerprint == other.fingerprint &&
           encrypted == other.encrypted &&
-          comment == other.comment;
+          comment == other.comment &&
+          privateOpenssh == other.privateOpenssh &&
+          converted == other.converted;
 }
 
 enum SshKeyKind { ed25519, ecdsaP256, rsa4096 }

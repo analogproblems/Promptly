@@ -40,6 +40,12 @@ pub struct Inspected {
     pub fingerprint: Option<String>,
     pub encrypted: bool,
     pub comment: String,
+    /// The same key in OpenSSH form, when it could be read in full. For a
+    /// PuTTY or PEM key this is what to keep instead of the original text.
+    pub private_openssh: Option<String>,
+    /// True when the text was not OpenSSH to begin with (PuTTY `.ppk`,
+    /// PEM), so `private_openssh` is a conversion worth storing.
+    pub converted: bool,
 }
 
 pub fn generate(kind: KeyKind, comment: &str) -> Result<Generated, String> {
@@ -86,24 +92,89 @@ pub fn inspect(private_key: &str, passphrase: Option<&str>) -> Result<Inspected,
                 let key = key
                     .decrypt(pw.as_bytes())
                     .map_err(|_| "wrong passphrase".to_string())?;
-                return Ok(describe(&key, false));
+                return Ok(describe(&key, false, false));
             }
-            return Ok(describe(&key, true));
+            return Ok(describe(&key, true, false));
         }
-        return Ok(describe(&key, false));
+        return Ok(describe(&key, false, false));
+    }
+    // A locked PuTTY key still shows its public half and comment in clear.
+    if is_ppk(private_key) && passphrase.is_none() {
+        if let Some(ppk) = ppk_header(private_key) {
+            if ppk.encrypted {
+                let public = ppk.public.as_ref();
+                return Ok(Inspected {
+                    kind: public
+                        .map(|p| kind_name(&p.algorithm()))
+                        .unwrap_or_default(),
+                    public_openssh: public.and_then(|p| p.to_openssh().ok()),
+                    fingerprint: public.map(|p| p.fingerprint(HashAlg::Sha256).to_string()),
+                    encrypted: true,
+                    comment: ppk.comment,
+                    private_openssh: None,
+                    converted: true,
+                });
+            }
+        }
     }
     // PEM and PuTTY forms.
     match keys::decode_secret_key(private_key, passphrase) {
-        Ok(key) => Ok(describe(&key, false)),
+        Ok(key) => Ok(describe(&key, false, true)),
         Err(keys::Error::KeyIsEncrypted) => Ok(Inspected {
             kind: String::new(),
             public_openssh: None,
             fingerprint: None,
             encrypted: true,
             comment: String::new(),
+            private_openssh: None,
+            converted: true,
         }),
+        Err(e) if passphrase.is_some() && is_ppk(private_key) => Err(format!(
+            "could not unlock the PuTTY key, wrong passphrase? ({e})"
+        )),
         Err(e) => Err(format!("not a private key: {e}")),
     }
+}
+
+fn is_ppk(text: &str) -> bool {
+    text.trim_start().starts_with("PuTTY-User-Key-File-")
+}
+
+/// What a PuTTY key file says about itself before any decryption.
+struct PpkHeader {
+    encrypted: bool,
+    comment: String,
+    public: Option<keys::PublicKey>,
+}
+
+fn ppk_header(text: &str) -> Option<PpkHeader> {
+    let mut lines = text.lines().map(str::trim_end);
+    let first = lines.next()?;
+    if !first.starts_with("PuTTY-User-Key-File-") {
+        return None;
+    }
+    let mut encrypted = false;
+    let mut comment = String::new();
+    let mut public = None;
+    while let Some(line) = lines.next() {
+        if let Some(v) = line.strip_prefix("Encryption:") {
+            encrypted = v.trim() != "none";
+        } else if let Some(v) = line.strip_prefix("Comment:") {
+            comment = v.trim().to_string();
+        } else if let Some(v) = line.strip_prefix("Public-Lines:") {
+            let n: usize = v.trim().parse().ok()?;
+            let b64: String = lines.by_ref().take(n).map(str::trim).collect();
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD.decode(b64).ok()?;
+            public = keys::PublicKey::from_bytes(&bytes).ok();
+            break;
+        }
+    }
+    Some(PpkHeader {
+        encrypted,
+        comment,
+        public,
+    })
 }
 
 /// The SHA256 fingerprint of a public key in OpenSSH one-line form.
@@ -113,19 +184,87 @@ pub fn public_fingerprint(public_openssh: &str) -> Result<String, String> {
     Ok(key.fingerprint(HashAlg::Sha256).to_string())
 }
 
-fn describe(key: &PrivateKey, encrypted: bool) -> Inspected {
+fn describe(key: &PrivateKey, encrypted: bool, converted: bool) -> Inspected {
     Inspected {
         kind: kind_name(&key.algorithm()),
         public_openssh: key.public_key().to_openssh().ok(),
         fingerprint: Some(key.fingerprint(HashAlg::Sha256).to_string()),
         encrypted,
         comment: key.comment().to_string(),
+        private_openssh: if encrypted {
+            None
+        } else {
+            key.to_openssh(LineEnding::LF).ok().map(|s| s.to_string())
+        },
+        converted,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn public_of(fixture: &str) -> String {
+        let text = std::fs::read_to_string(format!("testdata/{fixture}.pub")).unwrap();
+        // puttygen writes "ssh-ed25519 AAAA... comment"; compare type and key only.
+        let mut parts = text.split_whitespace();
+        format!("{} {}", parts.next().unwrap(), parts.next().unwrap())
+    }
+
+    fn key_only(public_openssh: &str) -> String {
+        let mut parts = public_openssh.split_whitespace();
+        format!("{} {}", parts.next().unwrap(), parts.next().unwrap())
+    }
+
+    #[test]
+    fn putty_keys_convert_to_openssh() {
+        // A PPK version 3 key without a passphrase.
+        let plain = std::fs::read_to_string("testdata/ed25519-plain.ppk").unwrap();
+        let i = inspect(&plain, None).unwrap();
+        assert_eq!(i.kind, "ed25519");
+        assert!(!i.encrypted);
+        assert!(i.converted);
+        assert_eq!(
+            key_only(i.public_openssh.as_deref().unwrap()),
+            public_of("ed25519-plain")
+        );
+        let openssh = i.private_openssh.as_deref().unwrap();
+        assert!(openssh.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"));
+        // The conversion is the same key.
+        let again = inspect(openssh, None).unwrap();
+        assert_eq!(again.public_openssh, i.public_openssh);
+        assert!(!again.converted);
+
+        // A PPK version 2 key behind a passphrase: locked until given.
+        let locked = std::fs::read_to_string("testdata/ed25519-locked-v2.ppk").unwrap();
+        let i = inspect(&locked, None).unwrap();
+        assert!(i.encrypted);
+        assert!(i.private_openssh.is_none());
+        assert_eq!(i.comment, "promptly test locked");
+        assert_eq!(
+            key_only(i.public_openssh.as_deref().unwrap()),
+            public_of("ed25519-locked-v2"),
+            "the public half is readable without the passphrase"
+        );
+        assert!(inspect(&locked, Some("nope"))
+            .unwrap_err()
+            .contains("passphrase"));
+        let i = inspect(&locked, Some("letmein")).unwrap();
+        assert_eq!(
+            key_only(i.public_openssh.as_deref().unwrap()),
+            public_of("ed25519-locked-v2")
+        );
+        assert!(i.private_openssh.is_some());
+
+        // A PPK version 3 RSA key (Argon2 key derivation).
+        let rsa = std::fs::read_to_string("testdata/rsa-locked-v3.ppk").unwrap();
+        let i = inspect(&rsa, Some("letmein")).unwrap();
+        assert_eq!(i.kind, "rsa");
+        assert_eq!(
+            key_only(i.public_openssh.as_deref().unwrap()),
+            public_of("rsa-locked-v3")
+        );
+    }
 
     #[test]
     fn generates_each_kind_and_inspects_it_back() {

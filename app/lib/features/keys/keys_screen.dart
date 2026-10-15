@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
+import '../../core/file_picker.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/models.dart';
@@ -36,9 +37,11 @@ class KeysScreen extends ConsumerWidget {
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('Delete ${identity.label}?'),
-        content: Text(users.isEmpty
-            ? 'The private key is removed from this device. This cannot be undone.'
-            : '${users.length} host${users.length == 1 ? ' uses' : 's use'} this key and will need another way to log in. The private key is removed from this device. This cannot be undone.'),
+        content: Text(
+          users.isEmpty
+              ? 'The private key is removed from this device. This cannot be undone.'
+              : '${users.length} host${users.length == 1 ? ' uses' : 's use'} this key and will need another way to log in. The private key is removed from this device. This cannot be undone.',
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           FilledButton(
@@ -86,8 +89,7 @@ class KeysScreen extends ConsumerWidget {
               ? EmptyState(
                   icon: Icons.key_outlined,
                   title: 'No keys yet',
-                  message:
-                      'Generate an ed25519 key in one tap, or import one you already have. Private keys stay on this device, readable only by you.',
+                  message: 'Generate an ed25519 key in one tap, or import one you already have. Private keys stay on this device, readable only by you.',
                   action: OutlinedButton.icon(
                     onPressed: () => _generate(context, ref),
                     icon: const Icon(Icons.add),
@@ -184,7 +186,10 @@ class _GenerateDialogState extends State<_GenerateDialog> {
               decoration: const InputDecoration(labelText: 'Name', hintText: 'laptop, work, homelab…'),
             ),
             const SizedBox(height: 14),
-            Text('Type', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.muted)),
+            Text(
+              'Type',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.muted),
+            ),
             RadioGroup<SshKeyKind>(
               groupValue: _kind,
               onChanged: (v) => setState(() => _kind = v ?? SshKeyKind.ed25519),
@@ -243,6 +248,16 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
     super.dispose();
   }
 
+  Future<void> _pickFile() async {
+    final picked = await ref.read(filePickerProvider)(label: 'Private keys', extensions: const ['ppk', 'pem', 'key']);
+    if (picked == null || !mounted) return;
+    setState(() {
+      _key.text = picked.text;
+      if (_label.text.trim().isEmpty) _label.text = picked.name.replaceAll(RegExp(r'\.(ppk|pem|key)$'), '');
+      _error = null;
+    });
+  }
+
   void _submit() {
     final label = _label.text.trim();
     if (label.isEmpty || _key.text.trim().isEmpty) {
@@ -250,11 +265,9 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
       return;
     }
     try {
-      ref.read(identitiesProvider.notifier).import(
-            label: label,
-            privateKey: _key.text,
-            passphrase: _passphrase.text.isEmpty ? null : _passphrase.text,
-          );
+      ref
+          .read(identitiesProvider.notifier)
+          .import(label: label, privateKey: _key.text, passphrase: _passphrase.text.isEmpty ? null : _passphrase.text);
       Navigator.pop(context);
     } catch (e) {
       setState(() => _error = e is String ? e : e.toString());
@@ -279,6 +292,7 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
             ),
             const SizedBox(height: 10),
             TextField(
+              key: const Key('key-text'),
               controller: _key,
               maxLines: 6,
               style: monoStyle(context, size: 12),
@@ -286,6 +300,15 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
                 labelText: 'Private key',
                 hintText: '-----BEGIN OPENSSH PRIVATE KEY-----\nOpenSSH, PEM or PuTTY text',
                 alignLabelWithHint: true,
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: const Key('key-pick-file'),
+                onPressed: _pickFile,
+                icon: const Icon(Icons.folder_open_outlined, size: 18),
+                label: const Text('Choose a file (.ppk, .pem, id_ed25519…)'),
               ),
             ),
             const SizedBox(height: 10),

@@ -1950,6 +1950,7 @@ dependencies = [
 name = "promptly-ssh"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "promptly-session",
  "promptly-term",
  "promptly-vault",
@@ -1982,6 +1983,7 @@ dependencies = [
  "alacritty_terminal",
  "regex",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
 ]
 

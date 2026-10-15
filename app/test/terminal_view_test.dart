@@ -74,6 +74,17 @@ class RecordingEngine implements Engine {
   void setDataDir(String path) {}
   @override
   List<ThemeInfo> themesList() => const [];
+
+  @override
+  List<CsvHost> csvHostsPreview(String text) => const [];
+  @override
+  ImportReport csvHostsImport(String text, List<int> rows) => const ImportReport(hosts: 0, keys: 0, skipped: []);
+  @override
+  List<ThemeInfo> themeImportPreview(String text, String filename) => const [];
+  @override
+  ThemeInfo themeSave(ThemeInfo theme) => theme;
+  @override
+  void themeDelete(String id) {}
   @override
   int sshConnectBegin(SshConnectRequest request) => 1;
   @override

@@ -7,12 +7,32 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `custom`, `hex`, `luminance`, `palette_for`, `palette_of`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`
 
 List<ThemeInfo> themesList() => RustLib.instance.api.crateApiThemesThemesList();
 
+/// Read a theme file (iTerm2, Windows Terminal, Alacritty, base16) without
+/// saving anything: one entry per scheme in the file, ids empty.
+List<ThemeInfo> themeImportPreview({
+  required String text,
+  required String filename,
+}) => RustLib.instance.api.crateApiThemesThemeImportPreview(
+  text: text,
+  filename: filename,
+);
+
+/// Save a previewed theme as a record. Returns it with its new id.
+ThemeInfo themeSave({required ThemeInfo theme}) =>
+    RustLib.instance.api.crateApiThemesThemeSave(theme: theme);
+
+/// Remove an imported theme. Built-in ids are refused.
+void themeDelete({required String id}) =>
+    RustLib.instance.api.crateApiThemesThemeDelete(id: id);
+
 class ThemeInfo {
-  /// Stable id, the value stored in settings. See `promptly_term::themes`.
+  /// Stable id, the value stored in settings: a slug for a built-in
+  /// theme, a record id for an imported one, empty for a preview.
   final String id;
   final String name;
   final bool dark;
@@ -23,6 +43,7 @@ class ThemeInfo {
 
   /// The 16 ANSI colours, 0-7 normal and 8-15 bright.
   final Uint32List ansi;
+  final bool builtin;
 
   const ThemeInfo({
     required this.id,
@@ -33,6 +54,7 @@ class ThemeInfo {
     required this.cursor,
     required this.selection,
     required this.ansi,
+    required this.builtin,
   });
 
   @override
@@ -44,7 +66,8 @@ class ThemeInfo {
       background.hashCode ^
       cursor.hashCode ^
       selection.hashCode ^
-      ansi.hashCode;
+      ansi.hashCode ^
+      builtin.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -58,5 +81,6 @@ class ThemeInfo {
           background == other.background &&
           cursor == other.cursor &&
           selection == other.selection &&
-          ansi == other.ansi;
+          ansi == other.ansi &&
+          builtin == other.builtin;
 }

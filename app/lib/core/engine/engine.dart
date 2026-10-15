@@ -13,7 +13,7 @@ import '../../src/rust/api/themes.dart' as rust_themes;
 
 export '../../src/rust/api/files.dart' show FileEntry, FileTransfer;
 export '../../src/rust/api/hosts.dart' show ReachTarget, Reachability;
-export '../../src/rust/api/import.dart' show ImportReport, SshConfigHost;
+export '../../src/rust/api/import.dart' show CsvHost, ImportReport, SshConfigHost;
 export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
 export '../../src/rust/api/store.dart' show StoreRecord;
 export '../../src/rust/api/sync.dart' show SyncBackendKind, SyncDevice, SyncSetupResult, SyncStatus;
@@ -156,6 +156,15 @@ abstract class Engine {
   List<rust_import.SshConfigHost> sshConfigHosts();
   rust_import.ImportReport sshConfigImport(List<String> aliases);
 
+  /// The hosts a CSV file (Termius export, or any with a Hostname column) describes.
+  List<rust_import.CsvHost> csvHostsPreview(String text);
+  rust_import.ImportReport csvHostsImport(String text, List<int> rows);
+
+  /// Read a theme file (iTerm2, Windows Terminal, Alacritty, base16) without saving.
+  List<rust_themes.ThemeInfo> themeImportPreview(String text, String filename);
+  rust_themes.ThemeInfo themeSave(rust_themes.ThemeInfo theme);
+  void themeDelete(String id);
+
   /// The vault: where it is, how it is doing, and setting it up.
   rust_sync.SyncStatus syncStatus();
   Stream<rust_sync.SyncStatus> syncEvents();
@@ -165,9 +174,18 @@ abstract class Engine {
   Future<void> syncJoinLocalFolder(String path, {String? passphrase, String? recoveryCode, required String deviceName});
   Future<bool> syncSftpFolderHasVault(String hostId, String remoteDir);
   Future<rust_sync.SyncSetupResult> syncCreateSftp(
-      String hostId, String remoteDir, String passphrase, String deviceName);
-  Future<void> syncJoinSftp(String hostId, String remoteDir,
-      {String? passphrase, String? recoveryCode, required String deviceName});
+    String hostId,
+    String remoteDir,
+    String passphrase,
+    String deviceName,
+  );
+  Future<void> syncJoinSftp(
+    String hostId,
+    String remoteDir, {
+    String? passphrase,
+    String? recoveryCode,
+    required String deviceName,
+  });
   Future<rust_sync.SyncStatus> syncNow();
   void syncDisconnect();
   Future<void> syncRemoveDevice(String deviceRecordId);
@@ -227,8 +245,7 @@ class RustEngine implements Engine {
   void terminalPaste(int id, String text) => rust_term.terminalPaste(id: id, text: text);
 
   @override
-  void terminalResize(int id, int cols, int rows) =>
-      rust_term.terminalResize(id: id, cols: cols, rows: rows);
+  void terminalResize(int id, int cols, int rows) => rust_term.terminalResize(id: id, cols: cols, rows: rows);
 
   @override
   void terminalScroll(int id, int delta) => rust_term.terminalScroll(id: id, delta: delta);
@@ -282,16 +299,13 @@ class RustEngine implements Engine {
   int sshConnectBegin(rust_ssh.SshConnectRequest request) => rust_ssh.sshConnectBegin(request: request);
 
   @override
-  Stream<rust_ssh.SshEvent> sshConnectEvents(int attemptId) =>
-      rust_ssh.sshConnectEvents(attemptId: attemptId);
+  Stream<rust_ssh.SshEvent> sshConnectEvents(int attemptId) => rust_ssh.sshConnectEvents(attemptId: attemptId);
 
   @override
-  void sshAnswerHostKey(int attemptId, bool trust) =>
-      rust_ssh.sshAnswerHostKey(attemptId: attemptId, trust: trust);
+  void sshAnswerHostKey(int attemptId, bool trust) => rust_ssh.sshAnswerHostKey(attemptId: attemptId, trust: trust);
 
   @override
-  void sshAnswerSecret(int attemptId, String? secret) =>
-      rust_ssh.sshAnswerSecret(attemptId: attemptId, secret: secret);
+  void sshAnswerSecret(int attemptId, String? secret) => rust_ssh.sshAnswerSecret(attemptId: attemptId, secret: secret);
 
   @override
   void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers) =>
@@ -332,7 +346,8 @@ class RustEngine implements Engine {
   @override
   Future<void> filesChmod(int id, String path, int mode) => rust_files.filesChmod(id: id, path: path, mode: mode);
   @override
-  int filesDownload(int id, String remote, String local) => rust_files.filesDownload(id: id, remote: remote, local: local);
+  int filesDownload(int id, String remote, String local) =>
+      rust_files.filesDownload(id: id, remote: remote, local: local);
   @override
   int filesUpload(int id, String local, String remote) => rust_files.filesUpload(id: id, local: local, remote: remote);
   @override
@@ -341,8 +356,7 @@ class RustEngine implements Engine {
   void filesClearTransfers(int id) => rust_files.filesClearTransfers(id: id);
 
   @override
-  List<rust_store.StoreRecord> recordsList(String collection) =>
-      rust_store.recordsList(collectionName: collection);
+  List<rust_store.StoreRecord> recordsList(String collection) => rust_store.recordsList(collectionName: collection);
 
   @override
   rust_store.StoreRecord? recordGet(String collection, String id) =>
@@ -353,8 +367,7 @@ class RustEngine implements Engine {
       rust_store.recordPut(collectionName: collection, id: id, json: json);
 
   @override
-  bool recordDelete(String collection, String id) =>
-      rust_store.recordDelete(collectionName: collection, id: id);
+  bool recordDelete(String collection, String id) => rust_store.recordDelete(collectionName: collection, id: id);
 
   @override
   String? settingGet(String key) => rust_store.settingGet(key: key);
@@ -363,8 +376,7 @@ class RustEngine implements Engine {
   void settingSet(String key, String json) => rust_store.settingSet(key: key, json: json);
 
   @override
-  void secretPut(String id, String kind, String value) =>
-      rust_store.secretPut(id: id, kind: kind, value: value);
+  void secretPut(String id, String kind, String value) => rust_store.secretPut(id: id, kind: kind, value: value);
 
   @override
   String? secretGet(String id) => rust_store.secretGet(id: id);
@@ -387,8 +399,24 @@ class RustEngine implements Engine {
   List<rust_import.SshConfigHost> sshConfigHosts() => rust_import.sshConfigHosts();
 
   @override
-  rust_import.ImportReport sshConfigImport(List<String> aliases) =>
-      rust_import.sshConfigImport(aliases: aliases);
+  rust_import.ImportReport sshConfigImport(List<String> aliases) => rust_import.sshConfigImport(aliases: aliases);
+
+  @override
+  List<rust_import.CsvHost> csvHostsPreview(String text) => rust_import.csvHostsPreview(text: text);
+
+  @override
+  rust_import.ImportReport csvHostsImport(String text, List<int> rows) =>
+      rust_import.csvHostsImport(text: text, rows: rows);
+
+  @override
+  List<rust_themes.ThemeInfo> themeImportPreview(String text, String filename) =>
+      rust_themes.themeImportPreview(text: text, filename: filename);
+
+  @override
+  rust_themes.ThemeInfo themeSave(rust_themes.ThemeInfo theme) => rust_themes.themeSave(theme: theme);
+
+  @override
+  void themeDelete(String id) => rust_themes.themeDelete(id: id);
 
   @override
   rust_sync.SyncStatus syncStatus() => rust_sync.syncStatus();
@@ -407,10 +435,17 @@ class RustEngine implements Engine {
       rust_sync.syncCreateLocalFolder(path: path, passphrase: passphrase, deviceName: deviceName);
 
   @override
-  Future<void> syncJoinLocalFolder(String path,
-          {String? passphrase, String? recoveryCode, required String deviceName}) =>
-      rust_sync.syncJoinLocalFolder(
-          path: path, passphrase: passphrase, recoveryCode: recoveryCode, deviceName: deviceName);
+  Future<void> syncJoinLocalFolder(
+    String path, {
+    String? passphrase,
+    String? recoveryCode,
+    required String deviceName,
+  }) => rust_sync.syncJoinLocalFolder(
+    path: path,
+    passphrase: passphrase,
+    recoveryCode: recoveryCode,
+    deviceName: deviceName,
+  );
 
   @override
   Future<bool> syncSftpFolderHasVault(String hostId, String remoteDir) =>
@@ -418,19 +453,26 @@ class RustEngine implements Engine {
 
   @override
   Future<rust_sync.SyncSetupResult> syncCreateSftp(
-          String hostId, String remoteDir, String passphrase, String deviceName) =>
-      rust_sync.syncCreateSftp(
-          hostId: hostId, remoteDir: remoteDir, passphrase: passphrase, deviceName: deviceName);
+    String hostId,
+    String remoteDir,
+    String passphrase,
+    String deviceName,
+  ) => rust_sync.syncCreateSftp(hostId: hostId, remoteDir: remoteDir, passphrase: passphrase, deviceName: deviceName);
 
   @override
-  Future<void> syncJoinSftp(String hostId, String remoteDir,
-          {String? passphrase, String? recoveryCode, required String deviceName}) =>
-      rust_sync.syncJoinSftp(
-          hostId: hostId,
-          remoteDir: remoteDir,
-          passphrase: passphrase,
-          recoveryCode: recoveryCode,
-          deviceName: deviceName);
+  Future<void> syncJoinSftp(
+    String hostId,
+    String remoteDir, {
+    String? passphrase,
+    String? recoveryCode,
+    required String deviceName,
+  }) => rust_sync.syncJoinSftp(
+    hostId: hostId,
+    remoteDir: remoteDir,
+    passphrase: passphrase,
+    recoveryCode: recoveryCode,
+    deviceName: deviceName,
+  );
 
   @override
   Future<rust_sync.SyncStatus> syncNow() => rust_sync.syncNow();
@@ -439,8 +481,7 @@ class RustEngine implements Engine {
   void syncDisconnect() => rust_sync.syncDisconnect();
 
   @override
-  Future<void> syncRemoveDevice(String deviceRecordId) =>
-      rust_sync.syncRemoveDevice(deviceRecordId: deviceRecordId);
+  Future<void> syncRemoveDevice(String deviceRecordId) => rust_sync.syncRemoveDevice(deviceRecordId: deviceRecordId);
 
   @override
   String? syncQrPayload() => rust_sync.syncQrPayload();

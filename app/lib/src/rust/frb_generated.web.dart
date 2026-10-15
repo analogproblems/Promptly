@@ -77,7 +77,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TerminalSearchHit dco_decode_box_autoadd_terminal_search_hit(dynamic raw);
 
   @protected
+  ThemeInfo dco_decode_box_autoadd_theme_info(dynamic raw);
+
+  @protected
   int dco_decode_box_autoadd_u_32(dynamic raw);
+
+  @protected
+  CsvHost dco_decode_csv_host(dynamic raw);
 
   @protected
   FileEntry dco_decode_file_entry(dynamic raw);
@@ -101,6 +107,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<CsvHost> dco_decode_list_csv_host(dynamic raw);
+
+  @protected
   List<FileEntry> dco_decode_list_file_entry(dynamic raw);
 
   @protected
@@ -108,6 +117,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint16List dco_decode_list_prim_u_16_strict(dynamic raw);
+
+  @protected
+  List<int> dco_decode_list_prim_u_32_loose(dynamic raw);
 
   @protected
   Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
@@ -366,7 +378,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ThemeInfo sse_decode_box_autoadd_theme_info(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
+
+  @protected
+  CsvHost sse_decode_csv_host(SseDeserializer deserializer);
 
   @protected
   FileEntry sse_decode_file_entry(SseDeserializer deserializer);
@@ -390,6 +408,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
+  List<CsvHost> sse_decode_list_csv_host(SseDeserializer deserializer);
+
+  @protected
   List<FileEntry> sse_decode_list_file_entry(SseDeserializer deserializer);
 
   @protected
@@ -399,6 +420,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Uint16List sse_decode_list_prim_u_16_strict(SseDeserializer deserializer);
+
+  @protected
+  List<int> sse_decode_list_prim_u_32_loose(SseDeserializer deserializer);
 
   @protected
   Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
@@ -697,7 +721,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_box_autoadd_theme_info(
+    ThemeInfo self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_csv_host(CsvHost self, SseSerializer serializer);
 
   @protected
   void sse_encode_file_entry(FileEntry self, SseSerializer serializer);
@@ -721,6 +754,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_csv_host(List<CsvHost> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_file_entry(
     List<FileEntry> self,
     SseSerializer serializer,
@@ -735,6 +771,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_prim_u_16_strict(
     Uint16List self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_prim_u_32_loose(
+    List<int> self,
     SseSerializer serializer,
   );
 

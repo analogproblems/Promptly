@@ -7,7 +7,9 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `existing_labels`
+// These functions are ignored because they are not marked as `pub`: `csv_columns`, `csv_parse`, `csv_rows`, `existing_labels`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `CsvColumns`, `CsvParsed`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`, `fmt`
 
 /// The hosts in `~/.ssh/config`, or none when there is no config.
 List<SshConfigHost> sshConfigHosts() =>
@@ -19,6 +21,68 @@ List<SshConfigHost> sshConfigHosts() =>
 /// when both ends are saved.
 ImportReport sshConfigImport({required List<String> aliases}) =>
     RustLib.instance.api.crateApiImportSshConfigImport(aliases: aliases);
+
+/// The hosts a CSV file describes, without saving anything.
+List<CsvHost> csvHostsPreview({required String text}) =>
+    RustLib.instance.api.crateApiImportCsvHostsPreview(text: text);
+
+/// Import the rows at these indexes of the preview. A password becomes a
+/// saved secret; a group path such as "Work/Databases" is created level by
+/// level when missing.
+ImportReport csvHostsImport({required String text, required List<int> rows}) =>
+    RustLib.instance.api.crateApiImportCsvHostsImport(text: text, rows: rows);
+
+/// One row of a CSV file, as the import dialog shows it.
+class CsvHost {
+  final String label;
+  final String hostname;
+  final int port;
+  final String username;
+  final bool hasPassword;
+
+  /// "Work/Databases" style group path, when the file names one.
+  final String? group;
+  final List<String> tags;
+
+  /// A saved host with this label exists already.
+  final bool alreadyImported;
+
+  const CsvHost({
+    required this.label,
+    required this.hostname,
+    required this.port,
+    required this.username,
+    required this.hasPassword,
+    this.group,
+    required this.tags,
+    required this.alreadyImported,
+  });
+
+  @override
+  int get hashCode =>
+      label.hashCode ^
+      hostname.hashCode ^
+      port.hashCode ^
+      username.hashCode ^
+      hasPassword.hashCode ^
+      group.hashCode ^
+      tags.hashCode ^
+      alreadyImported.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CsvHost &&
+          runtimeType == other.runtimeType &&
+          label == other.label &&
+          hostname == other.hostname &&
+          port == other.port &&
+          username == other.username &&
+          hasPassword == other.hasPassword &&
+          group == other.group &&
+          tags == other.tags &&
+          alreadyImported == other.alreadyImported;
+}
 
 class ImportReport {
   final int hosts;

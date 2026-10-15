@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/app.dart';
 import 'package:promptly/core/theme/theme.dart';
 import 'package:promptly/core/engine/engine.dart';
+import 'package:promptly/core/file_picker.dart';
 import 'package:promptly/features/files/files_screen.dart';
 import 'package:promptly/features/files/fs.dart';
 import 'package:promptly/features/sessions/session_body.dart';
@@ -194,6 +195,7 @@ class FakeEngine implements Engine {
         cursor: fg,
         selection: 0x444444,
         ansi: Uint32List.fromList(List.generate(16, (i) => 0x0F0F0F * (i + 1))),
+        builtin: true,
       );
 
   @override
@@ -201,6 +203,7 @@ class FakeEngine implements Engine {
         _theme('promptly-dark', 'Promptly Dark', true, 0x0E1116, 0xE6EDF3),
         _theme('promptly-light', 'Promptly Light', false, 0xFAFAF7, 0x1F2328),
         _theme('dracula', 'Dracula', true, 0x282A36, 0xF8F8F2),
+        ...customThemes,
       ];
 
   /// When set, SSH attempts succeed with this engine session id, and that
@@ -361,13 +364,19 @@ class FakeEngine implements Engine {
   }
 
   @override
-  KeyInfo keyInspect(String privateKey, String? passphrase) => const KeyInfo(
-        kind: 'ed25519',
-        publicOpenssh: 'ssh-ed25519 AAAAimported',
-        fingerprint: 'SHA256:imported',
-        encrypted: false,
-        comment: '',
-      );
+  KeyInfo keyInspect(String privateKey, String? passphrase) {
+    // A PuTTY key comes back converted, as the engine does it.
+    final putty = privateKey.trimLeft().startsWith('PuTTY-User-Key-File-');
+    return KeyInfo(
+      kind: 'ed25519',
+      publicOpenssh: 'ssh-ed25519 AAAAimported',
+      fingerprint: 'SHA256:imported',
+      encrypted: false,
+      comment: '',
+      privateOpenssh: putty ? '-----BEGIN OPENSSH PRIVATE KEY-----\nconverted\n-----END OPENSSH PRIVATE KEY-----\n' : null,
+      converted: putty,
+    );
+  }
   @override
   String keyFingerprint(String publicKey) => 'SHA256:${publicKode(publicKey)}';
   static int publicKode(String s) => s.hashCode;
@@ -375,6 +384,80 @@ class FakeEngine implements Engine {
   // ---- Import ----
   List<SshConfigHost> configHosts = const [];
   List<String>? imported;
+  /// Imported themes, listed after the built-in ones.
+  final List<ThemeInfo> customThemes = [];
+
+  @override
+  List<CsvHost> csvHostsPreview(String text) {
+    final lines = text.trim().split('\n');
+    if (lines.length < 2 || !lines.first.toLowerCase().contains('host')) throw 'the first line must name the columns';
+    return [
+      for (final line in lines.skip(1))
+        CsvHost(
+          label: line.split(',')[0],
+          hostname: line.split(',')[1],
+          port: 22,
+          username: line.split(',').length > 2 ? line.split(',')[2] : '',
+          hasPassword: line.split(',').length > 3 && line.split(',')[3].isNotEmpty,
+          group: null,
+          tags: const [],
+          alreadyImported: (records['hosts'] ?? {}).values.any((j) => j.contains('"label":"${line.split(',')[0]}"')),
+        ),
+    ];
+  }
+
+  @override
+  ImportReport csvHostsImport(String text, List<int> rows) {
+    final hosts = csvHostsPreview(text);
+    var n = 0;
+    for (final i in rows) {
+      final h = hosts[i];
+      final id = 'csv-$i';
+      records.putIfAbsent('hosts', () => {})[id] = hostJson(id, h.label);
+      n++;
+    }
+    return ImportReport(hosts: n, keys: 0, skipped: const []);
+  }
+
+  @override
+  List<ThemeInfo> themeImportPreview(String text, String filename) {
+    if (!text.contains('base00') && !text.contains('<plist')) throw 'not a theme file Promptly knows';
+    final name = filename.split('.').first;
+    return [
+      ThemeInfo(
+        id: '',
+        name: name[0].toUpperCase() + name.substring(1),
+        dark: true,
+        foreground: 0xD8D8D8,
+        background: 0x181818,
+        cursor: 0xD8D8D8,
+        selection: 0x383838,
+        ansi: Uint32List.fromList(List.generate(16, (i) => 0x101010 * (i + 1))),
+        builtin: false,
+      ),
+    ];
+  }
+
+  @override
+  ThemeInfo themeSave(ThemeInfo theme) {
+    final saved = ThemeInfo(
+      id: 'custom-${customThemes.length + 1}',
+      name: theme.name,
+      dark: theme.dark,
+      foreground: theme.foreground,
+      background: theme.background,
+      cursor: theme.cursor,
+      selection: theme.selection,
+      ansi: theme.ansi,
+      builtin: false,
+    );
+    customThemes.add(saved);
+    return saved;
+  }
+
+  @override
+  void themeDelete(String id) => customThemes.removeWhere((t) => t.id == id);
+
   @override
   List<SshConfigHost> sshConfigHosts() => configHosts;
   @override
@@ -519,12 +602,13 @@ Widget app([FakeEngine? engine]) => appWith(engine);
 
 /// The app on a fake engine. The welcome tour counts as seen unless a test
 /// asks for a first run.
-Widget appWith(FakeEngine? engine, {String? localDir, Fs? localFs, bool onboarded = true}) {
+Widget appWith(FakeEngine? engine, {String? localDir, Fs? localFs, bool onboarded = true, PickedTextFile? pickedFile}) {
   engine ??= FakeEngine();
   if (onboarded) engine.settings.putIfAbsent('onboarding_done', () => 'true');
   return ProviderScope(
       overrides: [
         engineProvider.overrideWithValue(engine),
+        filePickerProvider.overrideWithValue(({required String label, required List<String> extensions}) async => pickedFile),
         if (localDir != null) localStartDirProvider.overrideWithValue(localDir),
         if (localFs != null) localFsProvider.overrideWithValue(localFs),
       ],
@@ -944,7 +1028,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
-    await scrollTap(tester, find.text('Import'));
+    await scrollTo(tester, find.byKey(const Key('import-ssh-config')));
+    await tester.tap(find.descendant(of: find.byKey(const Key('import-ssh-config')), matching: find.text('Import')));
     await tester.pumpAndSettle();
     expect(find.text('Import from ~/.ssh/config'), findsWidgets);
     expect(find.text('already saved'), findsOneWidget);
@@ -1614,5 +1699,75 @@ void main() {
     await tester.tap(find.byKey(const Key('onboarding-next')));
     await tester.pump();
     expect(find.text('Your data, yours.'), findsOneWidget, reason: 'the page jumps instead of sliding');
+  });
+
+  testWidgets('a CSV file imports the hosts picked in the preview', (tester) async {
+    final engine = FakeEngine();
+    const csv = 'Label,Hostname/IP,Username,Password\nweb-1,10.0.0.1,deploy,s3cret\ndb-1,10.0.0.2,root,\n';
+    await tester.pumpWidget(appWith(engine, pickedFile: const PickedTextFile(name: 'termius.csv', text: csv)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTo(tester, find.byKey(const Key('import-csv')));
+    await tester.tap(find.descendant(of: find.byKey(const Key('import-csv')), matching: find.text('Import')));
+    await tester.pumpAndSettle();
+    expect(find.text('Import from termius.csv'), findsOneWidget);
+    expect(find.text('deploy@10.0.0.1 · password'), findsOneWidget);
+    // Leave db-1 out.
+    await tester.tap(find.byKey(const Key('csv-import-1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Import 1'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('csv-import-go')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Imported 1 host.'), findsOneWidget);
+    await tester.tap(find.text('Hosts').first);
+    await tester.pumpAndSettle();
+    expect(find.text('web-1'), findsOneWidget);
+    expect(find.text('db-1'), findsNothing);
+  });
+
+  testWidgets('a theme file imports, becomes the terminal theme, and can be removed', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 1;
+    const base16 = 'scheme: "Ocean"\nbase00: "2b303b"\nbase05: "c0c5ce"\n';
+    await tester.pumpWidget(appWith(engine, pickedFile: const PickedTextFile(name: 'ocean.yaml', text: base16)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('terminal-theme')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('theme-import')));
+    await tester.pumpAndSettle();
+    expect(find.text('Import Ocean?'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('theme-import-save-0')));
+    await tester.pumpAndSettle();
+    await scrollTo(tester, find.text('YOUR THEMES'));
+    expect(find.text('YOUR THEMES'), findsOneWidget);
+    expect(find.byKey(const Key('theme-custom-1')), findsOneWidget);
+    expect(engine.settings['terminal_theme'], '"custom-1"', reason: 'a single imported theme is put to use');
+
+    await scrollTap(tester, find.byKey(const Key('theme-delete-custom-1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('theme-delete-ok')));
+    await tester.pumpAndSettle();
+    expect(find.text('YOUR THEMES'), findsNothing);
+    expect(engine.settings['terminal_theme'], '"auto"', reason: 'the setting falls back');
+  });
+
+  testWidgets('a PuTTY key chosen from a file is stored in OpenSSH form', (tester) async {
+    final engine = FakeEngine();
+    const ppk = 'PuTTY-User-Key-File-3: ssh-ed25519\nEncryption: none\nComment: work\n';
+    await tester.pumpWidget(appWith(engine, pickedFile: const PickedTextFile(name: 'work.ppk', text: ppk)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Keys').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Import'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('key-pick-file')));
+    await tester.pumpAndSettle();
+    expect(find.text('work'), findsOneWidget, reason: 'the file name names the key');
+    await tester.tap(find.widgetWithText(FilledButton, 'Import'));
+    await tester.pumpAndSettle();
+    expect(engine.secrets.values.single, startsWith('-----BEGIN OPENSSH PRIVATE KEY-----'));
+    expect(find.text('work'), findsOneWidget);
   });
 }

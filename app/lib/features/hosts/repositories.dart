@@ -146,7 +146,8 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
   }
 
   /// Import a pasted private key. Encrypted keys are kept encrypted; the
-  /// passphrase is asked for at connect time.
+  /// passphrase is asked for at connect time. A PuTTY or PEM key that
+  /// could be read in full is stored in OpenSSH form instead.
   Identity import({required String label, required String privateKey, String? passphrase}) {
     final engine = ref.read(engineProvider);
     final info = engine.keyInspect(privateKey, passphrase);
@@ -157,7 +158,8 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
     final id = newRecordId();
     // Secret ids are record ids too: the engine's model types them as UUIDs.
     final secretId = newRecordId();
-    engine.secretPut(secretId, 'private_key', privateKey.trim());
+    final stored = info.converted && info.privateOpenssh != null ? info.privateOpenssh! : privateKey.trim();
+    engine.secretPut(secretId, 'private_key', stored);
     final identity = Identity(
       id: id,
       label: label,

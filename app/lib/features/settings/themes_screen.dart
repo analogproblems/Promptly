@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/engine/engine.dart';
+import '../../core/file_picker.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../shell/empty_state.dart';
@@ -34,6 +35,12 @@ class ThemesScreen extends ConsumerWidget {
             onPressed: () => context.go('/settings'),
             icon: const Icon(Icons.arrow_back),
           ),
+          trailing: OutlinedButton.icon(
+            key: const Key('theme-import'),
+            onPressed: () => importTheme(context, ref),
+            icon: const Icon(Icons.file_download_outlined, size: 18),
+            label: const Text('Import'),
+          ),
         ),
         Expanded(
           child: ListView(
@@ -43,9 +50,7 @@ class ThemesScreen extends ConsumerWidget {
                 child: SwitchListTile(
                   key: const Key('theme-auto'),
                   title: const Text('Match the app'),
-                  subtitle: const Text(
-                    'Promptly Dark with the dark look, Promptly Light with the light one.',
-                  ),
+                  subtitle: const Text('Promptly Dark with the dark look, Promptly Light with the light one.'),
                   value: auto,
                   onChanged: (on) => notifier.set(on ? TerminalThemeNotifier.auto : resolved),
                 ),
@@ -54,9 +59,7 @@ class ThemesScreen extends ConsumerWidget {
               Padding(
                 padding: const EdgeInsets.only(left: 4, bottom: 8),
                 child: Text(
-                  auto
-                      ? 'Or pick one to keep. Open sessions change as you tap.'
-                      : 'Open sessions change as you tap.',
+                  auto ? 'Or pick one to keep. Open sessions change as you tap.' : 'Open sessions change as you tap.',
                   style: TextStyle(color: t.muted, fontSize: 13),
                 ),
               ),
@@ -64,7 +67,7 @@ class ThemesScreen extends ConsumerWidget {
                 spacing: 12,
                 runSpacing: 12,
                 children: [
-                  for (final theme in themes)
+                  for (final theme in themes.where((th) => th.builtin))
                     ThemeCard(
                       key: Key('theme-${theme.id}'),
                       theme: theme,
@@ -73,6 +76,29 @@ class ThemesScreen extends ConsumerWidget {
                     ),
                 ],
               ),
+              if (themes.any((th) => !th.builtin)) ...[
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, top: 24, bottom: 8),
+                  child: Text(
+                    'YOUR THEMES',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.8, color: t.muted),
+                  ),
+                ),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    for (final theme in themes.where((th) => !th.builtin))
+                      ThemeCard(
+                        key: Key('theme-${theme.id}'),
+                        theme: theme,
+                        selected: theme.id == resolved,
+                        onTap: () => notifier.set(theme.id),
+                        onDelete: () => _deleteTheme(context, ref, theme),
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -81,13 +107,139 @@ class ThemesScreen extends ConsumerWidget {
   }
 }
 
+/// Pick a theme file, show what is in it, and save the schemes wanted.
+Future<void> importTheme(BuildContext context, WidgetRef ref) async {
+  final picked = await ref.read(filePickerProvider)(
+    label: 'Theme files',
+    extensions: const ['itermcolors', 'json', 'toml', 'yml', 'yaml'],
+  );
+  if (picked == null || !context.mounted) return;
+  final List<ThemeInfo> found;
+  try {
+    found = ref.read(engineProvider).themeImportPreview(picked.text, picked.name);
+  } catch (e) {
+    notYet(context, 'Could not read ${picked.name}: $e');
+    return;
+  }
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => _ImportThemesDialog(filename: picked.name, themes: found),
+  );
+}
+
+Future<void> _deleteTheme(BuildContext context, WidgetRef ref, ThemeInfo theme) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Remove ${theme.name}?'),
+      content: const Text('Sessions using it switch to Promptly\'s own theme.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('theme-delete-ok'),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('Remove'),
+        ),
+      ],
+    ),
+  );
+  if (ok != true || !context.mounted) return;
+  try {
+    ref.read(engineProvider).themeDelete(theme.id);
+    if (ref.read(terminalThemeProvider) == theme.id) {
+      ref.read(terminalThemeProvider.notifier).set(TerminalThemeNotifier.auto);
+    }
+    ref.invalidate(themesProvider);
+  } catch (e) {
+    notYet(context, 'Could not remove the theme: $e');
+  }
+}
+
+class _ImportThemesDialog extends ConsumerStatefulWidget {
+  const _ImportThemesDialog({required this.filename, required this.themes});
+
+  final String filename;
+  final List<ThemeInfo> themes;
+
+  @override
+  ConsumerState<_ImportThemesDialog> createState() => _ImportThemesDialogState();
+}
+
+class _ImportThemesDialogState extends ConsumerState<_ImportThemesDialog> {
+  final Set<int> _saved = {};
+  String? _error;
+
+  void _save(int i) {
+    try {
+      final saved = ref.read(engineProvider).themeSave(widget.themes[i]);
+      ref.invalidate(themesProvider);
+      setState(() {
+        _saved.add(i);
+        _error = null;
+      });
+      if (widget.themes.length == 1) {
+        ref.read(terminalThemeProvider.notifier).set(saved.id);
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      setState(() => _error = e.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final one = widget.themes.length == 1;
+    return AlertDialog(
+      title: Text(one ? 'Import ${widget.themes.first.name}?' : '${widget.themes.length} themes in ${widget.filename}'),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              for (var i = 0; i < widget.themes.length; i++)
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ThemeCard(theme: widget.themes[i], selected: _saved.contains(i), onTap: () {}),
+                    if (!one)
+                      TextButton(
+                        key: Key('theme-import-save-$i'),
+                        onPressed: _saved.contains(i) ? null : () => _save(i),
+                        child: Text(_saved.contains(i) ? 'Saved' : 'Save'),
+                      ),
+                  ],
+                ),
+              if (_error != null) Text(_error!, style: TextStyle(color: t.danger, fontSize: 13)),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: Text(one ? 'Cancel' : 'Done')),
+        if (one)
+          FilledButton(
+            key: const Key('theme-import-save-0'),
+            onPressed: () => _save(0),
+            child: const Text('Import and use'),
+          ),
+      ],
+    );
+  }
+}
+
 /// One theme: a small sample screen in its colours, its swatches and name.
 class ThemeCard extends StatelessWidget {
-  const ThemeCard({super.key, required this.theme, required this.selected, required this.onTap});
+  const ThemeCard({super.key, required this.theme, required this.selected, required this.onTap, this.onDelete});
 
   final ThemeInfo theme;
   final bool selected;
   final VoidCallback onTap;
+
+  /// Shown as a small remove button on imported themes.
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -105,18 +257,13 @@ class ThemeCard extends StatelessWidget {
           decoration: BoxDecoration(
             color: t.surface,
             borderRadius: BorderRadius.circular(PromptlyTokens.panelRadius),
-            border: Border.all(
-              color: selected ? t.accent : t.border,
-              width: selected ? 2 : 1,
-            ),
+            border: Border.all(color: selected ? t.accent : t.border, width: selected ? 2 : 1),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               ClipRRect(
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(PromptlyTokens.panelRadius - 1),
-                ),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(PromptlyTokens.panelRadius - 1)),
                 child: ThemeSample(theme: theme),
               ),
               Padding(
@@ -133,9 +280,15 @@ class ThemeCard extends StatelessWidget {
                     if (selected)
                       Icon(Icons.check_circle, size: 18, color: t.accent)
                     else
-                      Text(
-                        theme.dark ? 'dark' : 'light',
-                        style: TextStyle(fontSize: 11, color: t.muted),
+                      Text(theme.dark ? 'dark' : 'light', style: TextStyle(fontSize: 11, color: t.muted)),
+                    if (onDelete != null)
+                      IconButton(
+                        key: Key('theme-delete-${theme.id}'),
+                        tooltip: 'Remove theme',
+                        visualDensity: VisualDensity.compact,
+                        iconSize: 18,
+                        onPressed: onDelete,
+                        icon: Icon(Icons.delete_outline, color: t.muted),
                       ),
                   ],
                 ),
@@ -159,9 +312,9 @@ class ThemeSample extends StatelessWidget {
     final fg = _c(theme.foreground);
     final a = theme.ansi;
     TextSpan s(String text, [int? rgb, FontWeight? w]) => TextSpan(
-          text: text,
-          style: TextStyle(color: rgb == null ? fg : _c(rgb), fontWeight: w),
-        );
+      text: text,
+      style: TextStyle(color: rgb == null ? fg : _c(rgb), fontWeight: w),
+    );
     return Container(
       color: _c(theme.background),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -200,10 +353,7 @@ class ThemeSample extends StatelessWidget {
                   width: 14,
                   height: 10,
                   margin: const EdgeInsets.only(right: 3),
-                  decoration: BoxDecoration(
-                    color: _c(a[i]),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+                  decoration: BoxDecoration(color: _c(a[i]), borderRadius: BorderRadius.circular(2)),
                 ),
               const Spacer(),
               Container(width: 7, height: 12, color: _c(theme.cursor)),
@@ -239,10 +389,7 @@ class ThemeSwatches extends StatelessWidget {
             Expanded(
               child: Container(
                 margin: const EdgeInsets.symmetric(horizontal: 1),
-                decoration: BoxDecoration(
-                  color: _c(theme.ansi[i]),
-                  borderRadius: BorderRadius.circular(2),
-                ),
+                decoration: BoxDecoration(color: _c(theme.ansi[i]), borderRadius: BorderRadius.circular(2)),
               ),
             ),
         ],
