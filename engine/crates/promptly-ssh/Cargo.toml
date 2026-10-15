@@ -8,7 +8,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 promptly-term = { workspace = true }
 promptly-session = { workspace = true }
 # ring rather than aws-lc: pure-ish Rust, cross-compiles to Android and Windows without cmake.
