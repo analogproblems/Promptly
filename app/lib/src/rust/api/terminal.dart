@@ -35,6 +35,29 @@ Stream<TerminalEvent> terminalEvents({required int id}) =>
 void terminalWrite({required int id, required List<int> data}) =>
     RustLib.instance.api.crateApiTerminalTerminalWrite(id: id, data: data);
 
+/// Send a mouse event to the program at a zero-based screen cell, if it
+/// asked for mouse events of that kind (vim with `mouse=a`, tmux). Returns
+/// false when it did not, so the view selects or scrolls as usual.
+bool terminalMouse({
+  required int id,
+  required TerminalMouseAction action,
+  TerminalMouseButton? button,
+  required int col,
+  required int row,
+  required bool shift,
+  required bool alt,
+  required bool ctrl,
+}) => RustLib.instance.api.crateApiTerminalTerminalMouse(
+  id: id,
+  action: action,
+  button: button,
+  col: col,
+  row: row,
+  shift: shift,
+  alt: alt,
+  ctrl: ctrl,
+);
+
 /// Paste text, honouring bracketed paste mode.
 void terminalPaste({required int id, required String text}) =>
     RustLib.instance.api.crateApiTerminalTerminalPaste(id: id, text: text);
@@ -312,6 +335,19 @@ class TerminalFrame {
           bracketedPaste == other.bracketedPaste &&
           mouseReporting == other.mouseReporting;
 }
+
+/// What the mouse did, for [`terminal_mouse`].
+enum TerminalMouseAction {
+  press,
+  release,
+
+  /// Moved, with `button` held or none.
+  move,
+  wheelUp,
+  wheelDown,
+}
+
+enum TerminalMouseButton { left, middle, right }
 
 /// One changed row as parallel arrays. `flags` bits are documented in
 /// `promptly_term::frame::flags`.

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io' as io;
+import 'dart:math' as math;
 
 import '../../core/engine/engine.dart';
 
@@ -60,6 +61,17 @@ abstract class Fs {
     if (i <= 0) return '/';
     return trimmed.substring(0, i);
   }
+
+  /// The folders from the root down to `path`, for the breadcrumbs.
+  List<({String label, String path})> crumbs(String path) {
+    final segments = path.split('/').where((s) => s.isNotEmpty).toList();
+    return [
+      (label: '/', path: '/'),
+      for (var i = 0; i < segments.length; i++) (label: segments[i], path: '/${segments.sublist(0, i + 1).join('/')}'),
+    ];
+  }
+
+  bool isRoot(String path) => parent(path) == path;
 }
 
 /// The server's files, over the session's SFTP browser.
@@ -116,6 +128,50 @@ class RemoteFs extends Fs {
 
 /// This device's files.
 class LocalFs extends Fs {
+  LocalFs({bool? windows}) : windows = windows ?? io.Platform.isWindows;
+
+  /// Paths like `C:\Users\me` or `\\server\share\dir` rather than POSIX ones.
+  final bool windows;
+
+  /// The root a Windows path sits under (`C:\`, `\\server\share\`), or ''.
+  String _root(String path) {
+    final drive = RegExp(r'^[A-Za-z]:[\\/]?').firstMatch(path);
+    if (drive != null) return '${path.substring(0, 2)}\\';
+    final unc = RegExp(r'^[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/]?').firstMatch(path);
+    if (unc != null) return '${unc.group(0)!.replaceAll('/', '\\').replaceFirst(RegExp(r'\\?$'), '')}\\';
+    return '';
+  }
+
+  List<String> _segments(String path, String root) =>
+      path.substring(math.min(root.length, path.length)).split(RegExp(r'[\\/]')).where((s) => s.isNotEmpty).toList();
+
+  @override
+  String join(String dir, String name) {
+    if (!windows) return super.join(dir, name);
+    return dir.endsWith('\\') || dir.endsWith('/') ? '$dir$name' : '$dir\\$name';
+  }
+
+  @override
+  String parent(String path) {
+    if (!windows) return super.parent(path);
+    final root = _root(path);
+    final segments = _segments(path, root);
+    if (segments.isEmpty) return root.isEmpty ? path : root;
+    return root + segments.sublist(0, segments.length - 1).join('\\');
+  }
+
+  @override
+  List<({String label, String path})> crumbs(String path) {
+    if (!windows) return super.crumbs(path);
+    final root = _root(path);
+    final segments = _segments(path, root);
+    return [
+      if (root.isNotEmpty) (label: root, path: root),
+      for (var i = 0; i < segments.length; i++)
+        (label: segments[i], path: root + segments.sublist(0, i + 1).join('\\')),
+    ];
+  }
+
   @override
   String get label => 'This device';
 

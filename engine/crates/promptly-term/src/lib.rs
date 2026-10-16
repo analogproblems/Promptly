@@ -8,12 +8,14 @@
 
 pub mod emulator;
 pub mod frame;
+pub mod mouse;
 pub mod palette;
 pub mod theme_import;
 pub mod themes;
 
 pub use emulator::{Emulator, EmulatorEvent, SearchHit, SelectKind};
 pub use frame::{flags, CursorShape, CursorState, Frame, RowUpdate};
+pub use mouse::{MouseAction, MouseButton, MouseEvent};
 pub use palette::{Palette, Rgb};
 
 use serde::{Deserialize, Serialize};

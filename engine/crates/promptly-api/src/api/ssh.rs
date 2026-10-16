@@ -21,6 +21,7 @@ use crate::api::terminal::{palette_for, reattach_session, register_session, sess
 use crate::frb_generated::StreamSink;
 use crate::ssh_flow::{
     attempt, connection, remember_connection, Attempt, Pending, UiPrompter, ATTEMPTS, NEXT_ATTEMPT,
+    UNCLAIMED,
 };
 
 // ---- Types the UI sees -------------------------------------------------
@@ -193,6 +194,7 @@ pub fn ssh_connect_begin(request: SshConnectRequest) -> u32 {
             request: Mutex::new(Some(request)),
             sink: Mutex::new(None),
             pending: Mutex::new(Pending::default()),
+            task: Mutex::new(None),
         }),
     );
     id
@@ -223,11 +225,19 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
     let known_hosts = Arc::new(crate::sync_engine::VaultKnownHosts::new());
     let prompter: Arc<dyn Prompter> = Arc::new(UiPrompter(attempt.clone()));
 
-    promptly_ssh::runtime().spawn(async move {
+    let task_attempt = attempt.clone();
+    let task = promptly_ssh::runtime().spawn(async move {
         let result = connect(params, prompter, known_hosts).await;
         match result {
             Ok((transport, reader)) => {
                 let connection = transport.connection();
+                // Held from the check to the hand-over, so a cancel lands either
+                // before (and this hangs up) or after (and finds the session).
+                let mut attempts = ATTEMPTS.lock().unwrap();
+                if !attempts.contains_key(&attempt_id) {
+                    // Cancelled as it connected: dropping it hangs up.
+                    return;
+                }
                 let session_id = match reattach {
                     Some(id) if session_exists(id) => {
                         // The session is still open: give it the new connection.
@@ -241,13 +251,17 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
                             palette,
                             Box::new(transport),
                         ));
-                        register_session(session, Box::new(reader))
+                        let id = register_session(session, Box::new(reader));
+                        UNCLAIMED.lock().unwrap().insert(attempt_id, id);
+                        id
                     }
                 };
                 remember_connection(session_id, connection);
                 let mut e = SshEvent::blank(SshEventKind::Connected);
                 e.session_id = Some(session_id);
                 attempt.emit(e);
+                attempts.remove(&attempt_id);
+                return;
             }
             Err(err) => {
                 let mut e = SshEvent::blank(SshEventKind::Failed);
@@ -257,6 +271,11 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
         }
         ATTEMPTS.lock().unwrap().remove(&attempt_id);
     });
+    *task_attempt.task.lock().unwrap() = Some(task.abort_handle());
+    // A cancel that came before the handle was stored could not stop it.
+    if !ATTEMPTS.lock().unwrap().contains_key(&attempt_id) {
+        task.abort();
+    }
     Ok(())
 }
 
@@ -484,11 +503,23 @@ pub fn ssh_answer_keyboard_interactive(
 /// Abandon an attempt. Any waiting question is answered "no".
 #[frb(sync)]
 pub fn ssh_cancel(attempt_id: u32) {
-    if let Some(a) = ATTEMPTS.lock().unwrap().remove(&attempt_id) {
+    let removed = ATTEMPTS.lock().unwrap().remove(&attempt_id);
+    // Checked after the attempt is gone: a connect that finished first has
+    // already listed its session here.
+    let unclaimed = UNCLAIMED.lock().unwrap().remove(&attempt_id);
+    if let Some(session_id) = unclaimed {
+        // Connected but not yet picked up by the UI: close it, as nobody will.
+        let _ = crate::api::terminal::terminal_close(session_id);
+    }
+    if let Some(a) = removed {
         let mut p = a.pending.lock().unwrap();
         p.host_key.take();
         p.secret.take();
         p.keyboard.take();
         *a.sink.lock().unwrap() = None;
+        // Stop it mid-handshake too, so it never logs in or runs anything.
+        if let Some(task) = a.task.lock().unwrap().take() {
+            task.abort();
+        }
     }
 }

@@ -309,6 +309,12 @@ pub async fn connect_handle(
 ) -> Result<Connection, ConnectError> {
     let host = params.endpoint.host.clone();
     let port = params.endpoint.port;
+    // Time spent waiting on the person does not count against the timeout.
+    let waits = Arc::new(WaitClock::default());
+    let prompter: Arc<dyn Prompter> = Arc::new(Patient {
+        inner: prompter,
+        waits: waits.clone(),
+    });
 
     let config = Arc::new(client::Config {
         keepalive_interval: Some(params.keepalive),
@@ -333,7 +339,7 @@ pub async fn connect_handle(
         params.timeout
     };
     let opening = open_session(params, config, handler, prompter.clone(), known_hosts);
-    let (mut handle, hops) = match tokio::time::timeout(timeout, opening).await {
+    let (mut handle, hops) = match timeout_excluding(&waits, timeout, opening).await {
         Ok(Ok(h)) => h,
         Ok(Err(ConnectError::Ssh(russh::Error::UnknownKey))) => {
             return Err(ConnectError::HostKeyRejected)
@@ -418,6 +424,99 @@ async fn open_session(
     let _ = stream.set_nodelay(true);
     let handle = client::connect_stream(config, stream, handler).await?;
     Ok((handle, Vec::new()))
+}
+
+/// How long the connect flow has spent waiting for the person to answer.
+#[derive(Default)]
+struct WaitClock(Mutex<(Duration, u32, Option<tokio::time::Instant>)>);
+
+impl WaitClock {
+    fn start(&self) {
+        let mut w = self.0.lock().unwrap();
+        if w.1 == 0 {
+            w.2 = Some(tokio::time::Instant::now());
+        }
+        w.1 += 1;
+    }
+
+    fn stop(&self) {
+        let mut w = self.0.lock().unwrap();
+        w.1 -= 1;
+        if w.1 == 0 {
+            if let Some(since) = w.2.take() {
+                w.0 += since.elapsed();
+            }
+        }
+    }
+
+    /// The total so far, a wait in progress included, and whether one is.
+    fn total(&self) -> (Duration, bool) {
+        let w = self.0.lock().unwrap();
+        let ongoing = w.2.map(|s| s.elapsed()).unwrap_or_default();
+        (w.0 + ongoing, w.1 > 0)
+    }
+}
+
+/// `tokio::time::timeout`, with the clock stopped while a question is open.
+async fn timeout_excluding<T>(
+    waits: &WaitClock,
+    timeout: Duration,
+    future: impl Future<Output = T>,
+) -> Result<T, ()> {
+    let start = tokio::time::Instant::now();
+    tokio::pin!(future);
+    loop {
+        let (waited, _) = waits.total();
+        tokio::select! {
+            out = &mut future => return Ok(out),
+            _ = tokio::time::sleep_until(start + timeout + waited) => {
+                let (now_waited, waiting) = waits.total();
+                if !waiting && now_waited == waited {
+                    return Err(());
+                }
+            }
+        }
+    }
+}
+
+/// Times each question it passes on, for [`timeout_excluding`].
+struct Patient {
+    inner: Arc<dyn Prompter>,
+    waits: Arc<WaitClock>,
+}
+
+impl Patient {
+    fn timed<'a, T: 'a>(&'a self, ask: BoxFuture<'a, T>) -> BoxFuture<'a, T> {
+        Box::pin(async move {
+            self.waits.start();
+            let answer = ask.await;
+            self.waits.stop();
+            answer
+        })
+    }
+}
+
+impl Prompter for Patient {
+    fn progress(&self, step: ConnectStep) {
+        self.inner.progress(step)
+    }
+    fn confirm_host_key(&self, info: HostKeyInfo, status: HostKeyStatus) -> BoxFuture<'_, bool> {
+        self.timed(self.inner.confirm_host_key(info, status))
+    }
+    fn ask_secret(&self, prompt: String) -> BoxFuture<'_, Option<String>> {
+        self.timed(self.inner.ask_secret(prompt))
+    }
+    fn ask_keyboard_interactive(
+        &self,
+        name: String,
+        instructions: String,
+        prompts: Vec<KeyboardPrompt>,
+    ) -> BoxFuture<'_, Option<Vec<String>>> {
+        self.timed(
+            self.inner
+                .ask_keyboard_interactive(name, instructions, prompts),
+        )
+    }
 }
 
 /// The prompter a jump host sees: its progress folds into the one
@@ -771,6 +870,25 @@ fn is_wrong_passphrase(e: &keys::Error) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn time_spent_answering_does_not_count_against_the_timeout() {
+        crate::runtime().block_on(async {
+            let limit = Duration::from_millis(100);
+            let waits = WaitClock::default();
+            let slow_person = async {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                waits.start();
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                waits.stop();
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            };
+            assert!(timeout_excluding(&waits, limit, slow_person).await.is_ok());
+            let stalled = std::future::pending::<()>();
+            assert!(timeout_excluding(&waits, limit, stalled).await.is_err());
+        });
+    }
+
     use super::*;
     use crate::hostkey::FileKnownHosts;
     use promptly_session::{pump, Session, SessionEvent, SessionKind, Transport};

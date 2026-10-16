@@ -197,9 +197,26 @@ pub fn ssh_config_import(aliases: Vec<String>) -> Result<ImportReport, String> {
         imported.push((alias.clone(), host, h.proxy_jump.clone()));
     }
     // Jump hosts by alias, now that every id is known.
-    for (_, host, jump) in &mut imported {
-        if let Some(j) = jump.as_deref().and_then(|j| labels.get(j)) {
-            host.jump_host_id = uuid::Uuid::parse_str(j).ok();
+    let login: BTreeMap<String, (String, u16)> = imported
+        .iter()
+        .map(|(_, h, _)| (h.id.to_string(), (h.username.clone(), h.port)))
+        .collect();
+    let login_of = |id: &str| {
+        login.get(id).cloned().or_else(|| {
+            let record = store.get(Collection::Hosts, id).ok()??;
+            let h: Host = serde_json::from_str(&record.json).ok()?;
+            Some((h.username, h.port))
+        })
+    };
+    for (alias, host, jump) in &mut imported {
+        let Some(route) = jump.as_deref() else {
+            continue;
+        };
+        match jump_target(route, &labels, &login_of) {
+            Some(id) => host.jump_host_id = Some(id),
+            None => report.skipped.push(format!(
+                "{alias}: imported without its jump route {route}; set the jump host by hand"
+            )),
         }
     }
     for (_, host, _) in &imported {
@@ -211,6 +228,36 @@ pub fn ssh_config_import(aliases: Vec<String>) -> Result<ImportReport, String> {
         report.hosts += 1;
     }
     Ok(report)
+}
+
+/// The saved host a `ProxyJump` value names, when Promptly can follow it:
+/// a single hop to a known alias, whose user and port (if given) are that
+/// host's own. A chain of hops or different login details cannot be
+/// represented by one jump host, so those give `None`.
+fn jump_target(
+    route: &str,
+    labels: &BTreeMap<String, String>,
+    login_of: &dyn Fn(&str) -> Option<(String, u16)>,
+) -> Option<uuid::Uuid> {
+    if route.contains(',') {
+        return None;
+    }
+    let (user, rest) = match route.rsplit_once('@') {
+        Some((u, r)) => (Some(u), r),
+        None => (None, route),
+    };
+    let (alias, port) = match rest.rsplit_once(':') {
+        Some((a, p)) => (a, Some(p.parse::<u16>().ok()?)),
+        None => (rest, None),
+    };
+    let id = labels.get(alias)?;
+    if user.is_some() || port.is_some() {
+        let (their_user, their_port) = login_of(id)?;
+        if user.is_some_and(|u| u != their_user) || port.is_some_and(|p| p != their_port) {
+            return None;
+        }
+    }
+    uuid::Uuid::parse_str(id).ok()
 }
 
 // ---- CSV -------------------------------------------------------------------
@@ -370,7 +417,12 @@ fn csv_parse(text: &str) -> Result<CsvParsed, String> {
             .ok()
             .filter(|p| *p > 0)
             .unwrap_or(22);
-        let password = cell(row, cols.password);
+        // Exactly as written: spaces can be part of a password.
+        let password = cols
+            .password
+            .and_then(|i| row.get(i))
+            .cloned()
+            .unwrap_or_default();
         let group = cell(row, cols.group);
         let tags: Vec<String> = cell(row, cols.tags)
             .split([',', ';', ' '])
@@ -468,7 +520,7 @@ pub fn csv_hosts_import(text: String, rows: Vec<u32>) -> Result<ImportReport, St
                 let secret_id = promptly_vault::model::new_id();
                 secret_put(secret_id.to_string(), "password".into(), password.clone())?;
                 Auth::Password {
-                    password_secret_id: secret_id,
+                    password_secret_id: Some(secret_id),
                 }
             }
             None => Auth::Interactive,
@@ -523,6 +575,27 @@ mod tests {
         );
         assert_eq!(db.port, 22);
         assert!(!db.has_password);
+    }
+
+    #[test]
+    fn jump_routes_link_only_when_one_saved_host_matches() {
+        let id = "0192f3a0-0000-7000-8000-000000000001";
+        let labels: BTreeMap<String, String> = [("jump".to_string(), id.to_string())].into();
+        let login = |_: &str| Some(("bob".to_string(), 2222));
+        let want = uuid::Uuid::parse_str(id).ok();
+        assert_eq!(jump_target("jump", &labels, &login), want);
+        assert_eq!(jump_target("bob@jump:2222", &labels, &login), want);
+        assert_eq!(jump_target("bob@jump", &labels, &login), want);
+        assert_eq!(jump_target("alice@jump", &labels, &login), None);
+        assert_eq!(jump_target("jump:22", &labels, &login), None);
+        assert_eq!(jump_target("jump,other", &labels, &login), None);
+        assert_eq!(jump_target("missing", &labels, &login), None);
+    }
+
+    #[test]
+    fn spaces_in_a_password_are_kept() {
+        let parsed = csv_parse("Hostname,Password\nweb,\" pass phrase \"\n").unwrap();
+        assert_eq!(parsed.passwords[0].as_deref(), Some(" pass phrase "));
     }
 
     #[test]

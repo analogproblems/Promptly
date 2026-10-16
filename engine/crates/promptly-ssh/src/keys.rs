@@ -119,7 +119,25 @@ pub fn inspect(private_key: &str, passphrase: Option<&str>) -> Result<Inspected,
     }
     // PEM and PuTTY forms.
     match keys::decode_secret_key(private_key, passphrase) {
-        Ok(key) => Ok(describe(&key, false, true)),
+        Ok(key) => match passphrase {
+            // A locked key stays locked: its conversion is encrypted with the
+            // same passphrase.
+            Some(pw) if is_locked(private_key) => {
+                let mut i = describe(&key, false, true);
+                let locked = key
+                    .encrypt(&mut rand::rng(), pw.as_bytes())
+                    .map_err(|e| format!("could not convert the key: {e}"))?;
+                i.private_openssh = Some(
+                    locked
+                        .to_openssh(LineEnding::LF)
+                        .map_err(|e| format!("could not convert the key: {e}"))?
+                        .to_string(),
+                );
+                i.encrypted = true;
+                Ok(i)
+            }
+            _ => Ok(describe(&key, false, true)),
+        },
         Err(keys::Error::KeyIsEncrypted) => Ok(Inspected {
             kind: String::new(),
             public_openssh: None,
@@ -133,6 +151,17 @@ pub fn inspect(private_key: &str, passphrase: Option<&str>) -> Result<Inspected,
             "could not unlock the PuTTY key, wrong passphrase? ({e})"
         )),
         Err(e) => Err(format!("not a private key: {e}")),
+    }
+}
+
+/// Whether a PEM or PuTTY key needs a passphrase to read.
+fn is_locked(text: &str) -> bool {
+    match ppk_header(text) {
+        Some(ppk) => ppk.encrypted,
+        None => matches!(
+            keys::decode_secret_key(text, None),
+            Err(keys::Error::KeyIsEncrypted)
+        ),
     }
 }
 
@@ -254,7 +283,22 @@ mod tests {
             key_only(i.public_openssh.as_deref().unwrap()),
             public_of("ed25519-locked-v2")
         );
-        assert!(i.private_openssh.is_some());
+        // Its conversion needs the same passphrase.
+        let openssh = i.private_openssh.as_deref().unwrap();
+        let stored = PrivateKey::from_openssh(openssh).unwrap();
+        assert!(stored.is_encrypted());
+        assert!(stored.clone().decrypt(b"nope").is_err());
+        assert_eq!(
+            key_only(
+                &stored
+                    .decrypt(b"letmein")
+                    .unwrap()
+                    .public_key()
+                    .to_openssh()
+                    .unwrap()
+            ),
+            public_of("ed25519-locked-v2")
+        );
 
         // A PPK version 3 RSA key (Argon2 key derivation).
         let rsa = std::fs::read_to_string("testdata/rsa-locked-v3.ppk").unwrap();

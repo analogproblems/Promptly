@@ -39,6 +39,11 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
   late bool _persistent;
   late bool _agentForwarding;
   late List<PortForward> _forwards;
+
+  /// One key per forward row that stays with it when rows above are removed,
+  /// so each row keeps its own text fields.
+  late List<int> _forwardKeys;
+  int _nextForwardKey = 0;
   late bool _rememberPassword;
   String? _identityId;
   String? _groupId;
@@ -65,6 +70,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     _persistent = _original.persistentSession;
     _agentForwarding = _original.agentForwarding;
     _forwards = [..._original.portForwards];
+    _forwardKeys = [for (final _ in _forwards) _nextForwardKey++];
     _auth = switch (_original.auth.kind) {
       AuthKind.identity => _AuthChoice.key,
       AuthKind.password => _AuthChoice.password,
@@ -86,12 +92,20 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     super.dispose();
   }
 
+  /// The selected group's default user, which a blank User field takes.
+  String? get _groupUser {
+    final user = ref.read(groupsProvider.notifier).byId(_groupId)?.defaults['username'] as String?;
+    return user == null || user.trim().isEmpty ? null : user.trim();
+  }
+
   void _save() {
     if (!(_form.currentState?.validate() ?? false)) return;
     final engine = ref.read(engineProvider);
     final label = _label.text.trim().isEmpty ? _hostname.text.trim() : _label.text.trim();
 
     HostAuth auth;
+    // A password that is no longer remembered, forgotten once the host saves.
+    String? retiredSecretId;
     switch (_auth) {
       case _AuthChoice.key:
         if (_identityId == null) {
@@ -107,11 +121,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
         } else if (_rememberPassword && _original.auth.passwordSecretId != null) {
           auth = HostAuth(kind: AuthKind.password, passwordSecretId: secretId);
         } else {
-          if (_original.auth.passwordSecretId != null) {
-            try {
-              engine.secretDelete(secretId);
-            } catch (_) {}
-          }
+          retiredSecretId = _original.auth.passwordSecretId;
           auth = const HostAuth(kind: AuthKind.password);
         }
       case _AuthChoice.agent:
@@ -143,6 +153,11 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     } catch (e) {
       setState(() => _error = e is String ? e : e.toString());
       return;
+    }
+    if (retiredSecretId != null) {
+      try {
+        engine.secretDelete(retiredSecretId);
+      } catch (_) {}
     }
     context.go('/hosts');
   }
@@ -290,8 +305,11 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                       key: const Key('host-username'),
                       controller: _username,
                       style: monoStyle(context, size: 14),
-                      decoration: const InputDecoration(labelText: 'User'),
-                      validator: (v) => (v == null || v.trim().isEmpty) ? 'Needed' : null,
+                      decoration: InputDecoration(
+                        labelText: 'User',
+                        helperText: _groupUser == null ? null : 'Blank uses the group\'s $_groupUser',
+                      ),
+                      validator: (v) => (v == null || v.trim().isEmpty) && _groupUser == null ? 'Needed' : null,
                     ),
                   ],
                 ),
@@ -498,20 +516,24 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                       ),
                     for (var i = 0; i < _forwards.length; i++)
                       _ForwardEditor(
-                        key: ValueKey('forward-$i'),
+                        key: ValueKey('forward-row-${_forwardKeys[i]}'),
                         index: i,
                         forward: _forwards[i],
                         onChanged: (f) => setState(() => _forwards[i] = f),
-                        onRemove: () => setState(() => _forwards.removeAt(i)),
+                        onRemove: () => setState(() {
+                          _forwards.removeAt(i);
+                          _forwardKeys.removeAt(i);
+                        }),
                       ),
                     const SizedBox(height: 8),
                     Align(
                       alignment: Alignment.centerLeft,
                       child: OutlinedButton.icon(
                         key: const Key('forward-add'),
-                        onPressed: () => setState(
-                          () => _forwards.add(const PortForward(kind: ForwardKind.local, bindPort: 0, targetHost: 'localhost')),
-                        ),
+                        onPressed: () => setState(() {
+                          _forwards.add(const PortForward(kind: ForwardKind.local, bindPort: 0, targetHost: 'localhost'));
+                          _forwardKeys.add(_nextForwardKey++);
+                        }),
                         icon: const Icon(Icons.add),
                         label: const Text('Add forward'),
                       ),

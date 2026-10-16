@@ -347,6 +347,12 @@ impl Emulator {
         self.term.mode().contains(TermMode::APP_CURSOR)
     }
 
+    /// The bytes that report a mouse event to the program, or `None` when
+    /// it has not asked for mouse events of that kind.
+    pub fn mouse_report(&self, event: crate::MouseEvent) -> Option<Vec<u8>> {
+        crate::mouse::encode(*self.term.mode(), event)
+    }
+
     pub fn bracketed_paste(&self) -> bool {
         self.term.mode().contains(TermMode::BRACKETED_PASTE)
     }

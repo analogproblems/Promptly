@@ -8,6 +8,7 @@
 pub mod local;
 
 use std::io::{self, Read};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -49,6 +50,10 @@ pub struct Session {
     emulator: Mutex<Emulator>,
     transport: Mutex<Box<dyn Transport>>,
     exited: Mutex<Option<Option<i32>>>,
+    /// Counts transports, so a reader left over from a replaced one can tell
+    /// it no longer speaks for the session. Changed with `emulator` and
+    /// `transport` both locked, so holding either one keeps it still.
+    generation: AtomicU64,
 }
 
 impl Session {
@@ -63,6 +68,7 @@ impl Session {
             emulator: Mutex::new(Emulator::new(size, palette)),
             transport: Mutex::new(transport),
             exited: Mutex::new(None),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -77,6 +83,17 @@ impl Session {
 
     pub fn write(&self, data: &[u8]) -> io::Result<()> {
         self.transport.lock().unwrap().write(data)
+    }
+
+    /// Report a mouse event to the program if it asked for mouse events of
+    /// that kind. Returns whether it did, so the caller can otherwise
+    /// select or scroll locally.
+    pub fn mouse(&self, event: promptly_term::MouseEvent) -> io::Result<bool> {
+        let Some(bytes) = self.emulator.lock().unwrap().mouse_report(event) else {
+            return Ok(false);
+        };
+        self.write(&bytes)?;
+        Ok(true)
     }
 
     /// Paste text the way the running program expects: wrapped in bracketed
@@ -192,13 +209,12 @@ impl Session {
     /// the screen and scrollback. The new end is told the current size.
     /// Call [`pump`] again afterwards with the new reader.
     pub fn replace_transport(&self, mut transport: Box<dyn Transport>) {
-        let size = self.emulator.lock().unwrap().size();
-        let _ = transport.resize(size);
-        {
-            let mut old = self.transport.lock().unwrap();
-            old.close();
-            *old = transport;
-        }
+        let emu = self.emulator.lock().unwrap();
+        let _ = transport.resize(emu.size());
+        let mut old = self.transport.lock().unwrap();
+        old.close();
+        *old = transport;
+        self.generation.fetch_add(1, Ordering::SeqCst);
         *self.exited.lock().unwrap() = None;
     }
 
@@ -228,9 +244,13 @@ pub fn pump(
     mut reader: Box<dyn Read + Send>,
     emit: impl Fn(SessionEvent) + Send + 'static,
 ) -> JoinHandle<()> {
+    // Taken now, not on the new thread, so a reader handed over just before a
+    // reconnect can't adopt the newer transport's number.
+    let generation = session.generation.load(Ordering::SeqCst);
     thread::Builder::new()
         .name("promptly-session".into())
         .spawn(move || {
+            let current = || session.generation.load(Ordering::SeqCst) == generation;
             let mut buf = vec![0u8; 64 * 1024];
             let mut last = Instant::now();
             // The first frame shows the empty screen with the right size.
@@ -253,6 +273,10 @@ pub fn pump(
                     thread::sleep(MIN_FRAME_GAP - elapsed);
                 }
                 let mut emu = session.emulator.lock().unwrap();
+                if !current() {
+                    // Late output from the old connection: not for this screen.
+                    return;
+                }
                 let events = emu.feed(&buf[..n]);
                 let mut exit = false;
                 for event in events {
@@ -268,16 +292,25 @@ pub fn pump(
                     }
                 }
                 emit(SessionEvent::Frame(emu.frame()));
-                drop(emu);
-                last = Instant::now();
                 if exit {
+                    // Still ours while the emulator is locked.
                     session.close();
                     break;
                 }
+                drop(emu);
+                last = Instant::now();
             }
-            let code = session.transport.lock().unwrap().exit_code();
+            // Locked through the announcement, so a reconnect lands wholly
+            // before (and this stays quiet) or wholly after.
+            let mut transport = session.transport.lock().unwrap();
+            if !current() {
+                // The session has a new connection; only the old one ended.
+                return;
+            }
+            let code = transport.exit_code();
             session.mark_exited(code);
             emit(SessionEvent::Exited { code });
+            drop(transport);
         })
         .expect("spawn session thread")
 }
@@ -390,6 +423,73 @@ mod tests {
         let text = session.screen_text();
         assert!(text.contains("first-2"), "old output kept:\n{text}");
         assert!(text.contains("[dropped]"), "notice shown:\n{text}");
+        session.write(b"exit\n").unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_big_paste_into_a_busy_program_does_not_block_the_caller() {
+        let size = TermSize::new(40, 6);
+        let (mut shell, _reader) =
+            LocalShell::spawn(size, Some("/bin/sh".into()), None).expect("spawn /bin/sh");
+        shell.write(b"sleep 5\n").unwrap();
+        thread::sleep(Duration::from_millis(200));
+        // Far more than a pty holds, while nothing reads it.
+        let started = Instant::now();
+        shell.write(&vec![b'x'; 1 << 20]).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(1));
+        shell.close();
+    }
+
+    /// A reader that ends when told to.
+    struct Gate(mpsc::Receiver<()>);
+
+    impl Read for Gate {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            let _ = self.0.recv();
+            Ok(0)
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_old_connection_ending_late_does_not_end_its_replacement() {
+        let size = TermSize::new(40, 6);
+        let (old_shell, _) =
+            LocalShell::spawn(size, Some("/bin/sh".into()), None).expect("spawn /bin/sh");
+        let session = Arc::new(Session::new(
+            SessionKind::LocalShell {
+                program: "/bin/sh".into(),
+            },
+            size,
+            Palette::promptly_dark(),
+            Box::new(old_shell),
+        ));
+        let (release, gate) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
+        let old_events = tx.clone();
+        let old = pump(session.clone(), Box::new(Gate(gate)), move |e| {
+            let _ = old_events.send(e);
+        });
+
+        let (shell, reader) =
+            LocalShell::spawn(size, Some("/bin/sh".into()), None).expect("spawn /bin/sh");
+        session.replace_transport(Box::new(shell));
+        let _new = pump(session.clone(), reader, move |e| {
+            let _ = tx.send(e);
+        });
+        release.send(()).unwrap();
+        old.join().unwrap();
+
+        session.write(b"echo still-$((3+3))\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !session.screen_text().contains("still-6") {
+            if let Ok(SessionEvent::Exited { .. }) = rx.recv_timeout(Duration::from_millis(200)) {
+                panic!("the replacement was reported as ended");
+            }
+            assert!(Instant::now() < deadline, "{}", session.screen_text());
+        }
+        assert_eq!(session.exited(), None);
         session.write(b"exit\n").unwrap();
     }
 }

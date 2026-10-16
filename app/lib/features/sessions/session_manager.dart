@@ -122,6 +122,10 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   int _nextId = 1;
   final Map<int, Timer> _retryTimers = {};
 
+  /// Sessions whose reconnecting was stopped or ran out of tries. They stay
+  /// ended until reconnected by hand, however often the screen redraws.
+  final Set<int> _givenUp = {};
+
   /// Seconds to wait before each try; the last value repeats.
   static const retryDelays = [1, 2, 4, 8, 16, 30];
   static const maxRetries = 10;
@@ -338,6 +342,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     if (entry.flow != flow) return; // a newer attempt replaced this one
     final sessionId = flow.sessionId;
     if (sessionId != null) {
+      _givenUp.remove(entry.id);
       final existing = entry.controller;
       if (existing == null) {
         _attach(entry, engine, sessionId);
@@ -389,7 +394,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   void _watchForDrop(SessionEntry entry, TerminalController c) {
     if (!c.exited || c.exitCode != null || entry.reconnecting) return;
     if (entry.controller != c || entry.flow?.request == null) return;
-    if (_retryTimers.containsKey(entry.id)) return;
+    if (_retryTimers.containsKey(entry.id) || _givenUp.contains(entry.id)) return;
     _scheduleReconnect(entry, attempt: 1);
   }
 
@@ -417,6 +422,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   void _reconnectFailed(SessionEntry entry, String error) {
     final attempt = entry.reconnectAttempt;
     if (attempt >= maxRetries) {
+      _givenUp.add(entry.id);
       entry.clearReconnect();
       entry.setError('Could not reconnect after $attempt tries: $error');
       return;
@@ -429,6 +435,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   void reconnectNow(int id) {
     final entry = byId(id);
     if (entry == null || entry.isLocal || entry.flow?.request == null) return;
+    _givenUp.remove(id);
     _scheduleReconnect(entry, attempt: 1, now: true);
   }
 
@@ -436,6 +443,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   void stopReconnect(int id) {
     final entry = byId(id);
     if (entry == null) return;
+    _givenUp.add(id);
     _retryTimers.remove(id)?.cancel();
     entry.flow?.cancel();
     entry.clearReconnect();
@@ -475,6 +483,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     if (entry == null) return;
     final engine = ref.read(engineProvider);
     _retryTimers.remove(id)?.cancel();
+    _givenUp.remove(id);
     entry.flow?.cancel();
     final engineId = entry.controller?.id;
     entry.dispose();

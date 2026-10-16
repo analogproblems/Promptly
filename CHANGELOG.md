@@ -2,6 +2,17 @@
 
 Each release's section is what the GitHub Release says; keep it in plain words.
 
+## Unreleased
+
+- The mouse works in full-screen programs that ask for it, such as vim with `mouse=a`, tmux and htop: clicks, drags and the wheel go to the program. Hold Shift to select text or scroll as before.
+- Sync no longer loses changes when a synced folder delivers files out of order, or when a device leaves the vault and joins again. Removing a device waits until all of its changes have arrived, and changing the vault passphrase can no longer leave the folder without its key file.
+- Cancelling an SSH connection really stops it. Checking a new server's fingerprint has no time limit, a reconnect is no longer undone by the old connection closing late, and Stop on automatic reconnect stays stopped.
+- The text editor keeps typing done while a save is in progress, and Android's Back button asks before throwing edits away.
+- A host with "remember password" off saves properly, and a host in a group can leave User blank to use the group's.
+- Imported PuTTY and PEM keys keep their passphrase. CSV passwords keep their spaces. Jump hosts from `~/.ssh/config` that Promptly cannot follow are reported instead of being skipped silently.
+- On a phone keyboard, backspace erases a whole emoji and keeps working on a command recalled from history. A big paste no longer freezes the app while a program is busy.
+- File permissions keep their special bits, Windows paths rename and navigate in the right folder, port forward rows stay in place after one is removed, and exported keys with the same name no longer overwrite each other.
+
 ## 1.0.1
 
 - Promptly for Mac: a free `.dmg` for Apple silicon and Intel Macs. It is not signed by Apple yet, so the first launch needs one trip to System Settings, then Privacy & Security, then *Open Anyway*.

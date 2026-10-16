@@ -2,6 +2,7 @@
 
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
+use std::sync::mpsc;
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use promptly_term::TermSize;
@@ -10,7 +11,10 @@ use crate::Transport;
 
 pub struct LocalShell {
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    /// Input goes to the pty from its own thread, in order. A program that
+    /// stops reading fills the pty, and then only that thread waits: typing
+    /// and pasting never block the caller (the app's UI thread).
+    writer: mpsc::Sender<Vec<u8>>,
     child: Box<dyn Child + Send + Sync>,
     program: String,
 }
@@ -44,7 +48,21 @@ impl LocalShell {
         let child = pair.slave.spawn_command(cmd).map_err(other)?;
         drop(pair.slave);
         let reader = pair.master.try_clone_reader().map_err(other)?;
-        let writer = pair.master.take_writer().map_err(other)?;
+        let mut pty_writer = pair.master.take_writer().map_err(other)?;
+        let (writer, input) = mpsc::channel::<Vec<u8>>();
+        std::thread::Builder::new()
+            .name("promptly-pty-input".into())
+            .spawn(move || {
+                for data in input {
+                    if pty_writer
+                        .write_all(&data)
+                        .and_then(|()| pty_writer.flush())
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })?;
 
         Ok((
             Self {
@@ -100,8 +118,9 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
 
 impl Transport for LocalShell {
     fn write(&mut self, data: &[u8]) -> io::Result<()> {
-        self.writer.write_all(data)?;
-        self.writer.flush()
+        self.writer
+            .send(data.to_vec())
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "the shell has gone"))
     }
 
     fn resize(&mut self, size: TermSize) -> io::Result<()> {

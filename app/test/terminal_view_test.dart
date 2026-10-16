@@ -38,6 +38,24 @@ class RecordingEngine implements Engine {
 
   @override
   void terminalPaste(int id, String text) => calls.add('paste');
+
+  /// Whether the "program" takes mouse events.
+  bool takesMouse = false;
+  @override
+  bool terminalMouse(
+    int id,
+    TerminalMouseAction action,
+    TerminalMouseButton? button,
+    int col,
+    int row, {
+    bool shift = false,
+    bool alt = false,
+    bool ctrl = false,
+  }) {
+    if (!takesMouse) return false;
+    calls.add('mouse ${action.name} ${button?.name} $col,$row');
+    return true;
+  }
   @override
   void terminalResize(int id, int cols, int rows) => calls.add('resize $cols x $rows');
   @override
@@ -317,6 +335,78 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('a program that asks for the mouse gets clicks, drags and the wheel; Shift selects', (tester) async {
+    final engine = RecordingEngine()..takesMouse = true;
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller)),
+      ),
+    );
+    await tester.pump();
+    controller.grid
+      ..cols = 80
+      ..rows = 24
+      ..mouseReporting = true;
+    final origin = tester.getTopLeft(find.byType(TerminalView));
+
+    final drag = await tester.startGesture(origin + const Offset(2, 2), kind: PointerDeviceKind.mouse);
+    await drag.moveBy(const Offset(40, 0));
+    await drag.up();
+    await tester.pump();
+    final mouse = engine.calls.where((c) => c.startsWith('mouse')).toList();
+    expect(mouse.first, 'mouse press left 0,0');
+    expect(mouse.where((c) => c.startsWith('mouse move left')), isNotEmpty, reason: '$mouse');
+    expect(mouse.last, startsWith('mouse release left'));
+    expect(engine.calls.where((c) => c.startsWith('select')), isEmpty, reason: 'no local selection');
+
+    await tester.sendEventToBinding(
+      PointerScrollEvent(position: origin + const Offset(2, 2), scrollDelta: const Offset(0, 200)),
+    );
+    await tester.pump();
+    expect(engine.calls.last, 'mouse wheelDown null 0,0');
+    expect(engine.calls.where((c) => c.startsWith('scroll')), isEmpty, reason: 'the program scrolls, not us');
+
+    // Shift overrides: a local selection as usual.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    final pick = await tester.startGesture(origin + const Offset(2, 2), kind: PointerDeviceKind.mouse);
+    await pick.up();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    expect(engine.calls.where((c) => c.startsWith('select')), isNotEmpty);
+    controller.dispose();
+  });
+
+  testWidgets('moving the mouse without a button is passed on once per cell', (tester) async {
+    final engine = RecordingEngine()..takesMouse = true;
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller)),
+      ),
+    );
+    await tester.pump();
+    controller.grid
+      ..cols = 80
+      ..rows = 24
+      ..mouseReporting = true;
+    final origin = tester.getTopLeft(find.byType(TerminalView));
+
+    final pointer = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await pointer.addPointer(location: origin + const Offset(2, 2));
+    await pointer.moveTo(origin + const Offset(2, 2));
+    await pointer.moveTo(origin + const Offset(3, 3));
+    await pointer.moveTo(origin + const Offset(40, 2));
+    await tester.pump();
+    final moves = engine.calls.where((c) => c.startsWith('mouse move null')).toList();
+    expect(moves, hasLength(2), reason: 'one per cell: $moves');
+    expect(moves.first, 'mouse move null 0,0');
+    await pointer.removePointer();
+    controller.dispose();
+  });
+
   testWidgets('the soft keyboard types into the session, Enter is Return, sticky Ctrl makes control bytes', (
     tester,
   ) async {
@@ -403,6 +493,65 @@ void main() {
     ]);
     expect(engine.written.last, [3]);
     expect(controller.stickyCtrl, isFalse, reason: 'sticky modifiers are one-shot');
+    controller.dispose();
+  });
+
+  testWidgets('soft keyboard backspace erases whole emoji and keeps working once the buffer is empty', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller, imeInput: true)),
+      ),
+    );
+    await tester.pump();
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+
+    // An emoji is two UTF-16 units but one character to the shell.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' ',
+        textInserted: 'a😀',
+        insertionOffset: 1,
+        selection: TextSelection.collapsed(offset: 4),
+        composing: TextRange.empty,
+      ),
+    ]);
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaDeletion(
+        oldText: ' a😀',
+        deletedRange: TextRange(start: 2, end: 4),
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange.empty,
+      ),
+    ]);
+    expect(engine.written.last, [0x7f], reason: 'one erase, so the "a" survives');
+
+    // Backspace past the start (a command recalled from history): each one
+    // still reaches the shell, because the buffer is refilled.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaDeletion(
+        oldText: ' a',
+        deletedRange: TextRange(start: 1, end: 2),
+        selection: TextSelection.collapsed(offset: 1),
+        composing: TextRange.empty,
+      ),
+    ]);
+    for (var i = 0; i < 3; i++) {
+      final count = engine.written.length;
+      expect(client.currentTextEditingValue!.text, ' ');
+      client.updateEditingValueWithDeltas([
+        const TextEditingDeltaDeletion(
+          oldText: ' ',
+          deletedRange: TextRange(start: 0, end: 1),
+          selection: TextSelection.collapsed(offset: 0),
+          composing: TextRange.empty,
+        ),
+      ]);
+      expect(engine.written.length, count + 1);
+      expect(engine.written.last, [0x7f]);
+    }
     controller.dispose();
   });
 }
