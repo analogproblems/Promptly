@@ -255,10 +255,33 @@ pub fn sync_remove_device(device_record_id: String) -> Result<(), String> {
     if device_record_id == store.device_id().as_uuid().to_string() {
         return Err("To remove this device, disconnect it instead.".into());
     }
+    let folder = uuid::Uuid::parse_str(&device_record_id)
+        .map(|u| {
+            u.as_bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        })
+        .ok()
+        .and_then(|hex| promptly_vault::DeviceId::parse(&hex));
+    sync_engine::sync_once()?;
+    // Its folder is about to go, so every file in it must have been applied.
+    if let Some(other) = &folder {
+        let prefix = format!("{other}/");
+        if sync_engine::status()?
+            .warnings
+            .iter()
+            .any(|w| w.starts_with(&prefix))
+        {
+            return Err(
+                "Some of that device's changes could not be read yet, so it was not removed. Try again once sync shows no warnings."
+                    .into(),
+            );
+        }
+    }
     store
         .delete(promptly_store::Collection::Devices, &device_record_id)
         .map_err(|e| e.to_string())?;
-    sync_engine::sync_once()?;
     let dek = {
         let bytes = crate::api::store::secrets()
             .get(sync_engine::DEK_SECRET_ID)
@@ -278,20 +301,12 @@ pub fn sync_remove_device(device_record_id: String) -> Result<(), String> {
         dek,
     );
     store.compact(&vault, true).map_err(|e| e.to_string())?;
-    let folder = uuid::Uuid::parse_str(&device_record_id)
-        .map(|u| {
-            u.as_bytes()
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-        })
-        .ok()
-        .and_then(|hex| promptly_vault::DeviceId::parse(&hex));
     if let Some(other) = folder {
         vault
             .delete_device_folder(&other)
             .map_err(|e| e.to_string())?;
     }
+    sync_engine::notify_change();
     sync_engine::emit();
     Ok(())
 }

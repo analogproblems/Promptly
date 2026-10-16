@@ -272,10 +272,20 @@ impl<'a> Vault<'a> {
                     }
                 }
             }
-            // Then every segment above the marker, in order.
+            // Then every segment above the marker, in order. Numbers have no
+            // gaps, so a missing one has not arrived yet (a mirror can deliver
+            // files out of order): stop there and pick it up next time.
             for (n, is_snap, entry) in &files {
                 if *is_snap || *n <= marker.seq {
                     continue;
+                }
+                if *n != marker.seq + 1 {
+                    report.warnings.push(format!(
+                        "{}/{}: has not arrived yet",
+                        device,
+                        seg_name(marker.seq + 1)
+                    ));
+                    break;
                 }
                 match self.read_file::<Segment>(&device, &entry.name) {
                     Ok(seg) => {
@@ -301,17 +311,42 @@ impl<'a> Vault<'a> {
         Ok(report)
     }
 
+    /// Before this device's first write since its sync state was reset (a
+    /// fresh device, or one that disconnected and joined again), carry on
+    /// numbering after whatever its folder already holds. Other devices have
+    /// applied those numbers, so reusing them would hide the new files.
+    fn resume_numbering(&self, sync: &mut SyncState) -> Result<(), SyncError> {
+        if sync.my_seq == 0 {
+            let dir = Self::device_dir(&self.device);
+            for e in self.backend.list(&dir)? {
+                if let Some((n, _)) = parse_name(&e.name) {
+                    sync.my_seq = sync.my_seq.max(n);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Write pending operations as the next segment. Returns its number.
     pub fn push(&self, sync: &mut SyncState, ops: &[Op]) -> Result<u64, SyncError> {
-        let seq = sync.my_seq + 1;
-        let segment = Segment::new(self.device.clone(), seq, ops.to_vec());
-        match self.write_file(&seg_name(seq), &segment) {
-            Ok(()) => {}
-            Err(SyncError::Backend(BackendError::AlreadyExists(_))) => {
-                // A previous push wrote the file but we never heard; it holds
-                // the same operations. Move on.
+        self.resume_numbering(sync)?;
+        let mut seq = sync.my_seq + 1;
+        loop {
+            let segment = Segment::new(self.device.clone(), seq, ops.to_vec());
+            match self.write_file(&seg_name(seq), &segment) {
+                Ok(()) => break,
+                Err(SyncError::Backend(BackendError::AlreadyExists(_))) => {
+                    // A previous push wrote this file but we never heard. If it
+                    // holds these same operations we are done; if not (more were
+                    // queued since), it stands as it is and these go in the next.
+                    let existing = self.read_file::<Segment>(&self.device, &seg_name(seq))?;
+                    if existing.ops == ops {
+                        break;
+                    }
+                    seq += 1;
+                }
+                Err(e) => return Err(e),
             }
-            Err(e) => return Err(e),
         }
         sync.my_seq = seq;
         Ok(seq)
@@ -325,12 +360,19 @@ impl<'a> Vault<'a> {
         state: &State,
         clock: &Clock,
     ) -> Result<(), SyncError> {
-        let seq = sync.my_seq;
-        let snap = state.to_snapshot(self.device.clone(), seq, clock.counter());
-        match self.write_file(&snap_name(seq), &snap) {
-            Ok(()) | Err(SyncError::Backend(BackendError::AlreadyExists(_))) => {}
-            Err(e) => return Err(e),
+        self.resume_numbering(sync)?;
+        let mut seq = sync.my_seq;
+        loop {
+            let snap = state.to_snapshot(self.device.clone(), seq, clock.counter());
+            match self.write_file(&snap_name(seq), &snap) {
+                Ok(()) => break,
+                // An older snapshot holds this number. Take the next one, which
+                // no segment uses yet, rather than leave that one standing.
+                Err(SyncError::Backend(BackendError::AlreadyExists(_))) => seq += 1,
+                Err(e) => return Err(e),
+            }
         }
+        sync.my_seq = seq;
         sync.my_snap = seq;
         let dir = Self::device_dir(&self.device);
         for e in self.backend.list(&dir)? {
@@ -558,6 +600,93 @@ mod tests {
         a.sync(&va);
         assert_eq!(c.state, a.state);
         assert_eq!(report.devices_seen.len(), 2);
+    }
+
+    #[test]
+    fn a_segment_that_arrives_late_is_still_applied() {
+        let backend = MemoryBackend::default();
+        let mut a = Device::new();
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        a.put(Collection::Hosts, "h1", json!({"label": "one"}));
+        a.sync(&va);
+        a.put(Collection::Hosts, "h2", json!({"label": "two"}));
+        a.sync(&va);
+
+        // A mirror delivers segment 2 before segment 1.
+        let first = format!("devices/{}/000001.seg", a.id);
+        let held = backend.get(&first).unwrap();
+        backend.delete(&first).unwrap();
+
+        let mut b = Device::new();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        let report = b.sync(&vb);
+        assert!(b.hosts().is_empty(), "nothing applied past the gap");
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert_eq!(b.sync.markers[&a.id].seq, 0);
+
+        backend.put_new(&first, &held).unwrap();
+        let report = b.sync(&vb);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(b.hosts().len(), 2);
+    }
+
+    #[test]
+    fn a_retried_push_with_more_operations_publishes_all_of_them() {
+        let backend = MemoryBackend::default();
+        let mut a = Device::new();
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        a.put(Collection::Hosts, "h1", json!({"label": "one"}));
+        // The upload lands but A never records it.
+        let mut lost = a.sync.clone();
+        va.push(&mut lost, &a.pending).unwrap();
+        a.put(Collection::Hosts, "h2", json!({"label": "two"}));
+        a.sync(&va);
+        assert_eq!(a.sync.my_seq, 2, "the retry took the next number");
+
+        let mut b = Device::new();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        b.sync(&vb);
+        assert_eq!(b.hosts().len(), 2);
+
+        // Retrying the very same operations reuses the file already there.
+        a.put(Collection::Hosts, "h3", json!({"label": "three"}));
+        let mut lost = a.sync.clone();
+        va.push(&mut lost, &a.pending).unwrap();
+        va.push(&mut a.sync, &a.pending).unwrap();
+        assert_eq!(lost.my_seq, a.sync.my_seq);
+    }
+
+    #[test]
+    fn rejoining_a_vault_keeps_numbering_after_the_old_files() {
+        for compacted in [false, true] {
+            let backend = MemoryBackend::default();
+            let mut a = Device::new();
+            let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+            for i in 0..3 {
+                a.put(Collection::Hosts, &format!("h{i}"), json!({"label": "x"}));
+                a.sync(&va);
+            }
+            if compacted {
+                va.write_snapshot(&mut a.sync, &a.state, &a.clock).unwrap();
+            }
+            let mut b = Device::new();
+            let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+            b.sync(&vb);
+            assert_eq!(b.hosts().len(), 3);
+
+            // A disconnects, adds a host offline, and joins again.
+            a.sync = SyncState::default();
+            a.put(Collection::Hosts, "new", json!({"label": "offline"}));
+            a.sync(&va);
+            va.write_snapshot(&mut a.sync, &a.state, &a.clock).unwrap();
+
+            b.sync(&vb);
+            assert_eq!(b.hosts().len(), 4, "compacted: {compacted}");
+            let mut c = Device::new();
+            let vc = Vault::open(&backend, c.id.clone(), "pw").unwrap();
+            c.sync(&vc);
+            assert_eq!(c.hosts().len(), 4, "compacted: {compacted}");
+        }
     }
 
     #[test]
