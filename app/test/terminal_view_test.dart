@@ -38,6 +38,24 @@ class RecordingEngine implements Engine {
 
   @override
   void terminalPaste(int id, String text) => calls.add('paste');
+
+  /// Whether the "program" takes mouse events.
+  bool takesMouse = false;
+  @override
+  bool terminalMouse(
+    int id,
+    TerminalMouseAction action,
+    TerminalMouseButton? button,
+    int col,
+    int row, {
+    bool shift = false,
+    bool alt = false,
+    bool ctrl = false,
+  }) {
+    if (!takesMouse) return false;
+    calls.add('mouse ${action.name} ${button?.name} $col,$row');
+    return true;
+  }
   @override
   void terminalResize(int id, int cols, int rows) => calls.add('resize $cols x $rows');
   @override
@@ -314,6 +332,49 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
     expect(engine.calls.where((c) => c.startsWith('select word')), isNotEmpty, reason: '${engine.calls}');
+    controller.dispose();
+  });
+
+  testWidgets('a program that asks for the mouse gets clicks, drags and the wheel; Shift selects', (tester) async {
+    final engine = RecordingEngine()..takesMouse = true;
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller)),
+      ),
+    );
+    await tester.pump();
+    controller.grid
+      ..cols = 80
+      ..rows = 24
+      ..mouseReporting = true;
+    final origin = tester.getTopLeft(find.byType(TerminalView));
+
+    final drag = await tester.startGesture(origin + const Offset(2, 2), kind: PointerDeviceKind.mouse);
+    await drag.moveBy(const Offset(40, 0));
+    await drag.up();
+    await tester.pump();
+    final mouse = engine.calls.where((c) => c.startsWith('mouse')).toList();
+    expect(mouse.first, 'mouse press left 0,0');
+    expect(mouse.where((c) => c.startsWith('mouse move left')), isNotEmpty, reason: '$mouse');
+    expect(mouse.last, startsWith('mouse release left'));
+    expect(engine.calls.where((c) => c.startsWith('select')), isEmpty, reason: 'no local selection');
+
+    await tester.sendEventToBinding(
+      PointerScrollEvent(position: origin + const Offset(2, 2), scrollDelta: const Offset(0, 200)),
+    );
+    await tester.pump();
+    expect(engine.calls.last, 'mouse wheelDown null 0,0');
+    expect(engine.calls.where((c) => c.startsWith('scroll')), isEmpty, reason: 'the program scrolls, not us');
+
+    // Shift overrides: a local selection as usual.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    final pick = await tester.startGesture(origin + const Offset(2, 2), kind: PointerDeviceKind.mouse);
+    await pick.up();
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pump();
+    expect(engine.calls.where((c) => c.startsWith('select')), isNotEmpty);
     controller.dispose();
   });
 

@@ -78,7 +78,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -1600662751;
+  int get rustContentHash => 1941647566;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -314,6 +314,17 @@ abstract class RustLibApi extends BaseApi {
   });
 
   List<SessionInfo> crateApiTerminalTerminalList();
+
+  bool crateApiTerminalTerminalMouse({
+    required int id,
+    required TerminalMouseAction action,
+    TerminalMouseButton? button,
+    required int col,
+    required int row,
+    required bool shift,
+    required bool alt,
+    required bool ctrl,
+  });
 
   void crateApiTerminalTerminalNotice({required int id, required String text});
 
@@ -2211,6 +2222,57 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "terminal_list", argNames: []);
 
   @override
+  bool crateApiTerminalTerminalMouse({
+    required int id,
+    required TerminalMouseAction action,
+    TerminalMouseButton? button,
+    required int col,
+    required int row,
+    required bool shift,
+    required bool alt,
+    required bool ctrl,
+  }) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(id, serializer);
+          sse_encode_terminal_mouse_action(action, serializer);
+          sse_encode_opt_box_autoadd_terminal_mouse_button(button, serializer);
+          sse_encode_u_16(col, serializer);
+          sse_encode_u_16(row, serializer);
+          sse_encode_bool(shift, serializer);
+          sse_encode_bool(alt, serializer);
+          sse_encode_bool(ctrl, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 64)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_bool,
+          decodeErrorData: sse_decode_String,
+        ),
+        constMeta: kCrateApiTerminalTerminalMouseConstMeta,
+        argValues: [id, action, button, col, row, shift, alt, ctrl],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalMouseConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_mouse",
+        argNames: [
+          "id",
+          "action",
+          "button",
+          "col",
+          "row",
+          "shift",
+          "alt",
+          "ctrl",
+        ],
+      );
+
+  @override
   void crateApiTerminalTerminalNotice({required int id, required String text}) {
     return handler.executeSync(
       SyncTask(
@@ -2218,7 +2280,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
           sse_encode_String(text, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 64)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 65)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2254,7 +2316,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_String(theme, serializer);
           sse_encode_opt_String(program, serializer);
           sse_encode_opt_String(cwd, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 65)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 66)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_u_32,
@@ -2281,7 +2343,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
           sse_encode_String(text, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 66)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 67)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2307,7 +2369,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 67)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 68)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2336,7 +2398,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_32(id, serializer);
           sse_encode_u_16(cols, serializer);
           sse_encode_u_16(rows, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 68)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 69)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2362,7 +2424,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 69)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 70)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_String,
@@ -2386,7 +2448,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
           sse_encode_i_32(delta, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 70)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 71)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2412,7 +2474,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 71)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 72)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2439,7 +2501,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
           sse_encode_opt_String(query, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 72)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 73)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2469,7 +2531,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
           sse_encode_bool(backward, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 73)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 74)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_box_autoadd_terminal_search_hit,
@@ -2505,7 +2567,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_i_32(line, serializer);
           sse_encode_bool(sideRight, serializer);
           sse_encode_terminal_select_kind(kind, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 74)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 75)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2531,7 +2593,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 75)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 76)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2562,7 +2624,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_16(col, serializer);
           sse_encode_i_32(line, serializer);
           sse_encode_bool(sideRight, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 76)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 77)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2588,7 +2650,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 77)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 78)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_opt_String,
@@ -2618,7 +2680,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
           sse_encode_String(theme, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 78)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 79)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2648,7 +2710,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
           sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 79)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 80)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2674,7 +2736,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 80)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 81)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -2701,7 +2763,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(text, serializer);
           sse_encode_String(filename, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 81)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 82)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_theme_info,
@@ -2727,7 +2789,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_box_autoadd_theme_info(theme, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 82)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 83)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_theme_info,
@@ -2749,7 +2811,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 83)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 84)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_theme_info,
@@ -2845,6 +2907,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TerminalFrame dco_decode_box_autoadd_terminal_frame(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_terminal_frame(raw);
+  }
+
+  @protected
+  TerminalMouseButton dco_decode_box_autoadd_terminal_mouse_button(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_terminal_mouse_button(raw);
   }
 
   @protected
@@ -3140,6 +3210,16 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TerminalFrame? dco_decode_opt_box_autoadd_terminal_frame(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_terminal_frame(raw);
+  }
+
+  @protected
+  TerminalMouseButton? dco_decode_opt_box_autoadd_terminal_mouse_button(
+    dynamic raw,
+  ) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null
+        ? null
+        : dco_decode_box_autoadd_terminal_mouse_button(raw);
   }
 
   @protected
@@ -3565,6 +3645,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TerminalMouseAction dco_decode_terminal_mouse_action(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TerminalMouseAction.values[raw as int];
+  }
+
+  @protected
+  TerminalMouseButton dco_decode_terminal_mouse_button(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return TerminalMouseButton.values[raw as int];
+  }
+
+  @protected
   TerminalRow dco_decode_terminal_row(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -3739,6 +3831,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_terminal_frame(deserializer));
+  }
+
+  @protected
+  TerminalMouseButton sse_decode_box_autoadd_terminal_mouse_button(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_terminal_mouse_button(deserializer));
   }
 
   @protected
@@ -4208,6 +4308,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_terminal_frame(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  TerminalMouseButton? sse_decode_opt_box_autoadd_terminal_mouse_button(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_terminal_mouse_button(deserializer));
     } else {
       return null;
     }
@@ -4723,6 +4836,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TerminalMouseAction sse_decode_terminal_mouse_action(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return TerminalMouseAction.values[inner];
+  }
+
+  @protected
+  TerminalMouseButton sse_decode_terminal_mouse_button(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_i_32(deserializer);
+    return TerminalMouseButton.values[inner];
+  }
+
+  @protected
   TerminalRow sse_decode_terminal_row(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_line = sse_decode_u_16(deserializer);
@@ -4944,6 +5075,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_terminal_frame(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_terminal_mouse_button(
+    TerminalMouseButton self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_terminal_mouse_button(self, serializer);
   }
 
   @protected
@@ -5378,6 +5518,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_terminal_mouse_button(
+    TerminalMouseButton? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_terminal_mouse_button(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_terminal_search_hit(
     TerminalSearchHit? self,
     SseSerializer serializer,
@@ -5751,6 +5904,24 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.altScreen, serializer);
     sse_encode_bool(self.bracketedPaste, serializer);
     sse_encode_bool(self.mouseReporting, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_mouse_action(
+    TerminalMouseAction self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_mouse_button(
+    TerminalMouseButton self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.index, serializer);
   }
 
   @protected

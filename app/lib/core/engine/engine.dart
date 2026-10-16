@@ -42,6 +42,8 @@ export '../../src/rust/api/terminal.dart'
         TerminalEvent,
         TerminalEventKind,
         TerminalFrame,
+        TerminalMouseAction,
+        TerminalMouseButton,
         TerminalRow,
         TerminalSearchHit,
         TerminalSelectKind;
@@ -61,6 +63,19 @@ abstract class Engine {
   Stream<rust_term.TerminalEvent> terminalEvents(int id);
   void terminalWrite(int id, List<int> data);
   void terminalPaste(int id, String text);
+
+  /// Report a mouse event to the program at a zero-based screen cell.
+  /// False when it has not asked for that kind of event.
+  bool terminalMouse(
+    int id,
+    rust_term.TerminalMouseAction action,
+    rust_term.TerminalMouseButton? button,
+    int col,
+    int row, {
+    bool shift = false,
+    bool alt = false,
+    bool ctrl = false,
+  });
   void terminalResize(int id, int cols, int rows);
 
   /// Positive scrolls up into history.
@@ -245,6 +260,26 @@ class RustEngine implements Engine {
 
   @override
   void terminalPaste(int id, String text) => rust_term.terminalPaste(id: id, text: text);
+  @override
+  bool terminalMouse(
+    int id,
+    rust_term.TerminalMouseAction action,
+    rust_term.TerminalMouseButton? button,
+    int col,
+    int row, {
+    bool shift = false,
+    bool alt = false,
+    bool ctrl = false,
+  }) => rust_term.terminalMouse(
+    id: id,
+    action: action,
+    button: button,
+    col: col,
+    row: row,
+    shift: shift,
+    alt: alt,
+    ctrl: ctrl,
+  );
 
   @override
   void terminalResize(int id, int cols, int rows) => rust_term.terminalResize(id: id, cols: cols, rows: rows);

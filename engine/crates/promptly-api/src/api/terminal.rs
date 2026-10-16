@@ -299,6 +299,64 @@ pub fn terminal_write(id: u32, data: Vec<u8>) -> Result<(), String> {
     entry(id)?.session.write(&data).map_err(|e| e.to_string())
 }
 
+/// What the mouse did, for [`terminal_mouse`].
+pub enum TerminalMouseAction {
+    Press,
+    Release,
+    /// Moved, with `button` held or none.
+    Move,
+    WheelUp,
+    WheelDown,
+}
+
+pub enum TerminalMouseButton {
+    Left,
+    Middle,
+    Right,
+}
+
+/// Send a mouse event to the program at a zero-based screen cell, if it
+/// asked for mouse events of that kind (vim with `mouse=a`, tmux). Returns
+/// false when it did not, so the view selects or scrolls as usual.
+#[frb(sync)]
+#[allow(clippy::too_many_arguments)]
+pub fn terminal_mouse(
+    id: u32,
+    action: TerminalMouseAction,
+    button: Option<TerminalMouseButton>,
+    col: u16,
+    row: u16,
+    shift: bool,
+    alt: bool,
+    ctrl: bool,
+) -> Result<bool, String> {
+    use promptly_term::{MouseAction, MouseButton, MouseEvent};
+    let button = button.map(|b| match b {
+        TerminalMouseButton::Left => MouseButton::Left,
+        TerminalMouseButton::Middle => MouseButton::Middle,
+        TerminalMouseButton::Right => MouseButton::Right,
+    });
+    let pressed = button.unwrap_or(MouseButton::Left);
+    let action = match action {
+        TerminalMouseAction::Press => MouseAction::Press(pressed),
+        TerminalMouseAction::Release => MouseAction::Release(pressed),
+        TerminalMouseAction::Move => MouseAction::Move(button),
+        TerminalMouseAction::WheelUp => MouseAction::WheelUp,
+        TerminalMouseAction::WheelDown => MouseAction::WheelDown,
+    };
+    entry(id)?
+        .session
+        .mouse(MouseEvent {
+            action,
+            col,
+            row,
+            shift,
+            alt,
+            ctrl,
+        })
+        .map_err(|e| e.to_string())
+}
+
 /// Paste text, honouring bracketed paste mode.
 #[frb(sync)]
 pub fn terminal_paste(id: u32, text: String) -> Result<(), String> {

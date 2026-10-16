@@ -156,6 +156,17 @@ class FakeEngine implements Engine {
   @override
   void terminalPaste(int id, String text) => pasted.add(text);
   @override
+  bool terminalMouse(
+    int id,
+    TerminalMouseAction action,
+    TerminalMouseButton? button,
+    int col,
+    int row, {
+    bool shift = false,
+    bool alt = false,
+    bool ctrl = false,
+  }) => false;
+  @override
   void terminalResize(int id, int cols, int rows) {}
   @override
   void terminalScroll(int id, int delta) {}

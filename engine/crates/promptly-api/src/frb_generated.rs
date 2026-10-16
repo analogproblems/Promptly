@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1600662751;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1941647566;
 
 // Section: executor
 
@@ -2106,6 +2106,47 @@ fn wire__crate__api__terminal__terminal_list_impl(
         },
     )
 }
+fn wire__crate__api__terminal__terminal_mouse_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "terminal_mouse",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_id = <u32>::sse_decode(&mut deserializer);
+            let api_action =
+                <crate::api::terminal::TerminalMouseAction>::sse_decode(&mut deserializer);
+            let api_button =
+                <Option<crate::api::terminal::TerminalMouseButton>>::sse_decode(&mut deserializer);
+            let api_col = <u16>::sse_decode(&mut deserializer);
+            let api_row = <u16>::sse_decode(&mut deserializer);
+            let api_shift = <bool>::sse_decode(&mut deserializer);
+            let api_alt = <bool>::sse_decode(&mut deserializer);
+            let api_ctrl = <bool>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, String>((move || {
+                let output_ok = crate::api::terminal::terminal_mouse(
+                    api_id, api_action, api_button, api_col, api_row, api_shift, api_alt, api_ctrl,
+                )?;
+                std::result::Result::Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__terminal__terminal_notice_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -3261,6 +3302,19 @@ impl SseDecode for Option<crate::api::terminal::TerminalFrame> {
     }
 }
 
+impl SseDecode for Option<crate::api::terminal::TerminalMouseButton> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::terminal::TerminalMouseButton>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::terminal::TerminalSearchHit> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -3868,6 +3922,34 @@ impl SseDecode for crate::api::terminal::TerminalFrame {
     }
 }
 
+impl SseDecode for crate::api::terminal::TerminalMouseAction {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::terminal::TerminalMouseAction::Press,
+            1 => crate::api::terminal::TerminalMouseAction::Release,
+            2 => crate::api::terminal::TerminalMouseAction::Move,
+            3 => crate::api::terminal::TerminalMouseAction::WheelUp,
+            4 => crate::api::terminal::TerminalMouseAction::WheelDown,
+            _ => unreachable!("Invalid variant for TerminalMouseAction: {}", inner),
+        };
+    }
+}
+
+impl SseDecode for crate::api::terminal::TerminalMouseButton {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::terminal::TerminalMouseButton::Left,
+            1 => crate::api::terminal::TerminalMouseButton::Middle,
+            2 => crate::api::terminal::TerminalMouseButton::Right,
+            _ => unreachable!("Invalid variant for TerminalMouseButton: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for crate::api::terminal::TerminalRow {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4068,28 +4150,29 @@ fn pde_ffi_dispatcher_sync_impl(
         60 => wire__crate__api__terminal__terminal_close_impl(ptr, rust_vec_len, data_len),
         62 => wire__crate__api__terminal__terminal_link_at_impl(ptr, rust_vec_len, data_len),
         63 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
-        64 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
-        65 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
-        66 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
-        67 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
-        68 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
-        69 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
-        70 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
-        71 => {
+        64 => wire__crate__api__terminal__terminal_mouse_impl(ptr, rust_vec_len, data_len),
+        65 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
+        66 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
+        67 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
+        68 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
+        69 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
+        70 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
+        71 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
+        72 => {
             wire__crate__api__terminal__terminal_scroll_to_bottom_impl(ptr, rust_vec_len, data_len)
         }
-        72 => wire__crate__api__terminal__terminal_search_set_impl(ptr, rust_vec_len, data_len),
-        73 => wire__crate__api__terminal__terminal_search_step_impl(ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
-        77 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
-        78 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__themes__theme_delete_impl(ptr, rust_vec_len, data_len),
-        81 => wire__crate__api__themes__theme_import_preview_impl(ptr, rust_vec_len, data_len),
-        82 => wire__crate__api__themes__theme_save_impl(ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
+        73 => wire__crate__api__terminal__terminal_search_set_impl(ptr, rust_vec_len, data_len),
+        74 => wire__crate__api__terminal__terminal_search_step_impl(ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
+        77 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__themes__theme_delete_impl(ptr, rust_vec_len, data_len),
+        82 => wire__crate__api__themes__theme_import_preview_impl(ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__themes__theme_save_impl(ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4930,6 +5013,52 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::terminal::TerminalFrame>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::terminal::TerminalMouseAction {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Press => 0.into_dart(),
+            Self::Release => 1.into_dart(),
+            Self::Move => 2.into_dart(),
+            Self::WheelUp => 3.into_dart(),
+            Self::WheelDown => 4.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::terminal::TerminalMouseAction
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::terminal::TerminalMouseAction>
+    for crate::api::terminal::TerminalMouseAction
+{
+    fn into_into_dart(self) -> crate::api::terminal::TerminalMouseAction {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::terminal::TerminalMouseButton {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            Self::Left => 0.into_dart(),
+            Self::Middle => 1.into_dart(),
+            Self::Right => 2.into_dart(),
+            _ => unreachable!(),
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::terminal::TerminalMouseButton
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::terminal::TerminalMouseButton>
+    for crate::api::terminal::TerminalMouseButton
+{
+    fn into_into_dart(self) -> crate::api::terminal::TerminalMouseButton {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::terminal::TerminalRow {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -5425,6 +5554,16 @@ impl SseEncode for Option<crate::api::terminal::TerminalFrame> {
     }
 }
 
+impl SseEncode for Option<crate::api::terminal::TerminalMouseButton> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::terminal::TerminalMouseButton>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::terminal::TerminalSearchHit> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -5881,6 +6020,42 @@ impl SseEncode for crate::api::terminal::TerminalFrame {
         <bool>::sse_encode(self.alt_screen, serializer);
         <bool>::sse_encode(self.bracketed_paste, serializer);
         <bool>::sse_encode(self.mouse_reporting, serializer);
+    }
+}
+
+impl SseEncode for crate::api::terminal::TerminalMouseAction {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::terminal::TerminalMouseAction::Press => 0,
+                crate::api::terminal::TerminalMouseAction::Release => 1,
+                crate::api::terminal::TerminalMouseAction::Move => 2,
+                crate::api::terminal::TerminalMouseAction::WheelUp => 3,
+                crate::api::terminal::TerminalMouseAction::WheelDown => 4,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
+impl SseEncode for crate::api::terminal::TerminalMouseButton {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::terminal::TerminalMouseButton::Left => 0,
+                crate::api::terminal::TerminalMouseButton::Middle => 1,
+                crate::api::terminal::TerminalMouseButton::Right => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
     }
 }
 

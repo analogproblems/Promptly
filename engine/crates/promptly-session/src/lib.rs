@@ -84,6 +84,17 @@ impl Session {
         self.transport.lock().unwrap().write(data)
     }
 
+    /// Report a mouse event to the program if it asked for mouse events of
+    /// that kind. Returns whether it did, so the caller can otherwise
+    /// select or scroll locally.
+    pub fn mouse(&self, event: promptly_term::MouseEvent) -> io::Result<bool> {
+        let Some(bytes) = self.emulator.lock().unwrap().mouse_report(event) else {
+            return Ok(false);
+        };
+        self.write(&bytes)?;
+        Ok(true)
+    }
+
     /// Paste text the way the running program expects: wrapped in bracketed
     /// paste markers when it asked for them, with newlines as carriage returns.
     pub fn paste(&self, text: &str) -> io::Result<()> {

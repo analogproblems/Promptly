@@ -108,6 +108,26 @@ class TerminalController extends ChangeNotifier {
     _guard(() => engine.terminalPaste(id, text));
   }
 
+  /// Hand a mouse event to the program when it asked for mouse events
+  /// (vim, tmux). False means it did not, and the view handles it locally.
+  bool mouse(
+    TerminalMouseAction action,
+    TerminalMouseButton? button,
+    int col,
+    int row, {
+    bool shift = false,
+    bool alt = false,
+    bool ctrl = false,
+  }) {
+    if (exited || !grid.mouseReporting) return false;
+    try {
+      return engine.terminalMouse(id, action, button, col, row, shift: shift, alt: alt, ctrl: ctrl);
+    } catch (e) {
+      debugPrint('[promptly] engine call failed for session $id: $e');
+      return false;
+    }
+  }
+
   void resize(int cols, int rows) {
     if (cols <= 0 || rows <= 0 || (cols == _cols && rows == _rows)) return;
     _cols = cols;

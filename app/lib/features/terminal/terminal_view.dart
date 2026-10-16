@@ -1,11 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/engine/engine.dart' show TerminalSelectKind;
+import '../../core/engine/engine.dart' show TerminalMouseAction, TerminalMouseButton, TerminalSelectKind;
 import '../../core/platform.dart';
 import '../workspace/app_shortcuts.dart';
 import 'key_mapper.dart';
@@ -394,11 +395,51 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     if (over != _overLink) setState(() => _overLink = over);
   }
 
+  // ---- Mouse reporting -----------------------------------------------------
+  //
+  // A program that asks for the mouse (vim with mouse=a, tmux, htop) gets
+  // clicks, drags and the wheel. Holding Shift selects and scrolls here
+  // instead, as in other terminals.
+
+  /// The button a reported press is holding, until its release.
+  TerminalMouseButton? _reportedButton;
+  _Cell? _reportedCell;
+
+  static TerminalMouseButton? _buttonOf(int buttons) {
+    if (buttons & kPrimaryButton != 0) return TerminalMouseButton.left;
+    if (buttons & kMiddleMouseButton != 0) return TerminalMouseButton.middle;
+    if (buttons & kSecondaryButton != 0) return TerminalMouseButton.right;
+    return null;
+  }
+
+  /// `held`: the drag or release of a press the program already has, which
+  /// it gets whatever Shift does meanwhile.
+  bool _report(TerminalMouseAction action, TerminalMouseButton? button, _Cell cell, {bool held = false}) {
+    final c = widget.controller;
+    final hw = HardwareKeyboard.instance;
+    if ((hw.isShiftPressed && !held) || !c.grid.mouseReporting) return false;
+    return c.mouse(
+      action,
+      button,
+      cell.col.clamp(0, math.max(0, c.grid.cols - 1)),
+      cell.line.clamp(0, math.max(0, c.grid.rows - 1)),
+      alt: hw.isAltPressed,
+      ctrl: hw.isControlPressed,
+    );
+  }
+
   void _onPointerDown(PointerDownEvent e) {
     _focus.requestFocus();
     // Touch selection (long press, handles) comes with the mobile build.
     if (e.kind == PointerDeviceKind.touch) {
       if (_useIme) _openIme();
+      return;
+    }
+    final button = _buttonOf(e.buttons);
+    final at = _cellAt(e.localPosition);
+    if (button != null && _report(TerminalMouseAction.press, button, at)) {
+      _reportedButton = button;
+      _reportedCell = at;
       return;
     }
     if (e.buttons & kSecondaryButton != 0) {
@@ -439,6 +480,13 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   }
 
   void _onPointerMove(PointerMoveEvent e) {
+    if (_reportedButton != null) {
+      final cell = _cellAt(e.localPosition);
+      if (cell.col == _reportedCell?.col && cell.line == _reportedCell?.line) return;
+      _reportedCell = cell;
+      _report(TerminalMouseAction.move, _reportedButton, cell, held: true);
+      return;
+    }
     if (!_dragging || e.buttons & kPrimaryButton == 0) return;
     final cell = _cellAt(e.localPosition);
     if (cell == _lastCell) return;
@@ -454,6 +502,11 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   }
 
   void _onPointerUp(PointerEvent e) {
+    final button = _reportedButton;
+    if (button != null) {
+      _reportedButton = null;
+      _report(TerminalMouseAction.release, button, _cellAt(e.localPosition), held: true);
+    }
     _dragging = false;
   }
 
@@ -491,6 +544,14 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     final lines = _scrollRemainder.truncate();
     if (lines != 0) {
       _scrollRemainder -= lines;
+      final cell = _cellAt(event.localPosition);
+      final wheel = lines > 0 ? TerminalMouseAction.wheelDown : TerminalMouseAction.wheelUp;
+      if (_report(wheel, null, cell)) {
+        for (var i = 1; i < lines.abs(); i++) {
+          _report(wheel, null, cell);
+        }
+        return;
+      }
       // Wheel down (positive dy) moves the view toward the newest output.
       widget.controller.scroll(-lines);
     }
