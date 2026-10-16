@@ -189,10 +189,10 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
       switch (d) {
         case TextEditingDeltaInsertion(:final textInserted):
           _writeText(textInserted.replaceAll('\n', '\r'));
-        case TextEditingDeltaDeletion(:final deletedRange):
-          _erase(deletedRange.end - deletedRange.start);
-        case TextEditingDeltaReplacement(:final replacedRange, :final replacementText):
-          _erase(replacedRange.end - replacedRange.start);
+        case TextEditingDeltaDeletion(:final oldText, :final deletedRange):
+          _erase(_characters(oldText, deletedRange));
+        case TextEditingDeltaReplacement(:final oldText, :final replacedRange, :final replacementText):
+          _erase(_characters(oldText, replacedRange));
           _writeText(replacementText.replaceAll('\n', '\r'));
         case TextEditingDeltaNonTextUpdate():
           break;
@@ -216,23 +216,36 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     while (common < before.length && common < after.length && before[common] == after[common]) {
       common++;
     }
-    _erase(before.length - common);
+    // Never split an emoji's two halves between kept and changed.
+    if (common > 0 && (before.codeUnitAt(common - 1) & 0xFC00) == 0xD800) common--;
+    _erase(before.substring(common).runes.length);
     final typed = after.substring(common);
     if (typed.isNotEmpty) _writeText(typed.replaceAll('\n', '\r'));
     _imeValue = value;
     _trimImeBuffer();
   }
 
+  /// How many characters a range of the buffer holds. Offsets count UTF-16
+  /// units, so an emoji is two of them but one backspace in the shell.
+  static int _characters(String text, TextRange range) {
+    final start = range.start.clamp(0, text.length);
+    final end = range.end.clamp(start, text.length);
+    return text.substring(start, end).runes.length;
+  }
+
   void _erase(int count) {
     if (count > 0) widget.controller.write(List.filled(count, 0x7f));
   }
 
-  /// Start the buffer afresh when it has grown, and nothing is being
-  /// composed, so it never gets big and a backspace keeps meaning "erase
-  /// what I typed".
+  /// Start the buffer afresh when it has grown, or when backspace has used
+  /// up the leading space, and nothing is being composed. It never gets big,
+  /// and the keyboard always has something left to delete, so backspace
+  /// keeps reaching the shell (for a command recalled from history, say).
   void _trimImeBuffer() {
     final composing = _imeValue.composing.isValid && !_imeValue.composing.isCollapsed;
-    if (composing || _imeValue.text.length < _imeBufferLimit) return;
+    if (composing) return;
+    final text = _imeValue.text;
+    if (text.length < _imeBufferLimit && text.startsWith(' ')) return;
     _imeValue = _imeBase;
     _ime?.setEditingState(_imeBase);
   }

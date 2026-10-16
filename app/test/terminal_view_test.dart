@@ -405,4 +405,63 @@ void main() {
     expect(controller.stickyCtrl, isFalse, reason: 'sticky modifiers are one-shot');
     controller.dispose();
   });
+
+  testWidgets('soft keyboard backspace erases whole emoji and keeps working once the buffer is empty', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller, imeInput: true)),
+      ),
+    );
+    await tester.pump();
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+
+    // An emoji is two UTF-16 units but one character to the shell.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' ',
+        textInserted: 'a😀',
+        insertionOffset: 1,
+        selection: TextSelection.collapsed(offset: 4),
+        composing: TextRange.empty,
+      ),
+    ]);
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaDeletion(
+        oldText: ' a😀',
+        deletedRange: TextRange(start: 2, end: 4),
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange.empty,
+      ),
+    ]);
+    expect(engine.written.last, [0x7f], reason: 'one erase, so the "a" survives');
+
+    // Backspace past the start (a command recalled from history): each one
+    // still reaches the shell, because the buffer is refilled.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaDeletion(
+        oldText: ' a',
+        deletedRange: TextRange(start: 1, end: 2),
+        selection: TextSelection.collapsed(offset: 1),
+        composing: TextRange.empty,
+      ),
+    ]);
+    for (var i = 0; i < 3; i++) {
+      final count = engine.written.length;
+      expect(client.currentTextEditingValue!.text, ' ');
+      client.updateEditingValueWithDeltas([
+        const TextEditingDeltaDeletion(
+          oldText: ' ',
+          deletedRange: TextRange(start: 0, end: 1),
+          selection: TextSelection.collapsed(offset: 0),
+          composing: TextRange.empty,
+        ),
+      ]);
+      expect(engine.written.length, count + 1);
+      expect(engine.written.last, [0x7f]);
+    }
+    controller.dispose();
+  });
 }
