@@ -36,4 +36,4 @@ app/rust_builder/**/target/
 dist/
 
 # The docs site, built by tools/site/build.py
-site/
+/site/
