@@ -34,7 +34,7 @@ class HostReachabilityNotifier extends Notifier<Map<String, HostReach>> {
     _timer = Timer.periodic(period, (_) => refresh());
     ref.onDispose(() => _timer?.cancel());
     Future.microtask(refresh);
-    return state.isEmpty ? const {} : state;
+    return stateOrNull ?? const {};
   }
 
   /// Knock now. Hosts that vanished drop out; the rest keep their last

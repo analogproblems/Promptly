@@ -385,7 +385,7 @@ class _FsPaneState extends State<_FsPane> {
       context: context,
       builder: (_) => _PermissionsDialog(name: e.name, mode: e.permissions),
     );
-    if (mode == null || mode == e.permissions) return;
+    if (mode == null || mode == e.permissions & 0xFFF) return;
     await _run(() => widget.fs.chmod(e.path, mode));
   }
 
@@ -393,7 +393,7 @@ class _FsPaneState extends State<_FsPane> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final p = path;
-    final segments = p == null ? const <String>[] : p.split('/').where((s) => s.isNotEmpty).toList();
+    final crumbs = p == null ? const <({String label, String path})>[] : widget.fs.crumbs(p);
     final remote = widget.fs.isRemote;
     final side = remote ? 'remote' : 'local';
 
@@ -487,13 +487,12 @@ class _FsPaneState extends State<_FsPane> {
                   reverse: true,
                   child: Row(
                     children: [
-                      _Crumb(label: '/', onTap: () => go('/')),
-                      for (var i = 0; i < segments.length; i++) ...[
-                        Text('›', style: TextStyle(color: t.muted)),
+                      for (var i = 0; i < crumbs.length; i++) ...[
+                        if (i > 0) Text('›', style: TextStyle(color: t.muted)),
                         _Crumb(
-                          label: segments[i],
-                          onTap: () => go('/${segments.sublist(0, i + 1).join('/')}'),
-                          last: i == segments.length - 1,
+                          label: crumbs[i].label,
+                          onTap: () => go(crumbs[i].path),
+                          last: i > 0 && i == crumbs.length - 1,
                         ),
                       ],
                     ],
@@ -504,7 +503,7 @@ class _FsPaneState extends State<_FsPane> {
                 key: Key('$side-up'),
                 tooltip: 'Up',
                 visualDensity: VisualDensity.compact,
-                onPressed: p == null || p == '/' ? null : () => go(widget.fs.parent(p)),
+                onPressed: p == null || widget.fs.isRoot(p) ? null : () => go(widget.fs.parent(p)),
                 icon: const Icon(Icons.arrow_upward, size: 18),
               ),
               IconButton(
@@ -707,7 +706,8 @@ class _PermissionsDialog extends StatefulWidget {
 }
 
 class _PermissionsDialogState extends State<_PermissionsDialog> {
-  late int _mode = widget.mode & 0x1FF;
+  // The permission bits, with setuid, setgid and sticky kept as they are.
+  late int _mode = widget.mode & 0xFFF;
 
   @override
   Widget build(BuildContext context) {
@@ -897,11 +897,13 @@ class _TextEditorDialogState extends State<TextEditorDialog> {
   Future<void> _save() async {
     if (_loaded == null || _saving) return;
     setState(() => _saving = true);
+    // What is written is what counts as saved: typing carries on meanwhile.
+    final text = _controller.text;
     try {
-      await widget.fs.writeText(widget.entry.path, _controller.text);
+      await widget.fs.writeText(widget.entry.path, text);
       if (!mounted) return;
       setState(() {
-        _loaded = _controller.text;
+        _loaded = text;
         _saving = false;
         _savedOnce = true;
         _error = null;
@@ -956,82 +958,89 @@ class _TextEditorDialogState extends State<TextEditorDialog> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final lines = _loaded == null ? 0 : '\n'.allMatches(_controller.text).length + 1;
-    return Dialog.fullscreen(
-      child: Focus(
-        onKeyEvent: _onKey,
-        // Its own messenger, so "Saved" shows here and not on the screen behind.
-        child: ScaffoldMessenger(
-          child: Scaffold(
-            appBar: AppBar(
-              leading: IconButton(
-                key: const Key('editor-close'),
-                tooltip: 'Close',
-                icon: const Icon(Icons.close),
-                onPressed: _close,
-              ),
-              title: Row(
-                children: [
-                  Flexible(child: Text(widget.entry.name, overflow: TextOverflow.ellipsis)),
-                  if (_dirty)
+    return PopScope(
+      // System Back asks first too, as the close button does.
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _close();
+      },
+      child: Dialog.fullscreen(
+        child: Focus(
+          onKeyEvent: _onKey,
+          // Its own messenger, so "Saved" shows here and not on the screen behind.
+          child: ScaffoldMessenger(
+            child: Scaffold(
+              appBar: AppBar(
+                leading: IconButton(
+                  key: const Key('editor-close'),
+                  tooltip: 'Close',
+                  icon: const Icon(Icons.close),
+                  onPressed: _close,
+                ),
+                title: Row(
+                  children: [
+                    Flexible(child: Text(widget.entry.name, overflow: TextOverflow.ellipsis)),
+                    if (_dirty)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Text('edited', style: TextStyle(fontSize: 12, color: t.warning)),
+                      ),
+                  ],
+                ),
+                actions: [
+                  if (_loaded != null)
                     Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Text('edited', style: TextStyle(fontSize: 12, color: t.warning)),
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Center(
+                        child: Text(
+                          '$lines line${lines == 1 ? '' : 's'} · ${widget.fs.label}',
+                          style: TextStyle(fontSize: 12, color: t.muted),
+                        ),
+                      ),
                     ),
+                  FilledButton.icon(
+                    key: const Key('editor-save'),
+                    onPressed: _loaded == null || _saving || !_dirty ? null : _save,
+                    icon: const Icon(Icons.save_outlined, size: 18),
+                    label: Text(_saving ? 'Saving…' : 'Save'),
+                  ),
+                  const SizedBox(width: 12),
                 ],
               ),
-              actions: [
-                if (_loaded != null)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: Center(
-                      child: Text(
-                        '$lines line${lines == 1 ? '' : 's'} · ${widget.fs.label}',
-                        style: TextStyle(fontSize: 12, color: t.muted),
-                      ),
-                    ),
-                  ),
-                FilledButton.icon(
-                  key: const Key('editor-save'),
-                  onPressed: _loaded == null || _saving || !_dirty ? null : _save,
-                  icon: const Icon(Icons.save_outlined, size: 18),
-                  label: Text(_saving ? 'Saving…' : 'Save'),
-                ),
-                const SizedBox(width: 12),
-              ],
-            ),
-            body: _error != null && _loaded == null
-                ? EmptyState(icon: Icons.description_outlined, title: 'Cannot edit this file', message: _error!)
-                : _loaded == null
-                ? const Center(child: CircularProgressIndicator())
-                : Column(
-                    children: [
-                      if (_error != null)
-                        Container(
-                          width: double.infinity,
-                          color: t.danger.withValues(alpha: 0.12),
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          child: Text(_error!, style: TextStyle(color: t.danger, fontSize: 13)),
-                        ),
-                      Expanded(
-                        child: TextField(
-                          key: const Key('editor-text'),
-                          controller: _controller,
-                          autofocus: true,
-                          maxLines: null,
-                          expands: true,
-                          keyboardType: TextInputType.multiline,
-                          textAlignVertical: TextAlignVertical.top,
-                          style: monoStyle(context, size: 13, color: t.text),
-                          decoration: const InputDecoration(
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            contentPadding: EdgeInsets.all(16),
+              body: _error != null && _loaded == null
+                  ? EmptyState(icon: Icons.description_outlined, title: 'Cannot edit this file', message: _error!)
+                  : _loaded == null
+                  ? const Center(child: CircularProgressIndicator())
+                  : Column(
+                      children: [
+                        if (_error != null)
+                          Container(
+                            width: double.infinity,
+                            color: t.danger.withValues(alpha: 0.12),
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            child: Text(_error!, style: TextStyle(color: t.danger, fontSize: 13)),
+                          ),
+                        Expanded(
+                          child: TextField(
+                            key: const Key('editor-text'),
+                            controller: _controller,
+                            autofocus: true,
+                            maxLines: null,
+                            expands: true,
+                            keyboardType: TextInputType.multiline,
+                            textAlignVertical: TextAlignVertical.top,
+                            style: monoStyle(context, size: 13, color: t.text),
+                            decoration: const InputDecoration(
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              contentPadding: EdgeInsets.all(16),
+                            ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+            ),
           ),
         ),
       ),
