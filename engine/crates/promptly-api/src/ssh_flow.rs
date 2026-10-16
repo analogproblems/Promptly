@@ -41,6 +41,17 @@ pub(crate) static ATTEMPTS: LazyLock<Mutex<HashMap<u32, Arc<Attempt>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 pub(crate) static NEXT_ATTEMPT: AtomicU32 = AtomicU32::new(1);
 
+/// New sessions an attempt registered that the UI has not subscribed to yet,
+/// by attempt. A cancel that arrives in between closes the session instead
+/// of leaving it running unseen.
+pub(crate) static UNCLAIMED: LazyLock<Mutex<HashMap<u32, u32>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The UI has the session: a late cancel of its attempt no longer closes it.
+pub(crate) fn claim_session(session_id: u32) {
+    UNCLAIMED.lock().unwrap().retain(|_, s| *s != session_id);
+}
+
 /// The live SSH connection behind each terminal session, for forwards.
 pub(crate) static CONNECTIONS: LazyLock<Mutex<HashMap<u32, Arc<Connection>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));

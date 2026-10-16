@@ -51,7 +51,8 @@ pub struct Session {
     transport: Mutex<Box<dyn Transport>>,
     exited: Mutex<Option<Option<i32>>>,
     /// Counts transports, so a reader left over from a replaced one can tell
-    /// it no longer speaks for the session. Changed with `transport` locked.
+    /// it no longer speaks for the session. Changed with `emulator` and
+    /// `transport` both locked, so holding either one keeps it still.
     generation: AtomicU64,
 }
 
@@ -208,14 +209,12 @@ impl Session {
     /// the screen and scrollback. The new end is told the current size.
     /// Call [`pump`] again afterwards with the new reader.
     pub fn replace_transport(&self, mut transport: Box<dyn Transport>) {
-        let size = self.emulator.lock().unwrap().size();
-        let _ = transport.resize(size);
-        {
-            let mut old = self.transport.lock().unwrap();
-            old.close();
-            *old = transport;
-            self.generation.fetch_add(1, Ordering::SeqCst);
-        }
+        let emu = self.emulator.lock().unwrap();
+        let _ = transport.resize(emu.size());
+        let mut old = self.transport.lock().unwrap();
+        old.close();
+        *old = transport;
+        self.generation.fetch_add(1, Ordering::SeqCst);
         *self.exited.lock().unwrap() = None;
     }
 
@@ -245,10 +244,12 @@ pub fn pump(
     mut reader: Box<dyn Read + Send>,
     emit: impl Fn(SessionEvent) + Send + 'static,
 ) -> JoinHandle<()> {
+    // Taken now, not on the new thread, so a reader handed over just before a
+    // reconnect can't adopt the newer transport's number.
+    let generation = session.generation.load(Ordering::SeqCst);
     thread::Builder::new()
         .name("promptly-session".into())
         .spawn(move || {
-            let generation = session.generation.load(Ordering::SeqCst);
             let current = || session.generation.load(Ordering::SeqCst) == generation;
             let mut buf = vec![0u8; 64 * 1024];
             let mut last = Instant::now();
@@ -267,15 +268,15 @@ pub fn pump(
                         break;
                     }
                 };
-                if !current() {
-                    // Late output from the old connection: not for this screen.
-                    return;
-                }
                 let elapsed = last.elapsed();
                 if elapsed < MIN_FRAME_GAP {
                     thread::sleep(MIN_FRAME_GAP - elapsed);
                 }
                 let mut emu = session.emulator.lock().unwrap();
+                if !current() {
+                    // Late output from the old connection: not for this screen.
+                    return;
+                }
                 let events = emu.feed(&buf[..n]);
                 let mut exit = false;
                 for event in events {
@@ -291,23 +292,25 @@ pub fn pump(
                     }
                 }
                 emit(SessionEvent::Frame(emu.frame()));
-                drop(emu);
-                last = Instant::now();
                 if exit {
+                    // Still ours while the emulator is locked.
                     session.close();
                     break;
                 }
+                drop(emu);
+                last = Instant::now();
             }
-            let code = {
-                let mut transport = session.transport.lock().unwrap();
-                if !current() {
-                    // The session has a new connection; only the old one ended.
-                    return;
-                }
-                transport.exit_code()
-            };
+            // Locked through the announcement, so a reconnect lands wholly
+            // before (and this stays quiet) or wholly after.
+            let mut transport = session.transport.lock().unwrap();
+            if !current() {
+                // The session has a new connection; only the old one ended.
+                return;
+            }
+            let code = transport.exit_code();
             session.mark_exited(code);
             emit(SessionEvent::Exited { code });
+            drop(transport);
         })
         .expect("spawn session thread")
 }

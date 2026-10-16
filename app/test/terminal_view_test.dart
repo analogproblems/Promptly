@@ -378,6 +378,35 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('moving the mouse without a button is passed on once per cell', (tester) async {
+    final engine = RecordingEngine()..takesMouse = true;
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller)),
+      ),
+    );
+    await tester.pump();
+    controller.grid
+      ..cols = 80
+      ..rows = 24
+      ..mouseReporting = true;
+    final origin = tester.getTopLeft(find.byType(TerminalView));
+
+    final pointer = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await pointer.addPointer(location: origin + const Offset(2, 2));
+    await pointer.moveTo(origin + const Offset(2, 2));
+    await pointer.moveTo(origin + const Offset(3, 3));
+    await pointer.moveTo(origin + const Offset(40, 2));
+    await tester.pump();
+    final moves = engine.calls.where((c) => c.startsWith('mouse move null')).toList();
+    expect(moves, hasLength(2), reason: 'one per cell: $moves');
+    expect(moves.first, 'mouse move null 0,0');
+    await pointer.removePointer();
+    controller.dispose();
+  });
+
   testWidgets('the soft keyboard types into the session, Enter is Return, sticky Ctrl makes control bytes', (
     tester,
   ) async {

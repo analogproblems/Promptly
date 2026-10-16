@@ -279,6 +279,8 @@ pub fn terminal_open_local(
 /// Subscribe to a session's frames. Starts the read loop on first call.
 pub fn terminal_events(id: u32, sink: StreamSink<TerminalEvent>) -> anyhow::Result<()> {
     let entry = entry(id).map_err(anyhow::Error::msg)?;
+    // The UI has the session now, so a late cancel of its connect can't close it.
+    crate::ssh_flow::claim_session(id);
     *entry.sink.lock().unwrap() = Some(sink);
     if let Some(reader) = entry.reader.lock().unwrap().take() {
         let session = entry.session.clone();
@@ -522,6 +524,7 @@ pub fn terminal_screen_text(id: u32) -> Result<String, String> {
 pub fn terminal_close(id: u32) -> Result<(), String> {
     let removed = SESSIONS.lock().unwrap().remove(&id);
     crate::ssh_flow::forget_connection(id);
+    crate::ssh_flow::claim_session(id);
     if let Some(entry) = removed {
         entry.session.close();
         *entry.sink.lock().unwrap() = None;

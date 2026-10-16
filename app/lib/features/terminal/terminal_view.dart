@@ -391,8 +391,14 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   }
 
   void _onHover(PointerHoverEvent e) {
-    final over = _isLinkCell(_cellAt(e.localPosition));
+    final cell = _cellAt(e.localPosition);
+    final over = _isLinkCell(cell);
     if (over != _overLink) setState(() => _overLink = over);
+    // Only programs in any-motion mode take these; the engine drops the rest.
+    if (cell.col != _hoverCell?.col || cell.line != _hoverCell?.line) {
+      _hoverCell = cell;
+      _report(TerminalMouseAction.move, null, cell);
+    }
   }
 
   // ---- Mouse reporting -----------------------------------------------------
@@ -404,6 +410,9 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   /// The button a reported press is holding, until its release.
   TerminalMouseButton? _reportedButton;
   _Cell? _reportedCell;
+
+  /// Where the last buttonless move was, so each cell is reported once.
+  _Cell? _hoverCell;
 
   static TerminalMouseButton? _buttonOf(int buttons) {
     if (buttons & kPrimaryButton != 0) return TerminalMouseButton.left;

@@ -114,6 +114,7 @@ mod tests {
         assert_eq!(encode(TermMode::MOUSE_REPORT_CLICK, drag), None);
         let hover = ev(MouseAction::Move(None), 1, 1);
         assert_eq!(encode(TermMode::MOUSE_DRAG, hover), None);
+        assert_eq!(encode(TermMode::MOUSE_REPORT_CLICK, hover), None);
     }
 
     #[test]
@@ -133,6 +134,10 @@ mod tests {
         let mut ctrl = ev(MouseAction::Press(MouseButton::Right), 0, 0);
         ctrl.ctrl = true;
         assert_eq!(encode(mode, ctrl).unwrap(), b"\x1b[<18;1;1M");
+        // Any-motion mode also gets moves with no button held.
+        let hover = ev(MouseAction::Move(None), 4, 9);
+        let motion = TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE;
+        assert_eq!(encode(motion, hover).unwrap(), b"\x1b[<35;5;10M");
     }
 
     #[test]
