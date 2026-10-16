@@ -147,7 +147,8 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
 
   /// Import a pasted private key. Encrypted keys are kept encrypted; the
   /// passphrase is asked for at connect time. A PuTTY or PEM key that
-  /// could be read in full is stored in OpenSSH form instead.
+  /// could be read in full is stored in OpenSSH form instead, behind the
+  /// same passphrase if it had one.
   Identity import({required String label, required String privateKey, String? passphrase}) {
     final engine = ref.read(engineProvider);
     final info = engine.keyInspect(privateKey, passphrase);

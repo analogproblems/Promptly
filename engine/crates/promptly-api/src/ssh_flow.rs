@@ -25,6 +25,8 @@ pub(crate) struct Attempt {
     pub request: Mutex<Option<SshConnectRequest>>,
     pub sink: Mutex<Option<StreamSink<SshEvent>>>,
     pub pending: Mutex<Pending>,
+    /// The connecting task, stopped when the attempt is cancelled.
+    pub task: Mutex<Option<tokio::task::AbortHandle>>,
 }
 
 impl Attempt {

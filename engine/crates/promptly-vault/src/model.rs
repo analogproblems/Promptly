@@ -43,8 +43,14 @@ pub enum Collection {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Auth {
-    Identity { identity_id: RecordId },
-    Password { password_secret_id: RecordId },
+    Identity {
+        identity_id: RecordId,
+    },
+    /// Without a saved password, it is asked for on each connect.
+    Password {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        password_secret_id: Option<RecordId>,
+    },
     Agent,
     Interactive,
 }
@@ -315,6 +321,32 @@ mod tests {
         assert_eq!(h.port, 22);
         assert_eq!(h.keepalive_seconds, 30);
         assert_eq!(h.sync, SyncPolicy::Vault);
+    }
+
+    #[test]
+    fn a_password_login_need_not_be_remembered() {
+        let ask: Auth = serde_json::from_str(r#"{"kind":"password"}"#).unwrap();
+        assert_eq!(
+            ask,
+            Auth::Password {
+                password_secret_id: None
+            }
+        );
+        assert_eq!(
+            serde_json::to_string(&ask).unwrap(),
+            r#"{"kind":"password"}"#
+        );
+        let id = new_id();
+        let saved: Auth = serde_json::from_str(&format!(
+            r#"{{"kind":"password","password_secret_id":"{id}"}}"#
+        ))
+        .unwrap();
+        assert_eq!(
+            saved,
+            Auth::Password {
+                password_secret_id: Some(id)
+            }
+        );
     }
 
     #[test]

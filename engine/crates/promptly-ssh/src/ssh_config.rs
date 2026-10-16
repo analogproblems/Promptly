@@ -18,6 +18,7 @@ pub struct ConfigHost {
     pub port: Option<u16>,
     /// Expanded (`~` resolved), in the order listed.
     pub identity_files: Vec<PathBuf>,
+    /// As written: one or more `[user@]host[:port]` hops, comma separated.
     pub proxy_jump: Option<String>,
     pub keepalive_seconds: Option<u32>,
     /// `LocalForward`, `RemoteForward` and `DynamicForward` lines, in order.
@@ -283,7 +284,7 @@ pub fn parse(text: &str, ssh_dir: &Path, home: &Path) -> Vec<ConfigHost> {
                 proxy_jump: first
                     .get("proxyjump")
                     .filter(|v| !v.eq_ignore_ascii_case("none"))
-                    .map(|s| s.split(',').next().unwrap_or(s).trim().to_string()),
+                    .map(|s| s.trim().to_string()),
                 keepalive_seconds: first
                     .get("serveraliveinterval")
                     .and_then(|p| p.parse().ok()),

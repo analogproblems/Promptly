@@ -193,6 +193,7 @@ pub fn ssh_connect_begin(request: SshConnectRequest) -> u32 {
             request: Mutex::new(Some(request)),
             sink: Mutex::new(None),
             pending: Mutex::new(Pending::default()),
+            task: Mutex::new(None),
         }),
     );
     id
@@ -223,25 +224,34 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
     let known_hosts = Arc::new(crate::sync_engine::VaultKnownHosts::new());
     let prompter: Arc<dyn Prompter> = Arc::new(UiPrompter(attempt.clone()));
 
-    promptly_ssh::runtime().spawn(async move {
+    let task_attempt = attempt.clone();
+    let task = promptly_ssh::runtime().spawn(async move {
         let result = connect(params, prompter, known_hosts).await;
         match result {
             Ok((transport, reader)) => {
                 let connection = transport.connection();
-                let session_id = match reattach {
-                    Some(id) if session_exists(id) => {
-                        // The session is still open: give it the new connection.
-                        let _ = reattach_session(id, Box::new(transport), Box::new(reader));
-                        id
+                let session_id = {
+                    // Held while registering, so a cancel lands before or after.
+                    let attempts = ATTEMPTS.lock().unwrap();
+                    if !attempts.contains_key(&attempt_id) {
+                        // Cancelled as it connected: dropping it hangs up.
+                        return;
                     }
-                    _ => {
-                        let session = Arc::new(Session::new(
-                            SessionKind::Ssh { host: label },
-                            size,
-                            palette,
-                            Box::new(transport),
-                        ));
-                        register_session(session, Box::new(reader))
+                    match reattach {
+                        Some(id) if session_exists(id) => {
+                            // The session is still open: give it the new connection.
+                            let _ = reattach_session(id, Box::new(transport), Box::new(reader));
+                            id
+                        }
+                        _ => {
+                            let session = Arc::new(Session::new(
+                                SessionKind::Ssh { host: label },
+                                size,
+                                palette,
+                                Box::new(transport),
+                            ));
+                            register_session(session, Box::new(reader))
+                        }
                     }
                 };
                 remember_connection(session_id, connection);
@@ -257,6 +267,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
         }
         ATTEMPTS.lock().unwrap().remove(&attempt_id);
     });
+    *task_attempt.task.lock().unwrap() = Some(task.abort_handle());
     Ok(())
 }
 
@@ -490,5 +501,9 @@ pub fn ssh_cancel(attempt_id: u32) {
         p.secret.take();
         p.keyboard.take();
         *a.sink.lock().unwrap() = None;
+        // Stop it mid-handshake too, so it never logs in or runs anything.
+        if let Some(task) = a.task.lock().unwrap().take() {
+            task.abort();
+        }
     }
 }

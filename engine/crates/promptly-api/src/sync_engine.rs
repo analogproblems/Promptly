@@ -264,7 +264,9 @@ pub fn sftp_params(store: &Store, host_id: &str) -> Result<(ConnectParams, Strin
                 passphrase: None,
             }
         }
-        Auth::Password { password_secret_id } => {
+        Auth::Password {
+            password_secret_id: Some(password_secret_id),
+        } => {
             let password = secrets()
                 .get(&password_secret_id.to_string())
                 .map_err(|e| e.to_string())?
@@ -273,7 +275,11 @@ pub fn sftp_params(store: &Store, host_id: &str) -> Result<(ConnectParams, Strin
                 password: Some(String::from_utf8_lossy(&password).into_owned()),
             }
         }
-        Auth::Agent | Auth::Interactive => {
+        Auth::Password {
+            password_secret_id: None,
+        }
+        | Auth::Agent
+        | Auth::Interactive => {
             return Err(format!(
                 "Sync needs a stored login: edit {} and save a password or pick a key.",
                 host.label
