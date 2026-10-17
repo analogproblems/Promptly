@@ -35,17 +35,20 @@ Future<SyncSetupResult> syncCreateLocalFolder({
   deviceName: deviceName,
 );
 
-/// Join a vault that already exists in a folder, with its passphrase or
-/// its recovery code (either one, whichever is given).
+/// Join a vault that already exists in a folder, with its passphrase, its
+/// recovery code, or a join code shown on a device already in it (the
+/// text of the QR code). Whichever one is given; the first, if several.
 Future<void> syncJoinLocalFolder({
   required String path,
   String? passphrase,
   String? recoveryCode,
+  String? joinCode,
   required String deviceName,
 }) => RustLib.instance.api.crateApiSyncSyncJoinLocalFolder(
   path: path,
   passphrase: passphrase,
   recoveryCode: recoveryCode,
+  joinCode: joinCode,
   deviceName: deviceName,
 );
 
@@ -74,18 +77,21 @@ Future<SyncSetupResult> syncCreateSftp({
   deviceName: deviceName,
 );
 
-/// Join a vault that already exists on a saved host.
+/// Join a vault that already exists on a saved host, as
+/// [`sync_join_local_folder`] does.
 Future<void> syncJoinSftp({
   required String hostId,
   required String remoteDir,
   String? passphrase,
   String? recoveryCode,
+  String? joinCode,
   required String deviceName,
 }) => RustLib.instance.api.crateApiSyncSyncJoinSftp(
   hostId: hostId,
   remoteDir: remoteDir,
   passphrase: passphrase,
   recoveryCode: recoveryCode,
+  joinCode: joinCode,
   deviceName: deviceName,
 );
 
@@ -134,7 +140,8 @@ Future<SyncSetupResult> syncRotateKey({required String passphrase}) =>
     RustLib.instance.api.crateApiSyncSyncRotateKey(passphrase: passphrase);
 
 /// What a QR code for enrolling another device carries, as JSON, or
-/// `None` when sync is not set up. Whoever reads it can read the vault.
+/// `None` when sync is not set up. The same text, pasted on the other
+/// device, is its join code. Whoever reads it can read the vault.
 String? syncQrPayload() => RustLib.instance.api.crateApiSyncSyncQrPayload();
 
 /// Something about the vault itself that another try will not fix: the

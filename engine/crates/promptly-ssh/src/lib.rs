@@ -10,6 +10,7 @@
 //! supplies, so the UI drives the flow without the engine knowing about
 //! dialogs.
 
+pub mod authorized_keys;
 pub mod connect;
 pub mod endpoint;
 pub mod exec;
@@ -36,8 +37,8 @@ pub use files::{join as join_remote_path, RemoteEntry, RemoteFs};
 pub use forward::{Connection, ForwardKind, ForwardSpec, ForwardStatus};
 pub use hostkey::{FileKnownHosts, HostKeyInfo, HostKeyStatus, KnownHosts};
 pub use keys::{
-    generate as generate_key, inspect as inspect_key, public_fingerprint, Generated, Inspected,
-    KeyKind,
+    export as export_key, generate as generate_key, inspect as inspect_key, public_fingerprint,
+    Generated, Inspected, KeyKind,
 };
 pub use reach::{reach, reach_all};
 pub use russh::keys::{Algorithm, PublicKey};

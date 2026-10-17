@@ -128,7 +128,7 @@ Record-level conflicts that matter to the user (both devices renamed the same ho
 
 ### Records kept on one device
 
-A host or key whose `sync` is `local_only` stays on the device that has it, and so do hardware keys, the secrets these refer to (a host's saved password, a key's private half) and any secret marked `local_only` itself. The device works out this set before every sync and keeps it, with a tombstone timestamp for each record: the record's newest `ts` when it was first kept.
+A host or key whose `sync` is `local_only` stays on the device that has it, and so do hardware keys, the secrets these refer to (a host's saved password, a key's private half and its saved passphrase) and any secret marked `local_only` itself. The device works out this set before every sync and keeps it, with a tombstone timestamp for each record: the record's newest `ts` when it was first kept.
 
 - Its operations on these records are never pushed. Its snapshots carry only a tombstone for each, at that timestamp, so a record that was in the vault before disappears from the other devices, and nothing of what is in it now leaves the device.
 - Whatever other devices write about these records is not applied here. The local copy is the only one that counts.
@@ -218,7 +218,7 @@ A backend that knows of a file it cannot hand over yet lists it anyway and repor
 | Local folder | Filesystem | None | Desktop only. Lets Syncthing, rsync, the Dropbox desktop client or anything else do the transport. |
 | iCloud Drive | Platform channel to the ubiquity container; appears to the engine as a local folder | Signed-in Apple ID | Recommended default on Apple. A file iCloud has not downloaded yet is a hidden `.NAME.icloud` placeholder; the local folder lists it as NAME and reports it as not downloaded. On a Mac, reading one asks iCloud to fetch it (`brctl download`); iOS has no such command, so there the file waits until the system downloads it. Today a mirrored iCloud folder works through the local folder backend; the platform channel is still to do. |
 | Google Drive | REST API, the hidden `appDataFolder` scope or a visible folder | OAuth | Recommended default on Android. |
-| SFTP | `russh-sftp` over an existing Promptly host | An identity already in the vault | "Sync to a server you already have." Zero new accounts. |
+| SFTP | `russh-sftp` over an existing Promptly host | An identity already in the vault | "Sync to a server you already have." Zero new accounts. A key with a passphrase needs its passphrase saved (as a `key_passphrase` secret that follows the key), since sync cannot ask. |
 | Dropbox | HTTP API, app-folder scope | OAuth | |
 | OneDrive | Graph API, approot | OAuth | |
 | WebDAV | PROPFIND, GET, PUT, DELETE | Username and password or app password | Nextcloud, Synology, Fastmail and many others. |
@@ -236,7 +236,9 @@ Two ways, both ending with the new device holding the `dek` and knowing where th
 
 **Passphrase.** The user picks the backend on the new device, signs in to it if needed, and types the vault passphrase. The device reads `vault.json`, derives the wrapping key, unwraps the `dek` and pulls. This always works and needs nothing from other devices.
 
-**QR code.** An existing device shows a QR code containing the vault id, the backend type and path, and the `dek`. The new device scans it, signs in to the backend if the backend needs it (iCloud and Drive do; the QR cannot carry that), and pulls. The code is shown for sixty seconds over a dimmed screen, with a reminder that whoever photographs it can read the vault. It is a convenience for two devices in the same hand, not a sharing mechanism.
+**Join code.** An existing device shows a QR code, the join code, containing the vault id, the backend type and path, the `dek`, and a fingerprint of the manifest's wrapped keys (its KDF salt and each wrapping's nonce). The new device signs in to the backend if the backend needs it (iCloud and Drive do; the code cannot carry that), takes the code, and pulls. It refuses a code for another vault, and a code whose fingerprint no longer matches `vault.json`: after a passphrase change or a new `dek` the code is out of date and a new one has to be shown. A code with no fingerprint is refused, and a device shows a code only once it has read the manifest. Refusing a stale code is not revocation: a passphrase change leaves the `dek` as it was, so a code that may have leaked calls for a new `dek` (re-keying).
+
+The code is shown over a dimmed screen with a visible countdown, and closes by itself after sixty seconds, or at once when the app goes to the background, so it is not left up or caught in the app switcher's picture. A reminder says that whoever photographs or copies it can read the vault. Scanning is not in the apps yet, so the code can be copied as text and pasted into the new device's join step. It is a convenience for two devices in the same hand, not a sharing mechanism.
 
 On enrolment the new device writes a `devices` record (name, platform, enrolled time) and, once its first pull completes, a snapshot, so from then on it is as good a source of truth as any other.
 

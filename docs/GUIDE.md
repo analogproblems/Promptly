@@ -278,9 +278,9 @@ You don't have to type in every server by hand.
 
 ## 6. Keys
 
-An SSH key is a pair of matching files: a **private key** that stays on your device, and a **public key** that you put on each server. When you connect, Promptly proves it holds the private key without ever sending it. Keys are safer than passwords and save you typing.
+An SSH key is a pair of matching files: a **private key** that you keep, and a **public key** that you put on each server. When you connect, Promptly proves it holds the private key without ever sending it. Keys are safer than passwords and save you typing.
 
-Your keys are listed on the **Keys** tab, each with its type and fingerprint.
+Your keys are listed on the **Keys** tab, each with its type and fingerprint. Private keys are kept encrypted. If you use sync, they also go to your other devices, encrypted in the vault, unless you keep a key on this device only.
 
 ### Generating a key
 
@@ -292,21 +292,44 @@ Your keys are listed on the **Keys** tab, each with its type and fingerprint.
 
 ### Putting your public key on a server
 
-1. On **Keys**, open the key's **⋮** menu and choose **Copy public key**.
-2. Connect to the server with your password.
-3. Add the copied line to the file `~/.ssh/authorized_keys` on the server. For example, type `echo '` then paste, then type `' >> ~/.ssh/authorized_keys` and press Enter.
+The quick way, for a server you've saved as a host:
+
+1. On **Keys**, open the key's **⋮** menu and choose **Install on a host…**.
+2. Pick the host. Promptly logs in the way the host is set up to. If the host has no saved password or key, type its password.
+3. Tap **Install**. Promptly adds the key to `~/.ssh/authorized_keys` on the server, making the `~/.ssh` folder and the file if they're missing, and says whether it added the key or the server had it already. Running it twice never adds the key twice.
 4. Edit the host, set **Authentication** to **Key**, pick the key, and tap **Save**.
 
 From then on the host logs in with the key.
+
+By hand, for any server:
+
+1. On **Keys**, open the key's **⋮** menu and choose **Copy public key**. **Show public key as QR code** shows the same line as a QR code, for another device's camera.
+2. Connect to the server with your password.
+3. Add the copied line to the file `~/.ssh/authorized_keys` on the server. For example, type `echo '` then paste, then type `' >> ~/.ssh/authorized_keys` and press Enter.
+4. Edit the host as in step 4 above.
 
 ### Importing a key you already have
 
 1. On **Keys**, tap **Import**.
 2. Give the key a name.
 3. Paste the private key into **Private key**, or tap **Choose a file** to pick it. Promptly reads OpenSSH keys (such as `id_ed25519`), PEM files and PuTTY `.ppk` files. PuTTY keys are converted to the OpenSSH format.
-4. If the key is protected by a passphrase, type it in **Passphrase**.
+4. If the key is protected by a passphrase, type it in **Passphrase**. **Remember passphrase** (on unless you turn it off) saves it with the key, so you aren't asked for it when you connect.
 5. To keep it on this device only, turn on **Keep on this device only**.
 6. Tap **Import**.
+
+### Keys with a passphrase
+
+When a key with a passphrase is used and its passphrase isn't saved, Promptly asks for it as it connects. Leave **Remember passphrase** on to save it with the key, encrypted like your other secrets. It then goes wherever the key goes: into the vault with a key that syncs, or nowhere but this device with a key kept on this device only. A saved passphrase is used for connecting, reconnecting, running snippets on many hosts and syncing with a vault on your own server. With it off, the session still uses the passphrase to reconnect, but a new connection asks again.
+
+Keys with a saved passphrase show **passphrase saved** under their name. To stop saving it, open the key's **⋮** menu and choose **Forget saved passphrase**; Promptly asks for it the next time you connect.
+
+### Exporting a private key
+
+Open the key's **⋮** menu and choose **Export private key…**. Anyone who gets the copy can log in wherever the key works, so keep it somewhere safe and delete copies you no longer need.
+
+1. To lock the copy with a passphrase, turn on **Lock the copy with a new passphrase** and type the new passphrase twice. If the key has a passphrase that isn't saved, type it too. With this off, the copy is the key exactly as stored, with its own passphrase if it has one.
+2. Tick **I understand that anyone with the copy can use this key**.
+3. Tap **Copy** to copy it, or, on a computer, **Save to a file…**. On Linux and macOS the saved file can be read only by you.
 
 ### Keeping a key on one device
 
@@ -314,7 +337,7 @@ Open the key's **⋮** menu and choose **Keep on this device only**. The key lea
 
 ### Deleting a key
 
-Open the key's **⋮** menu and choose **Delete**. Promptly tells you if any hosts use the key; they'll need another way to log in. Deleting a key removes the private key from this device, and from your other devices too if you use sync. This can't be undone.
+Open the key's **⋮** menu and choose **Delete**. Promptly tells you if any hosts use the key; they'll need another way to log in. Deleting a key removes the private key (and its saved passphrase) from this device, and from your other devices too if you use sync. This can't be undone.
 
 > **Important** Before deleting a key you made in Promptly, make sure you can still reach your servers another way. Without the private key, a server that only accepts that key will not let you in.
 
@@ -337,7 +360,7 @@ If you use sync, a server you trust on one device is trusted on all of them.
 
 ### Answering login prompts
 
-Depending on the host's authentication method, Promptly may ask you for a password, or show the server's own questions (a two-factor code, for example). Type your answer and tap **Connect** or **Continue**. Tap the eye icon to show a password as you type it.
+Depending on the host's authentication method, Promptly may ask you for a password, a key's passphrase, or show the server's own questions (a two-factor code, for example). Type your answer and tap **Connect** or **Continue**. Tap the eye icon to show a password as you type it. For a key's passphrase, **Remember passphrase** saves it with the key (see [Keys with a passphrase](#keys-with-a-passphrase)).
 
 ### If the connection fails
 
@@ -638,7 +661,7 @@ Turning it on for something that already syncs removes it from your other device
 Go to **Settings › Sync** and tap **Set up** (or tap the sync indicator on the **Hosts** tab). You have three choices:
 
 - **A folder on this computer.** Pick a folder that a sync service already mirrors between your devices: Syncthing, Dropbox, iCloud Drive, Google Drive, OneDrive, or any other. The sync service moves the files; Promptly does the encryption.
-- **Your own server.** Keep the vault in a folder on a server you've already saved in Promptly, reached over SFTP. The host needs a saved password or key, so Promptly can sync without asking you.
+- **Your own server.** Keep the vault in a folder on a server you've already saved in Promptly, reached over SFTP. The host needs a saved password or key, so Promptly can sync without asking you. If the key has a passphrase, connect to the host in the terminal once with **Remember passphrase** on, so it's saved.
 - **This device only.** No sync for now. You can set it up later.
 
 ### Creating a vault
@@ -649,7 +672,7 @@ Go to **Settings › Sync** and tap **Set up** (or tap the sync indicator on the
 4. Tap **Create the vault**.
 5. Promptly shows your **recovery code**. Write it down and keep it somewhere safe, away from this device. Tick **I have written it down somewhere safe** and tap **Done**.
 
-> **Important** Promptly can't reset your passphrase, and doesn't keep your recovery code. If you forget the passphrase, the recovery code is the only way to open the vault. If you lose both, the data in the vault can't be recovered.
+> **Important** Promptly can't reset your passphrase, and doesn't keep your recovery code. If you forget the passphrase, the recovery code is the only way to open the vault. If you lose both, the data in the vault is gone for good: nobody can get it back, not even Promptly. Both the passphrase step and the recovery code step say so.
 
 ### Adding another device
 
@@ -657,11 +680,17 @@ On the other device:
 
 1. Install Promptly and go to **Settings › Sync › Set up**.
 2. Choose the same kind of place, and point it at the same folder (the copy your sync service keeps on this device) or the same server and folder.
-3. Promptly sees the folder already holds a vault. Type its passphrase and tap **Join the vault**. If you've forgotten the passphrase, tap **Use a recovery code instead**.
+3. Promptly sees the folder already holds a vault. Type its passphrase and tap **Join the vault**. If you've forgotten the passphrase, tap **Use a recovery code instead**. To join with a join code instead, see below.
 
 Your hosts, keys and snippets arrive shortly after.
 
-> **Note** **Settings › Sync › Add another device › Show code** displays a QR code for enrolling a phone by scanning. Scanning isn't available in the apps yet, so join with the passphrase for now. Show the code only to your own devices: anyone who photographs it can read your vault.
+To join without typing the passphrase, use a **join code**:
+
+1. On a device already in the vault, go to **Settings › Sync › Add another device** and tap **Show code**. The join code appears as a QR code over a dimmed screen. It closes by itself after 60 seconds, counting down as it goes, and straight away if you switch to another app.
+2. Tap **Copy as text**, and get the text to the new device.
+3. On the new device, at the join step, tap **Use a join code instead**, paste it, and tap **Join the vault**.
+
+Scanning the QR code isn't available in the apps yet, so copy it as text. Show or send the code only to your own devices: anyone who photographs or copies it can read your vault. A join code stops working once the vault's passphrase is changed or the vault is re-keyed. If a code may have been seen by someone else, re-key the vault (**Settings › Sync › Re-key the vault**): changing the passphrase stops the code being accepted, but the key inside it would still read everything written from then on.
 
 ### Checking sync status
 

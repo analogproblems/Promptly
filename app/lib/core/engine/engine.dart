@@ -133,6 +133,10 @@ abstract class Engine {
   /// Run one command on a host with its stored login and no terminal.
   Future<rust_ssh.SshExecResult> sshExec(rust_ssh.SshConnectRequest request, String command, int timeoutSeconds);
 
+  /// Add a public key to `~/.ssh/authorized_keys` on a host, as ssh-copy-id
+  /// does, over the request's login. Returns what happened, in words.
+  Future<String> sshInstallPublicKey(rust_ssh.SshConnectRequest request, String publicKey);
+
   /// Knock on every host's port at once; nothing is sent beyond that.
   Future<List<rust_hosts.Reachability>> hostsReachability(List<rust_hosts.ReachTarget> targets, int timeoutMs);
 
@@ -171,6 +175,10 @@ abstract class Engine {
 
   rust_keys.GeneratedKey keyGenerate(rust_keys.SshKeyKind kind, String comment);
   rust_keys.KeyInfo keyInspect(String privateKey, String? passphrase);
+
+  /// A private key to save elsewhere: as stored, or locked with
+  /// [newPassphrase] (after unlocking it with [passphrase], if it has one).
+  String keyExport(String privateKey, {String? passphrase, String? newPassphrase});
   String keyFingerprint(String publicKey);
 
   /// Hosts in the user's ~/.ssh/config, and importing them.
@@ -192,7 +200,13 @@ abstract class Engine {
   bool syncFolderHasVault(String path);
   String syncDefaultDeviceName();
   Future<rust_sync.SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName);
-  Future<void> syncJoinLocalFolder(String path, {String? passphrase, String? recoveryCode, required String deviceName});
+  Future<void> syncJoinLocalFolder(
+    String path, {
+    String? passphrase,
+    String? recoveryCode,
+    String? joinCode,
+    required String deviceName,
+  });
   Future<bool> syncSftpFolderHasVault(String hostId, String remoteDir);
   Future<rust_sync.SyncSetupResult> syncCreateSftp(
     String hostId,
@@ -205,6 +219,7 @@ abstract class Engine {
     String remoteDir, {
     String? passphrase,
     String? recoveryCode,
+    String? joinCode,
     required String deviceName,
   });
   Future<rust_sync.SyncStatus> syncNow();
@@ -227,6 +242,8 @@ abstract class Engine {
   /// code (returned, to show once). Devices with only the old key, removed
   /// ones included, can read nothing written from now on.
   Future<rust_sync.SyncSetupResult> syncRotateKey(String passphrase);
+
+  /// The join code another device can enrol with: the QR code's text.
   String? syncQrPayload();
 }
 
@@ -387,6 +404,10 @@ class RustEngine implements Engine {
       rust_ssh.sshExec(request: request, command: command, timeoutSeconds: timeoutSeconds);
 
   @override
+  Future<String> sshInstallPublicKey(rust_ssh.SshConnectRequest request, String publicKey) =>
+      rust_ssh.sshInstallPublicKey(request: request, publicKey: publicKey);
+
+  @override
   Future<List<rust_hosts.Reachability>> hostsReachability(List<rust_hosts.ReachTarget> targets, int timeoutMs) =>
       rust_hosts.hostsReachability(targets: targets, timeoutMs: timeoutMs);
 
@@ -459,6 +480,10 @@ class RustEngine implements Engine {
       rust_keys.keyInspect(privateKey: privateKey, passphrase: passphrase);
 
   @override
+  String keyExport(String privateKey, {String? passphrase, String? newPassphrase}) =>
+      rust_keys.keyExport(privateKey: privateKey, passphrase: passphrase, newPassphrase: newPassphrase);
+
+  @override
   String keyFingerprint(String publicKey) => rust_keys.keyFingerprint(publicKey: publicKey);
 
   @override
@@ -505,11 +530,13 @@ class RustEngine implements Engine {
     String path, {
     String? passphrase,
     String? recoveryCode,
+    String? joinCode,
     required String deviceName,
   }) => rust_sync.syncJoinLocalFolder(
     path: path,
     passphrase: passphrase,
     recoveryCode: recoveryCode,
+    joinCode: joinCode,
     deviceName: deviceName,
   );
 
@@ -531,12 +558,14 @@ class RustEngine implements Engine {
     String remoteDir, {
     String? passphrase,
     String? recoveryCode,
+    String? joinCode,
     required String deviceName,
   }) => rust_sync.syncJoinSftp(
     hostId: hostId,
     remoteDir: remoteDir,
     passphrase: passphrase,
     recoveryCode: recoveryCode,
+    joinCode: joinCode,
     deviceName: deviceName,
   );
 

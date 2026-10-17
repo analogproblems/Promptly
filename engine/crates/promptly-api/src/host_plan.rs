@@ -59,6 +59,7 @@ struct Login {
     auth: SshAuthKind,
     password: Option<String>,
     private_key: Option<String>,
+    passphrase: Option<String>,
 }
 
 fn host(store: &Store, id: &str) -> Result<Option<Host>, String> {
@@ -119,12 +120,28 @@ fn login(
                 &secret_id,
                 format!("the key for {label} is missing on this device"),
             )?;
+            // A locked key opens with the passphrase saved with it.
+            let passphrase = match identity.passphrase_secret_id {
+                Some(id) => secrets
+                    .get(&id.to_string())
+                    .map_err(|e| e.to_string())?
+                    .map(|p| String::from_utf8_lossy(&p).into_owned()),
+                None => None,
+            };
+            if passphrase.is_none()
+                && promptly_ssh::inspect_key(&private_key, None).is_ok_and(|i| i.encrypted)
+            {
+                return Err(format!(
+                    "The key for {label} has a passphrase that is not saved. Connect to {label} in the terminal once, with Remember passphrase on."
+                ));
+            }
             Ok(Login {
                 user,
                 port,
                 auth: SshAuthKind::Key,
                 password: None,
                 private_key: Some(private_key),
+                passphrase,
             })
         }
         Auth::Password {
@@ -138,6 +155,7 @@ fn login(
                 format!("the saved password for {label} is missing"),
             )?),
             private_key: None,
+            passphrase: None,
         }),
         Auth::Password {
             password_secret_id: None,
@@ -194,7 +212,7 @@ pub fn unattended_request(
                 auth: l.auth,
                 password: l.password,
                 private_key: l.private_key,
-                passphrase: None,
+                passphrase: l.passphrase,
             },
         );
         next = jump_host_id(&hop, &groups);
@@ -207,7 +225,7 @@ pub fn unattended_request(
         auth: login_.auth,
         password: login_.password,
         private_key: login_.private_key,
-        passphrase: None,
+        passphrase: login_.passphrase,
         cols: 80,
         rows: 24,
         theme: String::new(),

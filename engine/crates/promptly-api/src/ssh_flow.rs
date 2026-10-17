@@ -106,6 +106,13 @@ pub(crate) fn attempt(id: u32) -> Result<Arc<Attempt>, String> {
         .ok_or_else(|| format!("no connection attempt {id}"))
 }
 
+/// Whether a secret the connect flow asks for is a private key's
+/// passphrase (the first time, or after a wrong one) rather than a
+/// password. The flow words every such question this way.
+pub(crate) fn is_key_passphrase(prompt: &str) -> bool {
+    prompt.ends_with("Passphrase for the private key")
+}
+
 /// The UI, as the connect flow sees it: every question becomes an event and
 /// a oneshot the matching answer function completes.
 pub(crate) struct UiPrompter(pub Arc<Attempt>);
@@ -154,6 +161,7 @@ impl Prompter for UiPrompter {
         let (tx, rx) = oneshot::channel();
         self.0.pending.lock().unwrap().secret = Some(tx);
         let mut e = SshEvent::blank(SshEventKind::Secret);
+        e.secret_for_key = is_key_passphrase(&prompt);
         e.secret_prompt = Some(prompt);
         self.0.emit(e);
         Box::pin(async move { rx.await.unwrap_or(None) })
@@ -197,5 +205,14 @@ mod tests {
         let hop = &request.jumps[0];
         assert_eq!(hop.private_key.as_deref(), Some(""));
         assert_eq!(hop.passphrase.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn key_passphrase_questions_are_told_from_passwords() {
+        assert!(is_key_passphrase("Passphrase for the private key"));
+        assert!(is_key_passphrase(
+            "Wrong passphrase. Passphrase for the private key"
+        ));
+        assert!(!is_key_passphrase("Password for ops@web-1"));
     }
 }

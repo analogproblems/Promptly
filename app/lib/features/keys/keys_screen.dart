@@ -8,7 +8,9 @@ import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
+import '../lock/app_lock.dart';
 import '../shell/empty_state.dart';
+import 'key_actions.dart';
 
 class KeysScreen extends ConsumerWidget {
   const KeysScreen({super.key});
@@ -57,6 +59,25 @@ class KeysScreen extends ConsumerWidget {
     if (ok == true) ref.read(identitiesProvider.notifier).delete(identity.id);
   }
 
+  /// The private key is shown only after the same check as using it.
+  Future<void> _export(BuildContext context, WidgetRef ref, Identity identity) async {
+    if (!await ref.read(appLockProvider.notifier).unlockKeys()) {
+      if (context.mounted) notYet(context, 'The key stays locked, so it was not exported.');
+      return;
+    }
+    if (!context.mounted) return;
+    await showDialog<void>(context: context, builder: (_) => ExportKeyDialog(identity: identity));
+  }
+
+  void _forgetPassphrase(BuildContext context, WidgetRef ref, Identity identity) {
+    try {
+      ref.read(identitiesProvider.notifier).forgetPassphrase(identity.id);
+      notYet(context, 'The passphrase for ${identity.label} is forgotten. It is asked for when you next connect.');
+    } catch (e) {
+      notYet(context, 'Could not forget it: $e');
+    }
+  }
+
   void _setLocalOnly(BuildContext context, WidgetRef ref, Identity identity, bool localOnly) {
     try {
       ref.read(identitiesProvider.notifier).setLocalOnly(identity.id, localOnly);
@@ -82,15 +103,16 @@ class KeysScreen extends ConsumerWidget {
       children: [
         PageHeader(
           title: 'Keys',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
+          // Wraps on a narrow phone at large text instead of overflowing.
+          trailing: Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               OutlinedButton.icon(
                 onPressed: () => _import(context, ref),
                 icon: const Icon(Icons.file_download_outlined, size: 18),
                 label: const Text('Import'),
               ),
-              const SizedBox(width: 8),
               FilledButton.icon(
                 key: const Key('keys-generate'),
                 onPressed: () => _generate(context, ref),
@@ -105,7 +127,9 @@ class KeysScreen extends ConsumerWidget {
               ? EmptyState(
                   icon: Icons.key_outlined,
                   title: 'No keys yet',
-                  message: 'Generate an ed25519 key in one tap, or import one you already have. Private keys stay on this device, readable only by you.',
+                  message: 'Generate an ed25519 key in one tap, or import one you already have. '
+                      'Private keys are kept encrypted. With sync on they also go to your other devices, '
+                      'encrypted in the vault, unless you keep a key on this device only.',
                   action: OutlinedButton.icon(
                     onPressed: () => _generate(context, ref),
                     icon: const Icon(Icons.add),
@@ -129,7 +153,8 @@ class KeysScreen extends ConsumerWidget {
                         leading: Icon(Icons.key_outlined, color: t.accent),
                         title: Text(id.label, style: monoStyle(context, size: 14, weight: FontWeight.w600)),
                         subtitle: Text(
-                          '${id.keyType.toUpperCase()}${id.localOnly ? ' · this device only' : ''} · $fingerprint',
+                          '${id.keyType.toUpperCase()}${id.localOnly ? ' · this device only' : ''}'
+                          '${id.passphraseSecretId != null ? ' · passphrase saved' : ''} · $fingerprint',
                           style: monoStyle(context, size: 11, color: t.muted),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -141,6 +166,14 @@ class KeysScreen extends ConsumerWidget {
                               case 'copy':
                                 Clipboard.setData(ClipboardData(text: id.publicKey));
                                 notYet(context, 'Public key copied.');
+                              case 'qr':
+                                showDialog<void>(context: context, builder: (_) => PublicKeyQrDialog(identity: id));
+                              case 'install':
+                                showDialog<void>(context: context, builder: (_) => InstallKeyDialog(identity: id));
+                              case 'export':
+                                _export(context, ref, id);
+                              case 'forget':
+                                _forgetPassphrase(context, ref, id);
                               case 'local':
                                 _setLocalOnly(context, ref, id, !id.localOnly);
                               case 'delete':
@@ -149,6 +182,27 @@ class KeysScreen extends ConsumerWidget {
                           },
                           itemBuilder: (_) => [
                             const PopupMenuItem(value: 'copy', child: Text('Copy public key')),
+                            const PopupMenuItem(
+                              key: Key('key-show-qr'),
+                              value: 'qr',
+                              child: Text('Show public key as QR code'),
+                            ),
+                            const PopupMenuItem(
+                              key: Key('key-install'),
+                              value: 'install',
+                              child: Text('Install on a host…'),
+                            ),
+                            const PopupMenuItem(
+                              key: Key('key-export'),
+                              value: 'export',
+                              child: Text('Export private key…'),
+                            ),
+                            if (id.passphraseSecretId != null)
+                              const PopupMenuItem(
+                                key: Key('key-forget-passphrase'),
+                                value: 'forget',
+                                child: Text('Forget saved passphrase'),
+                              ),
                             PopupMenuItem(
                               key: const Key('key-toggle-local-only'),
                               value: 'local',
@@ -272,6 +326,7 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
   final _key = TextEditingController();
   final _passphrase = TextEditingController();
   bool _localOnly = false;
+  bool _remember = true;
   String? _error;
 
   @override
@@ -306,6 +361,7 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
             privateKey: _key.text,
             passphrase: _passphrase.text.isEmpty ? null : _passphrase.text,
             localOnly: _localOnly,
+            rememberPassphrase: _remember,
           );
       Navigator.pop(context);
     } catch (e) {
@@ -353,10 +409,21 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
             ),
             const SizedBox(height: 10),
             TextField(
+              key: const Key('key-import-passphrase'),
               controller: _passphrase,
               obscureText: true,
+              onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(labelText: 'Passphrase, if the key has one'),
             ),
+            if (_passphrase.text.isNotEmpty)
+              SwitchListTile(
+                key: const Key('key-import-remember'),
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Remember passphrase'),
+                subtitle: const Text('Saved with the key, encrypted, so connecting does not ask for it.'),
+                value: _remember,
+                onChanged: (v) => setState(() => _remember = v),
+              ),
             SwitchListTile(
               key: const Key('key-import-local-only'),
               contentPadding: EdgeInsets.zero,

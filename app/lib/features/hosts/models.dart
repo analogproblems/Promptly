@@ -320,6 +320,17 @@ class Identity {
         sync: sync ?? this.sync,
       );
 
+  /// The same key with its saved passphrase at [secretId], or none.
+  Identity withPassphraseSecret(String? secretId) => Identity(
+        id: id,
+        label: label,
+        keyType: keyType,
+        publicKey: publicKey,
+        privateKeySecretId: privateKeySecretId,
+        passphraseSecretId: secretId,
+        sync: sync,
+      );
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'label': label,

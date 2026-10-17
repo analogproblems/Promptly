@@ -39,7 +39,14 @@ class ConnectingView extends StatelessWidget {
                   else if (flow.hostKey != null)
                     _HostKeyPanel(key_: flow.hostKey!, onAnswer: flow.answerHostKey)
                   else if (flow.secretPrompt != null)
-                    _SecretPanel(prompt: flow.secretPrompt!, onAnswer: flow.answerSecret)
+                    _SecretPanel(
+                      // A new question gets a fresh field and switch.
+                      key: ValueKey(flow.secretPrompt),
+                      prompt: flow.secretPrompt!,
+                      offerRemember: flow.secretForKey && flow.canRememberPassphrase,
+                      isPassphrase: flow.secretForKey,
+                      onAnswer: (secret, remember) => flow.answerSecret(secret, remember: remember),
+                    )
                   else if (flow.keyboard != null)
                     _KeyboardPanel(
                       name: flow.keyboard!.name,
@@ -216,9 +223,22 @@ class _HostKeyPanel extends StatelessWidget {
 }
 
 class _SecretPanel extends StatefulWidget {
-  const _SecretPanel({required this.prompt, required this.onAnswer});
+  const _SecretPanel({
+    super.key,
+    required this.prompt,
+    required this.onAnswer,
+    this.isPassphrase = false,
+    this.offerRemember = false,
+  });
   final String prompt;
-  final void Function(String?) onAnswer;
+
+  /// The answer and whether to remember it with its key.
+  final void Function(String?, bool remember) onAnswer;
+  final bool isPassphrase;
+
+  /// A key passphrase that can be saved with its key: a switch, on unless
+  /// turned off.
+  final bool offerRemember;
 
   @override
   State<_SecretPanel> createState() => _SecretPanelState();
@@ -227,6 +247,9 @@ class _SecretPanel extends StatefulWidget {
 class _SecretPanelState extends State<_SecretPanel> {
   final _controller = TextEditingController();
   bool _show = false;
+  bool _remember = true;
+
+  void _answer(String? secret) => widget.onAnswer(secret, widget.offerRemember && _remember);
 
   @override
   void dispose() {
@@ -249,9 +272,9 @@ class _SecretPanelState extends State<_SecretPanel> {
             autofocus: true,
             obscureText: !_show,
             style: monoStyle(context, size: 14),
-            onSubmitted: (v) => widget.onAnswer(v),
+            onSubmitted: _answer,
             decoration: InputDecoration(
-              hintText: 'Password',
+              hintText: widget.isPassphrase ? 'Passphrase' : 'Password',
               suffixIcon: IconButton(
                 tooltip: _show ? 'Hide' : 'Show',
                 icon: Icon(_show ? Icons.visibility_off_outlined : Icons.visibility_outlined),
@@ -259,13 +282,28 @@ class _SecretPanelState extends State<_SecretPanel> {
               ),
             ),
           ),
+          if (widget.offerRemember)
+            // Its own Material, so the panel's colour does not hide the ink.
+            Material(
+              type: MaterialType.transparency,
+              child: SwitchListTile(
+                key: const Key('secret-remember'),
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Remember passphrase'),
+                subtitle: const Text(
+                  'Saved with the key, encrypted, so it is not asked for again. It stays on this device if the key does.',
+                ),
+                value: _remember,
+                onChanged: (v) => setState(() => _remember = v),
+              ),
+            ),
           const SizedBox(height: 12),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              FilledButton(onPressed: () => widget.onAnswer(_controller.text), child: const Text('Connect')),
-              OutlinedButton(onPressed: () => widget.onAnswer(null), child: const Text('Cancel')),
+              FilledButton(onPressed: () => _answer(_controller.text), child: const Text('Connect')),
+              OutlinedButton(onPressed: () => _answer(null), child: const Text('Cancel')),
             ],
           ),
         ],

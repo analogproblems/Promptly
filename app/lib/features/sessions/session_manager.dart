@@ -35,6 +35,11 @@ class SessionEntry extends ChangeNotifier {
   /// The saved host this session was opened from, if any.
   final String? hostId;
 
+  /// The saved keys its connection uses, one per step, as the host was
+  /// when it was opened: a retry or reconnect sends the same request, so
+  /// these stay with it whatever the host has become since.
+  List<String?>? keyOwners;
+
   /// The host's colour name, so you always know which box you are typing
   /// into. Null for local shells and one-off connections.
   final String? color;
@@ -189,6 +194,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       state = [...state, entry];
       return entry;
     }
+    entry.keyOwners = _keyOwners(host);
     _startFlow(entry, engine, plan.request!);
     state = [...state, entry];
     return entry;
@@ -229,7 +235,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           auth: hopLogin.kind,
           password: hopLogin.password,
           privateKey: hopLogin.privateKey,
-          passphrase: null,
+          passphrase: hopLogin.passphrase,
         ),
       );
       next = _jumpHostIdFor(hop);
@@ -243,7 +249,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       auth: login.kind,
       password: login.password,
       privateKey: login.privateKey,
-      passphrase: null,
+      passphrase: login.passphrase,
       cols: 80,
       rows: 24,
       theme: theme,
@@ -280,9 +286,15 @@ class SessionManager extends Notifier<List<SessionEntry>> {
 
   /// How to log in to a host: its own settings, with the group filling in
   /// what it leaves blank.
-  ({String username, int port, SshAuthKind kind, String? password, String? privateKey, String? problem}) _loginFor(
-    Host host,
-  ) {
+  ({
+    String username,
+    int port,
+    SshAuthKind kind,
+    String? password,
+    String? privateKey,
+    String? passphrase,
+    String? problem,
+  }) _loginFor(Host host) {
     final engine = ref.read(engineProvider);
     final inherited = _inherited(host);
     final username = inherited.username;
@@ -299,6 +311,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           kind: SshAuthKind.key,
           password: null,
           privateKey: privateKey,
+          passphrase: ref.read(identitiesProvider.notifier).passphraseFor(identity),
           problem: privateKey == null ? 'The key for this host is missing. Edit the host and pick a key.' : null,
         );
       case AuthKind.password:
@@ -309,6 +322,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           kind: SshAuthKind.password,
           password: secretId == null ? null : _secret(engine, secretId),
           privateKey: null,
+          passphrase: null,
           problem: null,
         );
       case AuthKind.agent:
@@ -318,6 +332,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           kind: SshAuthKind.agent,
           password: null,
           privateKey: null,
+          passphrase: null,
           problem: null,
         );
       // The engine always tries a login without credentials first, so these
@@ -330,6 +345,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           kind: SshAuthKind.interactive,
           password: null,
           privateKey: null,
+          passphrase: null,
           problem: null,
         );
     }
@@ -365,10 +381,95 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       request: request,
       unlock: () => ref.read(appLockProvider.notifier).unlockKeys(),
     );
+    // Saved hosts use saved keys, which can keep their passphrase.
+    final owners = entry.keyOwners;
+    flow.canRememberPassphrase = owners != null;
+    flow.onKeyPassphrase = (passphrase, remember) => _keyPassphraseTyped(engine, flow, owners, passphrase, remember);
     entry.setFlow(flow);
     flow.addListener(() => _onFlow(entry, engine, flow));
     flow.start();
   }
+
+  /// The saved keys a saved host's connection uses, in the order the
+  /// request uses them: its jump hosts nearest this device first, then the
+  /// host. Null where a step logs in some other way.
+  List<String?> _keyOwners(Host host) {
+    String? keyOf(Host h) {
+      final auth = _inherited(h).auth;
+      return auth.kind == AuthKind.identity ? auth.identityId : null;
+    }
+
+    final owners = <String?>[keyOf(host)];
+    final seen = <String>{host.id};
+    var next = _jumpHostIdFor(host);
+    while (next != null && seen.add(next)) {
+      final hop = ref.read(hostsProvider.notifier).byId(next);
+      if (hop == null) break;
+      owners.insert(0, keyOf(hop));
+      next = _jumpHostIdFor(hop);
+    }
+    return owners;
+  }
+
+  /// A passphrase typed for a locked key. The keys are unlocked in the
+  /// order they are used (jump hosts first, nearest first, then the
+  /// host), so the one asking is the first it opens that does not have it
+  /// yet. It goes into the request, so a reconnect does not ask again,
+  /// and, with [remember], is saved with the key that step logs in with
+  /// ([owners], one per step). A wrong one is left alone: the engine asks
+  /// again.
+  void _keyPassphraseTyped(
+    Engine engine,
+    ConnectFlow flow,
+    List<String?>? owners,
+    String passphrase,
+    bool remember,
+  ) {
+    final r = flow.request;
+    bool opens(String? key, String? known) {
+      if (key == null || known == passphrase) return false;
+      try {
+        if (!engine.keyInspect(key, null).encrypted) return false;
+        engine.keyInspect(key, passphrase);
+        return true;
+      } catch (_) {
+        return false; // not this key's passphrase
+      }
+    }
+
+    int? opened;
+    final jumps = <SshHop>[];
+    for (final (i, h) in r.jumps.indexed) {
+      final here = opened == null && opens(h.privateKey, h.passphrase);
+      if (here) opened = i;
+      jumps.add(here ? _hopWithPassphrase(h, passphrase) : h);
+    }
+    final target = opened == null && opens(r.privateKey, r.passphrase);
+    if (target) opened = r.jumps.length;
+    if (opened == null) return;
+    flow.request = _withKeyPassphrases(r, jumps, target ? passphrase : r.passphrase);
+    if (!remember || !flow.canRememberPassphrase) return;
+    final owner = owners != null && owners.length == r.jumps.length + 1 ? owners[opened] : null;
+    if (owner == null) return;
+    try {
+      ref.read(identitiesProvider.notifier).savePassphrase(owner, passphrase);
+    } catch (_) {
+      // Not saved: it is asked for next time, as before.
+    }
+  }
+
+  static SshHop _hopWithPassphrase(SshHop h, String passphrase) => SshHop(
+        user: h.user,
+        host: h.host,
+        port: h.port,
+        auth: h.auth,
+        password: h.password,
+        privateKey: h.privateKey,
+        passphrase: passphrase,
+      );
+
+  static SshConnectRequest _withKeyPassphrases(SshConnectRequest r, List<SshHop> jumps, String? passphrase) =>
+      copyRequest(r, jumps: jumps, passphrase: passphrase);
 
   void _onFlow(SessionEntry entry, Engine engine, ConnectFlow flow) {
     if (entry.flow != flow) return; // a newer attempt replaced this one
@@ -530,3 +631,33 @@ class SessionManager extends Notifier<List<SessionEntry>> {
 
 final sessionManagerProvider =
     NotifierProvider<SessionManager, List<SessionEntry>>(SessionManager.new);
+
+/// [r] with whatever is given in place of its own.
+SshConnectRequest copyRequest(
+  SshConnectRequest r, {
+  SshAuthKind? auth,
+  String? password,
+  String? passphrase,
+  List<SshHop>? jumps,
+}) =>
+    SshConnectRequest(
+      user: r.user,
+      host: r.host,
+      port: r.port,
+      auth: auth ?? r.auth,
+      password: password ?? r.password,
+      privateKey: r.privateKey,
+      passphrase: passphrase ?? r.passphrase,
+      cols: r.cols,
+      rows: r.rows,
+      theme: r.theme,
+      label: r.label,
+      keepaliveSeconds: r.keepaliveSeconds,
+      reattachSessionId: r.reattachSessionId,
+      jumps: jumps ?? r.jumps,
+      persistent: r.persistent,
+      startupCommand: r.startupCommand,
+      env: r.env,
+      agentForward: r.agentForward,
+      forwards: r.forwards,
+    );

@@ -89,13 +89,20 @@ class PageHeader extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (leading != null) ...[leading!, const SizedBox(width: 4)],
-              Text(
-                title,
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.5,
-                  color: t.text,
+              // On a narrow phone at large text the title shrinks to fit.
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.5,
+                      color: t.text,
+                    ),
+                  ),
                 ),
               ),
             ],

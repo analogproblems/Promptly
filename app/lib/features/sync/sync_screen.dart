@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
@@ -14,6 +13,7 @@ import '../lock/app_lock.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
 import '../shell/empty_state.dart';
+import 'join_code_view.dart';
 import 'sync_providers.dart';
 
 /// Where the vault lives and how it is doing. Before setup this is the
@@ -62,6 +62,10 @@ enum _Place { folder, sftp, none }
 
 enum _Step { place, folder, server, create, join }
 
+/// What opens the vault when joining: its passphrase, its recovery code,
+/// or a join code copied from a device already in it.
+enum _JoinWith { passphrase, recoveryCode, joinCode }
+
 class SetupWizard extends ConsumerStatefulWidget {
   const SetupWizard({super.key});
 
@@ -77,9 +81,10 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
   final _pass = TextEditingController();
   final _confirm = TextEditingController();
   final _code = TextEditingController();
+  final _joinCode = TextEditingController();
   final _remote = TextEditingController(text: 'Promptly Vault');
   String? _hostId;
-  bool _useCode = false;
+  _JoinWith _joinWith = _JoinWith.passphrase;
   bool _busy = false;
   String? _error;
 
@@ -103,6 +108,7 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
     _pass.dispose();
     _confirm.dispose();
     _code.dispose();
+    _joinCode.dispose();
     _remote.dispose();
     super.dispose();
   }
@@ -201,19 +207,24 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
     });
     try {
       final engine = ref.read(engineProvider);
+      final passphrase = _joinWith == _JoinWith.passphrase ? _pass.text : null;
+      final recoveryCode = _joinWith == _JoinWith.recoveryCode ? _code.text : null;
+      final joinCode = _joinWith == _JoinWith.joinCode ? _joinCode.text.trim() : null;
       if (_place == _Place.sftp) {
         await engine.syncJoinSftp(
           _hostId!,
           _remote.text.trim(),
-          passphrase: _useCode ? null : _pass.text,
-          recoveryCode: _useCode ? _code.text : null,
+          passphrase: passphrase,
+          recoveryCode: recoveryCode,
+          joinCode: joinCode,
           deviceName: _name.text.trim(),
         );
       } else {
         await engine.syncJoinLocalFolder(
           _path.text.trim(),
-          passphrase: _useCode ? null : _pass.text,
-          recoveryCode: _useCode ? _code.text : null,
+          passphrase: passphrase,
+          recoveryCode: recoveryCode,
+          joinCode: joinCode,
           deviceName: _name.text.trim(),
         );
       }
@@ -416,6 +427,8 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
           'It locks the vault. Promptly cannot reset it: if you forget it, only the recovery code on the next screen can open the vault. Pick something long you will remember.',
           style: TextStyle(color: t.muted, height: 1.45),
         ),
+        const SizedBox(height: 12),
+        const LoseBothWarning(key: Key('sync-lose-both-passphrase')),
         const SizedBox(height: 16),
         _Label('Passphrase'),
         TextField(key: const Key('sync-passphrase'), controller: _pass, obscureText: true, autofocus: true),
@@ -445,35 +458,68 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
         _Heading('This folder already holds a vault'),
         const SizedBox(height: 8),
         Text(
-          _useCode
-              ? 'Type the recovery code you wrote down when the vault was made.'
-              : 'Type its passphrase and this device joins it.',
+          switch (_joinWith) {
+            _JoinWith.passphrase => 'Type its passphrase and this device joins it.',
+            _JoinWith.recoveryCode => 'Type the recovery code you wrote down when the vault was made.',
+            _JoinWith.joinCode =>
+              'On a device already in the vault, open Settings, Sync, Add another device, Show code, and tap Copy as text. '
+                  'Paste it here. Scanning the QR code is not available yet.',
+          },
           style: TextStyle(color: t.muted, height: 1.45),
         ),
         const SizedBox(height: 16),
-        if (_useCode) ...[
-          _Label('Recovery code'),
-          TextField(
-            key: const Key('sync-recovery-input'),
-            controller: _code,
-            autofocus: true,
-            style: monoStyle(context, size: 14),
-            decoration: const InputDecoration(hintText: 'XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX'),
-            onSubmitted: (_) => _join(),
-          ),
-        ] else ...[
-          _Label('Passphrase'),
-          TextField(
-            key: const Key('sync-join-passphrase'),
-            controller: _pass,
-            obscureText: true,
-            autofocus: true,
-            onSubmitted: (_) => _join(),
-          ),
-        ],
-        TextButton(
-          onPressed: () => setState(() => _useCode = !_useCode),
-          child: Text(_useCode ? 'Use the passphrase instead' : 'Use a recovery code instead'),
+        ...switch (_joinWith) {
+          _JoinWith.recoveryCode => [
+              _Label('Recovery code'),
+              TextField(
+                key: const Key('sync-recovery-input'),
+                controller: _code,
+                autofocus: true,
+                style: monoStyle(context, size: 14),
+                decoration: const InputDecoration(hintText: 'XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX'),
+                onSubmitted: (_) => _join(),
+              ),
+            ],
+          _JoinWith.joinCode => [
+              _Label('Join code'),
+              TextField(
+                key: const Key('sync-join-code'),
+                controller: _joinCode,
+                autofocus: true,
+                minLines: 2,
+                maxLines: 4,
+                style: monoStyle(context, size: 12),
+                decoration: const InputDecoration(hintText: '{"v":1,"vault_id":…}'),
+              ),
+            ],
+          _JoinWith.passphrase => [
+              _Label('Passphrase'),
+              TextField(
+                key: const Key('sync-join-passphrase'),
+                controller: _pass,
+                obscureText: true,
+                autofocus: true,
+                onSubmitted: (_) => _join(),
+              ),
+            ],
+        },
+        Wrap(
+          children: [
+            for (final other in _JoinWith.values)
+              if (other != _joinWith)
+                TextButton(
+                  key: Key('sync-join-with-${other.name}'),
+                  onPressed: () => setState(() {
+                    _joinWith = other;
+                    _error = null;
+                  }),
+                  child: Text(switch (other) {
+                    _JoinWith.passphrase => 'Use the passphrase instead',
+                    _JoinWith.recoveryCode => 'Use a recovery code instead',
+                    _JoinWith.joinCode => 'Use a join code instead',
+                  }),
+                ),
+          ],
         ),
         const SizedBox(height: 8),
         Row(
@@ -521,6 +567,8 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
               'This recovery code opens the vault if you ever forget the passphrase. Promptly does not keep it and cannot show it again. Put it somewhere safe, away from this device.',
               style: TextStyle(color: t.muted, height: 1.45),
             ),
+            const SizedBox(height: 12),
+            const LoseBothWarning(key: Key('sync-lose-both-recovery')),
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(16),
@@ -566,6 +614,39 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Said on the passphrase step and again with the recovery code, so setup
+/// says it twice (VAULT.md section 14): losing both loses the data, and
+/// nobody can help.
+class LoseBothWarning extends StatelessWidget {
+  const LoseBothWarning({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        border: Border.all(color: t.warning),
+        borderRadius: BorderRadius.circular(PromptlyTokens.panelRadius),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 18, color: t.warning),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'If you lose both the passphrase and the recovery code, the data in the vault is gone for good. '
+              'Nobody can get it back, not even Promptly.',
+              style: TextStyle(fontSize: 13, color: t.text, height: 1.4),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -769,33 +850,15 @@ class _ConfiguredView extends ConsumerWidget {
   }
 
   void _showQr(BuildContext context, WidgetRef ref) {
-    final payload = ref.read(engineProvider).syncQrPayload();
+    final String? payload;
+    try {
+      payload = ref.read(engineProvider).syncQrPayload();
+    } catch (e) {
+      notYet(context, 'Could not make a code: $e');
+      return;
+    }
     if (payload == null) return;
-    showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Enrol another device'),
-        content: SizedBox(
-          width: 320,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                color: Colors.white,
-                padding: const EdgeInsets.all(12),
-                child: QrImageView(data: payload, size: 240),
-              ),
-              const SizedBox(height: 12),
-              const Text(
-                'Scan this with Promptly on the other device. Whoever photographs it can read the vault, so show it only to your own device. Scanning lands with the phone builds; until then, join with the passphrase.',
-                style: TextStyle(fontSize: 12, height: 1.4),
-              ),
-            ],
-          ),
-        ),
-        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
-      ),
-    );
+    showJoinCode(context, payload);
   }
 
   @override
@@ -817,19 +880,30 @@ class _ConfiguredView extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
+                  // The button drops below the status on a narrow phone at
+                  // large text.
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 10,
+                    runSpacing: 8,
                     children: [
-                      Icon(
-                        status.lastError != null ? Icons.cloud_off_outlined : Icons.cloud_done_outlined,
-                        color: status.lastError != null ? t.warning : t.accent,
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          syncSummary(status),
-                          key: const Key('sync-summary'),
-                          style: TextStyle(fontWeight: FontWeight.w600, color: t.text),
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            status.lastError != null ? Icons.cloud_off_outlined : Icons.cloud_done_outlined,
+                            color: status.lastError != null ? t.warning : t.accent,
+                          ),
+                          const SizedBox(width: 10),
+                          Flexible(
+                            child: Text(
+                              syncSummary(status),
+                              key: const Key('sync-summary'),
+                              style: TextStyle(fontWeight: FontWeight.w600, color: t.text),
+                            ),
+                          ),
+                        ],
                       ),
                       OutlinedButton.icon(
                         key: const Key('sync-now'),
@@ -888,7 +962,7 @@ class _ConfiguredView extends ConsumerWidget {
                 ListTile(
                   leading: Icon(Icons.qr_code_2, color: t.muted),
                   title: const Text('Add another device'),
-                  subtitle: const Text('Show a code to scan, or join from the other device with the passphrase.'),
+                  subtitle: const Text('Show a join code for the other device, or join there with the passphrase.'),
                   trailing: TextButton(onPressed: () => _showQr(context, ref), child: const Text('Show code')),
                 ),
               ],
