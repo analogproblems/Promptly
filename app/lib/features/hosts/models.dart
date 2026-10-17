@@ -7,7 +7,7 @@ import 'package:uuid/uuid.dart';
 const _uuid = Uuid();
 String newRecordId() => _uuid.v7();
 
-enum AuthKind { identity, password, agent, interactive }
+enum AuthKind { identity, password, agent, interactive, none }
 
 enum ForwardKind { local, remote, dynamic }
 
