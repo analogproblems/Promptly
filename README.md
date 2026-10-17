@@ -43,7 +43,7 @@ Most SSH apps that sync your setup between devices want a monthly subscription a
 
 **Easy to move in.** Import your hosts and keys from `~/.ssh/config`, PuTTY keys, or a CSV such as the one Termius exports, groups and tags included.
 
-**Private by design.** Promptly [collects nothing about you](docs/PRIVACY.md). It can check for new versions if you ask it to, and that's off by default.
+**Private by design.** Promptly [collects nothing about you](docs/PRIVACY.md).
 
 ## A closer look
 
@@ -78,7 +78,7 @@ Download the latest version for your system from [GitHub Releases](https://githu
 
 | System | What to download |
 |---|---|
-| Windows | The installer (`setup.exe`), which can also update itself. A zip is there too. |
+| Windows | The zip. From the next release there is also an installer (`setup.exe`) that can update Promptly for you. |
 | Mac | The `.dmg`, for Apple silicon and Intel Macs. |
 | Linux | The `.deb` for Debian and Ubuntu, or the tarball for anything else. |
 | Android | The `.apk`. Google Play is on the way. |
