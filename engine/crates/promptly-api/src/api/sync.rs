@@ -4,7 +4,7 @@
 //! so those calls are asynchronous; the rest answer at once.
 
 use flutter_rust_bridge::frb;
-use promptly_vault::{KdfParams, RecoveryCode, Vault};
+use promptly_vault::{KdfParams, Vault};
 
 use crate::frb_generated::StreamSink;
 use crate::sync_engine::{self, VaultConfig};
@@ -175,28 +175,28 @@ pub fn sync_create_local_folder(
     })
 }
 
-/// Join a vault that already exists in a folder, with its passphrase or
-/// its recovery code (either one, whichever is given).
+/// Join a vault that already exists in a folder, with its passphrase, its
+/// recovery code, or a join code shown on a device already in it (the
+/// text of the QR code). Whichever one is given; the first, if several.
 pub fn sync_join_local_folder(
     path: String,
     passphrase: Option<String>,
     recovery_code: Option<String>,
+    join_code: Option<String>,
     device_name: String,
 ) -> Result<(), String> {
     let store = crate::api::store::store()?;
     let backend = promptly_vault::LocalFolder::new(&path);
     let device = sync_engine::vault_device(&store);
     let manifest = Vault::read_manifest(&backend).map_err(|e| e.to_string())?;
-    let vault = match (passphrase, recovery_code) {
-        (Some(p), _) => Vault::open(&backend, device, &p).map_err(|e| e.to_string())?,
-        (None, Some(code)) => {
-            let code = RecoveryCode::parse(&code).ok_or(
-                "That is not a recovery code: expect eight groups of four letters and digits.",
-            )?;
-            Vault::open_with_recovery(&backend, device, &code).map_err(|e| e.to_string())?
-        }
-        (None, None) => return Err("A passphrase or a recovery code is needed.".into()),
-    };
+    let vault = sync_engine::open_to_join(
+        &backend,
+        device,
+        &manifest,
+        passphrase,
+        recovery_code,
+        join_code,
+    )?;
     let manifest_keys = Some(manifest.keys_fingerprint());
     let config = VaultConfig {
         kind: "local_folder".into(),
@@ -257,28 +257,28 @@ pub fn sync_create_sftp(
     })
 }
 
-/// Join a vault that already exists on a saved host.
+/// Join a vault that already exists on a saved host, as
+/// [`sync_join_local_folder`] does.
 pub fn sync_join_sftp(
     host_id: String,
     remote_dir: String,
     passphrase: Option<String>,
     recovery_code: Option<String>,
+    join_code: Option<String>,
     device_name: String,
 ) -> Result<(), String> {
     let store = crate::api::store::store()?;
     let backend = sync_engine::connect_sftp(&host_id, &remote_dir)?;
     let device = sync_engine::vault_device(&store);
     let manifest = Vault::read_manifest(&*backend).map_err(|e| e.to_string())?;
-    let vault = match (passphrase, recovery_code) {
-        (Some(p), _) => Vault::open(&*backend, device, &p).map_err(|e| e.to_string())?,
-        (None, Some(code)) => {
-            let code = RecoveryCode::parse(&code).ok_or(
-                "That is not a recovery code: expect eight groups of four letters and digits.",
-            )?;
-            Vault::open_with_recovery(&*backend, device, &code).map_err(|e| e.to_string())?
-        }
-        (None, None) => return Err("A passphrase or a recovery code is needed.".into()),
-    };
+    let vault = sync_engine::open_to_join(
+        &*backend,
+        device,
+        &manifest,
+        passphrase,
+        recovery_code,
+        join_code,
+    )?;
     let manifest_keys = Some(manifest.keys_fingerprint());
     let config = VaultConfig {
         kind: "sftp".into(),
@@ -374,7 +374,8 @@ pub fn sync_rotate_key(passphrase: String) -> Result<SyncSetupResult, String> {
 }
 
 /// What a QR code for enrolling another device carries, as JSON, or
-/// `None` when sync is not set up. Whoever reads it can read the vault.
+/// `None` when sync is not set up. The same text, pasted on the other
+/// device, is its join code. Whoever reads it can read the vault.
 #[frb(sync)]
 pub fn sync_qr_payload() -> Result<Option<String>, String> {
     let Some(config) = sync_engine::config()? else {
@@ -385,14 +386,5 @@ pub fn sync_qr_payload() -> Result<Option<String>, String> {
         .map_err(|e| e.to_string())?
         .ok_or("the vault key is missing")?;
     let dek = String::from_utf8(bytes).map_err(|_| "the vault key is not valid")?;
-    Ok(Some(
-        serde_json::json!({
-            "v": 1,
-            "vault_id": config.vault_id,
-            "kind": config.kind,
-            "path": config.path,
-            "dek": dek,
-        })
-        .to_string(),
-    ))
+    Ok(Some(sync_engine::join_code(&config, &dek)))
 }

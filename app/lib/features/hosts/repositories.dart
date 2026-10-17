@@ -176,11 +176,18 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
     state = _load();
   }
 
-  /// Import a pasted private key. Encrypted keys are kept encrypted; the
-  /// passphrase is asked for at connect time. A PuTTY or PEM key that
+  /// Import a pasted private key. Encrypted keys are kept encrypted; with
+  /// [rememberPassphrase] the passphrase given is saved with the key,
+  /// otherwise it is asked for at connect time. A PuTTY or PEM key that
   /// could be read in full is stored in OpenSSH form instead, behind the
   /// same passphrase if it had one.
-  Identity import({required String label, required String privateKey, String? passphrase, bool localOnly = false}) {
+  Identity import({
+    required String label,
+    required String privateKey,
+    String? passphrase,
+    bool localOnly = false,
+    bool rememberPassphrase = false,
+  }) {
     final engine = ref.read(engineProvider);
     final info = engine.keyInspect(privateKey, passphrase);
     final publicKey = info.publicOpenssh;
@@ -200,15 +207,75 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
       sync: localOnly ? 'local_only' : 'vault',
     );
     _saveWithSecret(identity, secretId, stored);
-    return identity;
+    if (rememberPassphrase && passphrase != null) {
+      try {
+        if (engine.keyInspect(stored, null).encrypted) savePassphrase(id, passphrase);
+      } catch (_) {
+        // The key is in; its passphrase is asked for when connecting.
+      }
+    }
+    return byId(id) ?? identity;
+  }
+
+  /// Remember the passphrase that unlocks a key, as a secret like a saved
+  /// password. It goes where the key goes: kept on this device with a key
+  /// kept here, synced with one that syncs. The key's record names the
+  /// secret first, so it says where the secret may go before it exists.
+  void savePassphrase(String id, String passphrase) {
+    final identity = byId(id);
+    if (identity == null) return;
+    final engine = ref.read(engineProvider);
+    final existing = identity.passphraseSecretId;
+    if (existing != null) {
+      engine.secretPut(existing, 'key_passphrase', passphrase);
+      return;
+    }
+    // Secret ids are record ids too: the engine's model types them as UUIDs.
+    final secretId = newRecordId();
+    engine.recordPut('identities', id, jsonEncode(identity.withPassphraseSecret(secretId).toJson()));
+    try {
+      engine.secretPut(secretId, 'key_passphrase', passphrase);
+    } catch (_) {
+      try {
+        engine.recordPut('identities', id, jsonEncode(identity.toJson()));
+      } catch (_) {}
+      state = _load();
+      rethrow;
+    }
+    state = _load();
+  }
+
+  /// The key's saved passphrase, if it has one and it can be read.
+  String? passphraseFor(Identity? identity) {
+    final secretId = identity?.passphraseSecretId;
+    if (secretId == null) return null;
+    try {
+      return ref.read(engineProvider).secretGet(secretId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Forget a key's saved passphrase, here and, if it synced, everywhere.
+  void forgetPassphrase(String id) {
+    final identity = byId(id);
+    final secretId = identity?.passphraseSecretId;
+    if (identity == null || secretId == null) return;
+    final engine = ref.read(engineProvider);
+    try {
+      engine.secretDelete(secretId);
+    } catch (_) {}
+    engine.recordPut('identities', id, jsonEncode(identity.withPassphraseSecret(null).toJson()));
+    state = _load();
   }
 
   void delete(String id) {
     final engine = ref.read(engineProvider);
     final identity = byId(id);
-    if (identity?.privateKeySecretId != null) {
+    for (final secretId in [identity?.privateKeySecretId, identity?.passphraseSecretId]) {
+      if (secretId == null) continue;
       try {
-        engine.secretDelete(identity!.privateKeySecretId!);
+        engine.secretDelete(secretId);
       } catch (_) {}
     }
     engine.recordDelete('identities', id);

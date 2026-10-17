@@ -65,6 +65,22 @@ pub fn key_inspect(private_key: String, passphrase: Option<String>) -> Result<Ke
     })
 }
 
+/// A private key for saving outside Promptly: as stored, or, with
+/// `new_passphrase`, unlocked with `passphrase` and locked again with the
+/// new one, in OpenSSH form.
+#[frb(sync)]
+pub fn key_export(
+    private_key: String,
+    passphrase: Option<String>,
+    new_passphrase: Option<String>,
+) -> Result<String, String> {
+    promptly_ssh::export_key(
+        &private_key,
+        passphrase.as_deref(),
+        new_passphrase.as_deref(),
+    )
+}
+
 /// The SHA256 fingerprint of a public key, for lists and the host key prompt.
 #[frb(sync)]
 pub fn key_fingerprint(public_key: String) -> Result<String, String> {

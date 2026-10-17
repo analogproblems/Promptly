@@ -228,6 +228,40 @@ fn ppk_header(text: &str) -> Option<PpkHeader> {
     })
 }
 
+/// A private key for saving outside Promptly. Without `new_passphrase` it
+/// is the text exactly as stored, locked or not. With one, the key is
+/// unlocked (with `passphrase` if it has one) and written out in OpenSSH
+/// form behind the new passphrase instead.
+pub fn export(
+    private_key: &str,
+    passphrase: Option<&str>,
+    new_passphrase: Option<&str>,
+) -> Result<String, String> {
+    let Some(new) = new_passphrase else {
+        return Ok(private_key.to_string());
+    };
+    if new.is_empty() {
+        return Err("Choose a new passphrase.".into());
+    }
+    let key = match keys::decode_secret_key(private_key, passphrase) {
+        Ok(key) => key,
+        Err(keys::Error::KeyIsEncrypted) => {
+            return Err(
+                "This key has a passphrase. Type it to lock the copy with a new one.".into(),
+            )
+        }
+        Err(_) if passphrase.is_some() => return Err("That passphrase is wrong.".into()),
+        Err(e) => return Err(format!("not a private key: {e}")),
+    };
+    let locked = key
+        .encrypt(&mut rand::rng(), new.as_bytes())
+        .map_err(|e| format!("could not lock the key: {e}"))?;
+    Ok(locked
+        .to_openssh(LineEnding::LF)
+        .map_err(|e| format!("could not write the key: {e}"))?
+        .to_string())
+}
+
 /// The SHA256 fingerprint of a public key in OpenSSH one-line form.
 pub fn public_fingerprint(public_openssh: &str) -> Result<String, String> {
     let key = keys::PublicKey::from_openssh(public_openssh.trim())
@@ -365,6 +399,37 @@ mod tests {
             g.fingerprint
         );
         assert!(public_fingerprint("nope").is_err());
+    }
+
+    #[test]
+    fn export_gives_the_key_as_stored_or_locked_with_a_new_passphrase() {
+        let g = generate(KeyKind::Ed25519, "x").unwrap();
+        assert_eq!(
+            export(&g.private_openssh, None, None).unwrap(),
+            g.private_openssh
+        );
+        assert!(export(&g.private_openssh, None, Some("")).is_err());
+
+        let locked = export(&g.private_openssh, None, Some("first")).unwrap();
+        assert!(inspect(&locked, None).unwrap().encrypted);
+        let unlocked = inspect(&locked, Some("first")).unwrap();
+        assert_eq!(
+            unlocked.public_openssh.as_deref(),
+            Some(g.public_openssh.as_str())
+        );
+
+        // A locked key needs its passphrase before it can take a new one.
+        assert!(export(&locked, None, Some("second"))
+            .unwrap_err()
+            .contains("has a passphrase"));
+        assert!(export(&locked, Some("nope"), Some("second"))
+            .unwrap_err()
+            .contains("wrong"));
+        let relocked = export(&locked, Some("first"), Some("second")).unwrap();
+        assert!(inspect(&relocked, Some("first")).is_err());
+        assert!(inspect(&relocked, Some("second")).is_ok());
+        // As stored, a locked key stays locked.
+        assert_eq!(export(&locked, None, None).unwrap(), locked);
     }
 
     #[test]

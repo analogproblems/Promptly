@@ -260,6 +260,15 @@ class FakeEngine implements Engine {
   int frameCols = 142;
   int frameRows = 37;
 
+  /// When set, an attempt whose key is locked and comes without its
+  /// passphrase asks for it first, as the engine does, and connects once
+  /// it is answered.
+  bool askKeyPassphrase = false;
+  final Map<int, StreamController<SshEvent>> _waiting = {};
+
+  /// Every secret typed into a connection, in order.
+  final List<String?> answeredSecrets = [];
+
   @override
   int sshConnectBegin(SshConnectRequest request) {
     requests.add(request);
@@ -272,46 +281,72 @@ class FakeEngine implements Engine {
   /// Attempts cancelled or hung up.
   final List<int> cancelledAttempts = [];
 
-  @override
-  Stream<SshEvent> sshConnectEvents(int attemptId) {
-    if (failWith case final fail?) {
-      return Stream.fromIterable([
-        const SshEvent(kind: SshEventKind.progress, step: SshStep.connecting),
-        fail,
-      ]);
-    }
-    final id = connectedSessionId;
-    if (id == null) return const Stream.empty();
-    return Stream.fromIterable([
-      const SshEvent(
-        kind: SshEventKind.progress,
-        step: SshStep.connecting,
-        hostKey: null,
-        secretPrompt: null,
-        kbName: null,
-        kbInstructions: null,
-        kbPrompts: null,
-        sessionId: null,
-        error: null,
-      ),
-      SshEvent(
+  static SshEvent _connected(int id) => SshEvent(
         kind: SshEventKind.connected,
         step: null,
         hostKey: null,
         secretPrompt: null,
+        secretForKey: false,
         kbName: null,
         kbInstructions: null,
         kbPrompts: null,
         sessionId: id,
         error: null,
-      ),
-    ]);
+      );
+
+  @override
+  Stream<SshEvent> sshConnectEvents(int attemptId) {
+    if (failWith case final fail?) {
+      return Stream.fromIterable([
+        const SshEvent(kind: SshEventKind.progress, step: SshStep.connecting, secretForKey: false),
+        fail,
+      ]);
+    }
+    final id = connectedSessionId;
+    if (id == null) return const Stream.empty();
+    const progress = SshEvent(
+      kind: SshEventKind.progress,
+      step: SshStep.connecting,
+      hostKey: null,
+      secretPrompt: null,
+      secretForKey: false,
+      kbName: null,
+      kbInstructions: null,
+      kbPrompts: null,
+      sessionId: null,
+      error: null,
+    );
+    final request = requests[attemptId - 1];
+    final locked = (request.privateKey ?? '').contains('LOCKED') && request.passphrase == null;
+    if (askKeyPassphrase && locked) {
+      final events = StreamController<SshEvent>();
+      _waiting[attemptId] = events;
+      events
+        ..add(progress)
+        ..add(const SshEvent(
+          kind: SshEventKind.secret,
+          step: null,
+          hostKey: null,
+          secretPrompt: 'Passphrase for the private key',
+          secretForKey: true,
+          kbName: null,
+          kbInstructions: null,
+          kbPrompts: null,
+          sessionId: null,
+          error: null,
+        ));
+      return events.stream;
+    }
+    return Stream.fromIterable([progress, _connected(id)]);
   }
 
   @override
   void sshAnswerHostKey(int attemptId, bool trust) {}
   @override
-  void sshAnswerSecret(int attemptId, String? secret) {}
+  void sshAnswerSecret(int attemptId, String? secret) {
+    answeredSecrets.add(secret);
+    _waiting.remove(attemptId)?.add(_connected(connectedSessionId!));
+  }
   @override
   void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers) {}
   @override
@@ -326,6 +361,16 @@ class FakeEngine implements Engine {
     execCalls.add('${request.host} $command');
     return execResults[request.host] ??
         SshExecResult(output: '', exitCode: null, timedOut: false, error: 'no result for ${request.host}');
+  }
+
+  /// Keys installed on hosts: host, how it logged in, and the key.
+  final List<String> installCalls = [];
+
+  @override
+  Future<String> sshInstallPublicKey(SshConnectRequest request, String publicKey) async {
+    installCalls.add('${request.host} ${request.auth.name} ${request.password} $publicKey');
+    if (request.host == 'down.example') throw 'down.example did not answer.';
+    return 'Installed on ${request.label}. It can log in with this key now.';
   }
 
   /// What the reachability knock reports, by hostname.
@@ -523,15 +568,33 @@ class FakeEngine implements Engine {
     );
   }
 
+  /// The passphrase that opens keys whose text says LOCKED.
+  static const lockedPassphrase = 'right horse';
+
+  /// What the export was asked for: the key and both passphrases.
+  final List<String> exports = [];
+
+  @override
+  String keyExport(String privateKey, {String? passphrase, String? newPassphrase}) {
+    exports.add('$privateKey old=$passphrase new=$newPassphrase');
+    if (newPassphrase == null) return privateKey;
+    if (privateKey.contains('LOCKED') && passphrase != lockedPassphrase) throw 'That passphrase is wrong.';
+    return 'RELOCKED with $newPassphrase';
+  }
+
   @override
   KeyInfo keyInspect(String privateKey, String? passphrase) {
+    // A key whose text says LOCKED needs lockedPassphrase, as an encrypted
+    // OpenSSH key does: its public half shows, and a wrong one is refused.
+    final locked = privateKey.contains('LOCKED');
+    if (locked && passphrase != null && passphrase != lockedPassphrase) throw 'wrong passphrase';
     // A PuTTY key comes back converted, as the engine does it.
     final putty = privateKey.trimLeft().startsWith('PuTTY-User-Key-File-');
     return KeyInfo(
       kind: 'ed25519',
-      publicOpenssh: 'ssh-ed25519 AAAAimported',
+      publicOpenssh: locked ? 'ssh-ed25519 AAAAlocked' : 'ssh-ed25519 AAAAimported',
       fingerprint: 'SHA256:imported',
-      encrypted: false,
+      encrypted: locked && passphrase == null,
       comment: '',
       privateOpenssh: putty
           ? '-----BEGIN OPENSSH PRIVATE KEY-----\nconverted\n-----END OPENSSH PRIVATE KEY-----\n'
@@ -733,9 +796,11 @@ class FakeEngine implements Engine {
     String path, {
     String? passphrase,
     String? recoveryCode,
+    String? joinCode,
     required String deviceName,
   }) async {
-    syncCalls.add('join $path pass=$passphrase code=$recoveryCode');
+    syncCalls.add('join $path pass=$passphrase code=$recoveryCode${joinCode == null ? '' : ' join=$joinCode'}');
+    if (joinCode != null && joinCode != syncQrText) throw 'That is not a join code.';
     if (passphrase == 'wrong') throw 'the passphrase is wrong';
     _configured(path, deviceName);
   }
@@ -759,9 +824,10 @@ class FakeEngine implements Engine {
     String remoteDir, {
     String? passphrase,
     String? recoveryCode,
+    String? joinCode,
     required String deviceName,
   }) async {
-    syncCalls.add('join-sftp $hostId $remoteDir pass=$passphrase');
+    syncCalls.add('join-sftp $hostId $remoteDir pass=$passphrase${joinCode == null ? '' : ' join=$joinCode'}');
     _configured('test server · $remoteDir', deviceName);
   }
 
@@ -810,8 +876,11 @@ class FakeEngine implements Engine {
     syncCalls.add('rekey $passphrase');
     return const SyncSetupResult(vaultId: 'vault-1', recoveryCode: 'REKE-YED0-0000-0000-0000-0000-0000-0002');
   }
+  /// The join code the vault hands out, and the one a join accepts.
+  static const syncQrText = '{"v":1,"vault_id":"vault-1","dek":"secret"}';
+
   @override
-  String? syncQrPayload() => sync.configured ? '{"v":1}' : null;
+  String? syncQrPayload() => sync.configured ? syncQrText : null;
 }
 
 /// Scroll a lazily built list until a widget shows, then tap it.
@@ -870,6 +939,7 @@ Widget appWith(
   PickedTextFile? pickedFile,
   UpdateService? updates,
   Authenticator? authenticator,
+  SaveTextFile? fileSaver,
 }) {
   engine ??= FakeEngine();
   if (onboarded) engine.settings.putIfAbsent('onboarding_done', () => 'true');
@@ -879,6 +949,8 @@ Widget appWith(
       filePickerProvider.overrideWithValue(
         ({required String label, required List<String> extensions}) async => pickedFile,
       ),
+      // No save dialog unless a test brings one: nothing is written to disk.
+      fileSaverProvider.overrideWithValue(fileSaver),
       if (localDir != null) localStartDirProvider.overrideWithValue(localDir),
       if (localFs != null) localFsProvider.overrideWithValue(localFs),
       if (updates != null) updateServiceProvider.overrideWithValue(updates),
@@ -2718,6 +2790,7 @@ void main() {
     final engine = FakeEngine()
       ..failWith = const SshEvent(
         kind: SshEventKind.failed,
+        secretForKey: false,
         error: 'could not reach web-1.example on port 22: nothing is listening there',
         errorTitle: 'Nothing is answering on port 22',
         errorHint: 'Check the port number, and that the SSH server is running on web-1.example.',
@@ -2993,6 +3066,7 @@ void main() {
       ..secrets['s1'] = 'PRIVATE KEY'
       ..failWith = const SshEvent(
         kind: SshEventKind.failed,
+        secretForKey: false,
         error: 'jump host bastion: could not find a server called bastion.example',
         errorTitle: 'Couldn\'t connect to the jump host bastion.example',
         errorHint: 'Check the hostname for typos, and that this device is online (or on the VPN the server needs).',

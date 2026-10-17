@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `auth_for`, `blank`, `claim_tmux_name`, `forward_spec`, `params_for`, `tmux_name_for`
+// These functions are ignored because they are not marked as `pub`: `auth_for`, `blank`, `claim_tmux_name`, `forward_spec`, `label_of`, `lacks_passphrase`, `params_for`, `run_unattended`, `tmux_name_for`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `TmuxHolder`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `cmp`, `eq`, `partial_cmp`
 
@@ -31,6 +31,18 @@ Future<SshExecResult> sshExec({
   request: request,
   command: command,
   timeoutSeconds: timeoutSeconds,
+);
+
+/// Put a public key in `~/.ssh/authorized_keys` on a host, as
+/// `ssh-copy-id` does, over the request's login: `~/.ssh` and the file are
+/// made owner-only if missing, and a key already there is not added
+/// twice. Returns what happened, in words for the person.
+Future<String> sshInstallPublicKey({
+  required SshConnectRequest request,
+  required String publicKey,
+}) => RustLib.instance.api.crateApiSshSshInstallPublicKey(
+  request: request,
+  publicKey: publicKey,
 );
 
 /// The forwards of a live SSH session and whether each is running.
@@ -216,6 +228,10 @@ class SshEvent {
   final SshStep? step;
   final SshHostKey? hostKey;
   final String? secretPrompt;
+
+  /// The secret asked for unlocks a private key (its passphrase), so the
+  /// app can offer to remember it with the key.
+  final bool secretForKey;
   final String? kbName;
   final String? kbInstructions;
   final List<SshKbPrompt>? kbPrompts;
@@ -235,6 +251,7 @@ class SshEvent {
     this.step,
     this.hostKey,
     this.secretPrompt,
+    required this.secretForKey,
     this.kbName,
     this.kbInstructions,
     this.kbPrompts,
@@ -250,6 +267,7 @@ class SshEvent {
       step.hashCode ^
       hostKey.hashCode ^
       secretPrompt.hashCode ^
+      secretForKey.hashCode ^
       kbName.hashCode ^
       kbInstructions.hashCode ^
       kbPrompts.hashCode ^
@@ -267,6 +285,7 @@ class SshEvent {
           step == other.step &&
           hostKey == other.hostKey &&
           secretPrompt == other.secretPrompt &&
+          secretForKey == other.secretForKey &&
           kbName == other.kbName &&
           kbInstructions == other.kbInstructions &&
           kbPrompts == other.kbPrompts &&

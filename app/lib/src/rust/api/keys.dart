@@ -20,6 +20,19 @@ KeyInfo keyInspect({required String privateKey, String? passphrase}) => RustLib
     .api
     .crateApiKeysKeyInspect(privateKey: privateKey, passphrase: passphrase);
 
+/// A private key for saving outside Promptly: as stored, or, with
+/// `new_passphrase`, unlocked with `passphrase` and locked again with the
+/// new one, in OpenSSH form.
+String keyExport({
+  required String privateKey,
+  String? passphrase,
+  String? newPassphrase,
+}) => RustLib.instance.api.crateApiKeysKeyExport(
+  privateKey: privateKey,
+  passphrase: passphrase,
+  newPassphrase: newPassphrase,
+);
+
 /// The SHA256 fingerprint of a public key, for lists and the host key prompt.
 String keyFingerprint({required String publicKey}) =>
     RustLib.instance.api.crateApiKeysKeyFingerprint(publicKey: publicKey);

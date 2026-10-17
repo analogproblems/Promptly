@@ -10,7 +10,16 @@ class ConnectFlow extends ChangeNotifier {
   ConnectFlow({required this.engine, required this.request, required this.unlock});
 
   final Engine engine;
-  final SshConnectRequest request;
+
+  /// What was asked for. A key passphrase typed along the way is put in,
+  /// so trying again or reconnecting does not ask for it again.
+  SshConnectRequest request;
+
+  /// Whether a key passphrase typed here can be saved with its key.
+  bool canRememberPassphrase = false;
+
+  /// Told about every key passphrase typed, and whether to remember it.
+  void Function(String passphrase, bool remember)? onKeyPassphrase;
 
   /// Asked before connecting when the request carries a private key: the
   /// app's fingerprint, face, PIN or passcode check. False stops here.
@@ -29,6 +38,9 @@ class ConnectFlow extends ChangeNotifier {
   /// Questions waiting for the person. At most one is set at a time.
   SshHostKey? hostKey;
   String? secretPrompt;
+
+  /// The secret asked for is a private key's passphrase.
+  bool secretForKey = false;
   ({String name, String instructions, List<SshKbPrompt> prompts})? keyboard;
 
   int? sessionId;
@@ -90,6 +102,7 @@ class ConnectFlow extends ChangeNotifier {
         hostKey = e.hostKey;
       case SshEventKind.secret:
         secretPrompt = e.secretPrompt;
+        secretForKey = e.secretForKey;
       case SshEventKind.keyboardInteractive:
         keyboard = (
           name: e.kbName ?? '',
@@ -113,8 +126,12 @@ class ConnectFlow extends ChangeNotifier {
     notifyListeners();
   }
 
-  void answerSecret(String? secret) {
+  /// Answer the secret question; `null` cancels. For a key passphrase,
+  /// [remember] asks for it to be saved with the key.
+  void answerSecret(String? secret, {bool remember = false}) {
+    if (secret != null && secretForKey) onKeyPassphrase?.call(secret, remember);
     secretPrompt = null;
+    secretForKey = false;
     _call(() => engine.sshAnswerSecret(_attemptId!, secret));
     notifyListeners();
   }

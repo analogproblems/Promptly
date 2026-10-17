@@ -158,6 +158,9 @@ pub struct SshEvent {
     pub step: Option<SshStep>,
     pub host_key: Option<SshHostKey>,
     pub secret_prompt: Option<String>,
+    /// The secret asked for unlocks a private key (its passphrase), so the
+    /// app can offer to remember it with the key.
+    pub secret_for_key: bool,
     pub kb_name: Option<String>,
     pub kb_instructions: Option<String>,
     pub kb_prompts: Option<Vec<SshKbPrompt>>,
@@ -177,6 +180,7 @@ impl SshEvent {
             step: None,
             host_key: None,
             secret_prompt: None,
+            secret_for_key: false,
             kb_name: None,
             kb_instructions: None,
             kb_prompts: None,
@@ -464,63 +468,136 @@ pub fn ssh_exec(
     command: String,
     timeout_seconds: u32,
 ) -> SshExecResult {
-    let endpoint = Endpoint {
-        user: request.user.clone(),
-        host: request.host.clone(),
-        port: request.port,
-    };
-    let label = request
-        .label
-        .clone()
-        .unwrap_or_else(|| endpoint.to_string());
-    let params = params_for(&mut request, endpoint, TermSize::default(), None);
-    let known_hosts = Arc::new(crate::sync_engine::VaultKnownHosts::new());
-    let prompter: Arc<dyn Prompter> = Arc::new(QuietPrompter);
-    let timeout = std::time::Duration::from_secs(u64::from(timeout_seconds.max(1)));
-    let result = promptly_ssh::runtime().block_on(promptly_ssh::exec(
-        &params,
-        prompter,
-        known_hosts,
+    match run_unattended(
+        &mut request,
         &command,
-        timeout,
-    ));
-    match result {
+        timeout_seconds,
+        "run snippets on it",
+    ) {
         Ok(out) => SshExecResult {
             output: out.output,
             exit_code: out.exit_code,
             timed_out: out.timed_out,
             error: None,
         },
-        Err(e) => SshExecResult {
+        Err(error) => SshExecResult {
             output: String::new(),
             exit_code: None,
             timed_out: false,
-            error: Some(match e {
-                ConnectError::HostKeyRejected { changed: false } => format!(
-                    "Connect to {label} in the terminal once first, so its host key is trusted."
-                ),
-                ConnectError::HostKeyRejected { changed: true } => format!(
-                    "{label} showed a different host key from the one trusted before, so nothing was run. This can mean someone is intercepting the connection. Check with whoever runs the server before connecting to it in the terminal."
-                ),
-                ConnectError::HostKeyRevoked => format!(
-                    "{label}'s host key is marked as revoked in a known_hosts file, so nothing was run."
-                ),
-                ConnectError::Cancelled => format!(
-                    "{label} asks for a login each time. Save a password or pick a key to run snippets on it."
-                ),
-                ConnectError::KeyNeedsPassphrase => format!(
-                    "The key for {label} needs its passphrase, which can't be asked for here. Connect in the terminal instead."
-                ),
-                ConnectError::AuthFailed { .. } => format!(
-                    "The saved login for {label} did not work. Check the password or key on the host."
-                ),
-                other => {
-                    let plain = other.explain();
-                    format!("{label}: {}. {}", plain.title, plain.hint)
-                }
-            }),
+            error: Some(error),
         },
     }
+}
+
+/// Put a public key in `~/.ssh/authorized_keys` on a host, as
+/// `ssh-copy-id` does, over the request's login: `~/.ssh` and the file are
+/// made owner-only if missing, and a key already there is not added
+/// twice. Returns what happened, in words for the person.
+pub fn ssh_install_public_key(
+    mut request: SshConnectRequest,
+    public_key: String,
+) -> Result<String, String> {
+    let command = promptly_ssh::authorized_keys::command(&public_key)?;
+    let out = run_unattended(&mut request, &command, 30, "install a key on it")?;
+    let label = label_of(&request);
+    if out.timed_out {
+        return Err(format!("{label} did not answer in time. Try again."));
+    }
+    Ok(
+        match promptly_ssh::authorized_keys::outcome(&out.output, out.exit_code)? {
+            true => format!("Installed on {label}. It can log in with this key now."),
+            false => format!("{label} already has this key."),
+        },
+    )
+}
+
+fn label_of(request: &SshConnectRequest) -> String {
+    request.label.clone().unwrap_or_else(|| {
+        Endpoint {
+            user: request.user.clone(),
+            host: request.host.clone(),
+            port: request.port,
+        }
+        .to_string()
+    })
+}
+
+/// Whether a key in the request, the target's or a jump host's, is locked
+/// and has no passphrase to go with it.
+fn lacks_passphrase(request: &SshConnectRequest) -> bool {
+    let locked = |auth: &SshAuthKind, key: &Option<String>, passphrase: &Option<String>| {
+        matches!(auth, SshAuthKind::Key)
+            && passphrase.is_none()
+            && key
+                .as_deref()
+                .is_some_and(|k| promptly_ssh::inspect_key(k, None).is_ok_and(|i| i.encrypted))
+    };
+    locked(&request.auth, &request.private_key, &request.passphrase)
+        || request
+            .jumps
+            .iter()
+            .any(|h| locked(&h.auth, &h.private_key, &h.passphrase))
+}
+
+/// Connect with the request's stored login and run `command` with no
+/// terminal and nobody to answer questions. The error says what to do, in
+/// words for the person; `purpose` ends "Save a password or pick a key
+/// to …".
+fn run_unattended(
+    request: &mut SshConnectRequest,
+    command: &str,
+    timeout_seconds: u32,
+    purpose: &str,
+) -> Result<promptly_ssh::ExecOutput, String> {
+    let endpoint = Endpoint {
+        user: request.user.clone(),
+        host: request.host.clone(),
+        port: request.port,
+    };
+    let label = label_of(request);
+    let params = params_for(request, endpoint, TermSize::default(), None);
+    let known_hosts = Arc::new(crate::sync_engine::VaultKnownHosts::new());
+    let prompter: Arc<dyn Prompter> = Arc::new(QuietPrompter);
+    let timeout = std::time::Duration::from_secs(u64::from(timeout_seconds.max(1)));
+    promptly_ssh::runtime()
+        .block_on(promptly_ssh::exec(
+            &params,
+            prompter,
+            known_hosts,
+            command,
+            timeout,
+        ))
+        .map_err(|e| match e {
+            ConnectError::HostKeyRejected { changed: false } => format!(
+                "Connect to {label} in the terminal once first, so its host key is trusted."
+            ),
+            ConnectError::HostKeyRejected { changed: true } => format!(
+                "{label} showed a different host key from the one trusted before, so nothing was run. This can mean someone is intercepting the connection. Check with whoever runs the server before connecting to it in the terminal."
+            ),
+            ConnectError::HostKeyRevoked => format!(
+                "{label}'s host key is marked as revoked in a known_hosts file, so nothing was run."
+            ),
+            ConnectError::KeyNeedsPassphrase | ConnectError::Cancelled
+                if lacks_passphrase(request) =>
+            {
+                format!(
+                    "The key for {label} has a passphrase that is not saved. Connect to {label} in the terminal once, with Remember passphrase on."
+                )
+            }
+            ConnectError::KeyNeedsPassphrase => format!(
+                "The key for {label} needs its passphrase, which can't be asked for here. Connect in the terminal instead."
+            ),
+            ConnectError::Cancelled => format!(
+                "{label} asks for a login each time. Save a password or pick a key to {purpose}."
+            ),
+            ConnectError::AuthFailed { .. } => format!(
+                "The saved login for {label} did not work. Check the password or key on the host."
+            ),
+            other => {
+                let plain = other.explain();
+                format!("{label}: {}. {}", plain.title, plain.hint)
+            }
+        })
 }
 
 /// The forwards of a live SSH session and whether each is running.
@@ -679,5 +756,62 @@ pub(crate) mod tests {
             AuthMethod::Key { private_key, passphrase: Some(p) }
                 if private_key == "jump-key" && p == "jump-passphrase"
         ));
+    }
+
+    fn request(private_key: Option<String>, passphrase: Option<String>) -> SshConnectRequest {
+        SshConnectRequest {
+            user: "ops".into(),
+            host: "web-1".into(),
+            port: 22,
+            auth: SshAuthKind::Key,
+            password: None,
+            private_key,
+            passphrase,
+            cols: 80,
+            rows: 24,
+            theme: String::new(),
+            label: None,
+            keepalive_seconds: 0,
+            reattach_session_id: None,
+            jumps: Vec::new(),
+            persistent: false,
+            startup_command: None,
+            env: Vec::new(),
+            agent_forward: false,
+            forwards: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_locked_key_without_its_passphrase_is_spotted_on_any_hop() {
+        let plain = promptly_ssh::generate_key(promptly_ssh::KeyKind::Ed25519, "")
+            .unwrap()
+            .private_openssh;
+        let locked = promptly_ssh::export_key(&plain, None, Some("pass")).unwrap();
+        assert!(!lacks_passphrase(&request(Some(plain.clone()), None)));
+        assert!(lacks_passphrase(&request(Some(locked.clone()), None)));
+        assert!(!lacks_passphrase(&request(
+            Some(locked.clone()),
+            Some("pass".into())
+        )));
+
+        let mut through = request(Some(plain), None);
+        through.jumps.push(SshHop {
+            user: "ops".into(),
+            host: "bastion".into(),
+            port: 22,
+            auth: SshAuthKind::Key,
+            password: None,
+            private_key: Some(locked),
+            passphrase: None,
+        });
+        assert!(lacks_passphrase(&through));
+        assert_eq!(label_of(&through), "ops@web-1");
+    }
+
+    #[test]
+    fn installing_something_that_is_not_a_public_key_stops_before_connecting() {
+        let err = ssh_install_public_key(request(None, None), "nonsense".into()).unwrap_err();
+        assert!(err.contains("not a public key"), "{err}");
     }
 }

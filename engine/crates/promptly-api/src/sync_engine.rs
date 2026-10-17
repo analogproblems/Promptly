@@ -19,7 +19,9 @@ use promptly_vault::backend::LocalFolder;
 use promptly_vault::manifest::ManifestError;
 use promptly_vault::model::{Device, Host, KnownHost};
 use promptly_vault::policy::{self, Kept, KeptPlan};
-use promptly_vault::{crypto, Backend, Dek, DeviceId, Marker, SyncError, Vault};
+use promptly_vault::{
+    crypto, Backend, Dek, DeviceId, Manifest, Marker, RecoveryCode, SyncError, Vault,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::api::sync::{SyncAttention, SyncBackendKind, SyncDevice, SyncStatus};
@@ -450,6 +452,72 @@ pub fn dek() -> Result<Dek, String> {
     Dek::from_slice(&raw).ok_or_else(|| "the vault key on this device is not valid".to_string())
 }
 
+/// The join code another device can enrol with (VAULT.md section 11): the
+/// vault, where it is here, its data key (`dek`, base64 as kept on this
+/// device) and the manifest's keys when this device last looked, as JSON.
+/// The QR code shows the same text.
+pub fn join_code(config: &VaultConfig, dek: &str) -> String {
+    serde_json::json!({
+        "v": 1,
+        "vault_id": config.vault_id,
+        "kind": config.kind,
+        "path": config.path,
+        "dek": dek,
+        "keys": config.manifest_keys,
+    })
+    .to_string()
+}
+
+/// Open the vault in `backend`, whose manifest is `manifest`, to join it:
+/// with the passphrase, the recovery code or a join code, whichever is
+/// given (the first, if several).
+pub fn open_to_join<'a>(
+    backend: &'a dyn Backend,
+    device: DeviceId,
+    manifest: &Manifest,
+    passphrase: Option<String>,
+    recovery_code: Option<String>,
+    join: Option<String>,
+) -> Result<Vault<'a>, String> {
+    if let Some(p) = passphrase {
+        return Vault::open(backend, device, &p).map_err(|e| e.to_string());
+    }
+    if let Some(code) = recovery_code {
+        let code = RecoveryCode::parse(&code).ok_or(
+            "That is not a recovery code: expect eight groups of four letters and digits.",
+        )?;
+        return Vault::open_with_recovery(backend, device, &code).map_err(|e| e.to_string());
+    }
+    let Some(join) = join else {
+        return Err("A passphrase, a recovery code or a join code is needed.".into());
+    };
+    const NOT_A_CODE: &str = "That is not a join code. On a device already in the vault, open Settings, Sync, Add another device, Show code, and copy the code as text.";
+    let code: serde_json::Value = serde_json::from_str(join.trim()).map_err(|_| NOT_A_CODE)?;
+    let field = |name: &str| code.get(name).and_then(serde_json::Value::as_str);
+    let (Some(vault_id), Some(dek)) = (field("vault_id"), field("dek")) else {
+        return Err(NOT_A_CODE.into());
+    };
+    let dek = B64
+        .decode(dek)
+        .ok()
+        .and_then(|raw| Dek::from_slice(&raw))
+        .ok_or(NOT_A_CODE)?;
+    if vault_id != manifest.vault_id {
+        return Err("That join code is for a different vault from the one in this folder.".into());
+    }
+    // A code from before a passphrase change or a new key: the key in it
+    // may not open anything written since.
+    if field("keys").is_some_and(|k| k != manifest.keys_fingerprint()) {
+        return Err("That join code is out of date: the vault's passphrase or key has changed since it was shown. Show a new code on the other device.".into());
+    }
+    Ok(Vault::with_dek(
+        backend,
+        device,
+        manifest.vault_id.clone(),
+        dek,
+    ))
+}
+
 /// One SFTP connection is kept between runs and dropped after a failure,
 /// so the next run reconnects.
 static SFTP_CACHE: Mutex<Option<(String, Arc<SftpBackend>)>> = Mutex::new(None);
@@ -515,7 +583,7 @@ pub fn connect_sftp(host_id: &str, remote_dir: &str) -> Result<Arc<SftpBackend>,
             "The saved login for {label} did not work. Check the password or key on the host."
         ),
         SftpError::Connect(ConnectError::KeyNeedsPassphrase) => format!(
-            "The key for {label} needs its passphrase, which sync can't ask for. Pick a key without one for this host."
+            "The key for {label} needs its passphrase, which sync can't ask for. Connect to {label} in the terminal once, with Remember passphrase on."
         ),
         SftpError::Connect(e) => {
             let plain = e.explain();
@@ -1345,6 +1413,143 @@ mod tests {
         assert_eq!(retry_delay(u32::MAX), MAX_BACKOFF);
     }
 
+    #[test]
+    fn a_join_code_opens_its_own_vault_and_nothing_else() {
+        let root = std::env::temp_dir().join(format!("promptly-join-{}", uuid::Uuid::new_v4()));
+        let (here, there) = (root.join("here"), root.join("there"));
+        std::fs::create_dir_all(&here).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        let backend = LocalFolder::new(&here);
+        let (vault, _) = Vault::create(
+            &backend,
+            DeviceId::generate(),
+            "a long passphrase",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        let manifest = Vault::read_manifest(&backend).unwrap();
+        let config = VaultConfig {
+            kind: "local_folder".into(),
+            path: here.to_string_lossy().into_owned(),
+            vault_id: vault.vault_id().to_string(),
+            device_name: "laptop".into(),
+            recovery_hint: None,
+            host_id: None,
+            manifest_keys: Some(manifest.keys_fingerprint()),
+            snapshot_due: false,
+        };
+        let code = join_code(&config, &B64.encode(vault.dek().0));
+        let join = |code: &str, manifest: &Manifest| {
+            open_to_join(
+                &backend,
+                DeviceId::generate(),
+                manifest,
+                None,
+                None,
+                Some(code.to_string()),
+            )
+        };
+
+        let joined = join(&code, &manifest).unwrap();
+        assert_eq!(joined.vault_id(), vault.vault_id());
+        assert_eq!(joined.dek().0, vault.dek().0);
+        // Pasted with stray spaces and a newline, it still reads.
+        assert!(join(&format!("  {code}\n"), &manifest).is_ok());
+
+        assert!(join("hello", &manifest)
+            .err()
+            .unwrap()
+            .contains("not a join code"));
+        let other_backend = LocalFolder::new(&there);
+        Vault::create(
+            &other_backend,
+            DeviceId::generate(),
+            "another passphrase",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        let other = Vault::read_manifest(&other_backend).unwrap();
+        assert!(join(&code, &other)
+            .err()
+            .unwrap()
+            .contains("different vault"));
+
+        // After a passphrase change the code is out of date.
+        let mut changed = manifest.clone();
+        changed.change_passphrase(vault.dek(), "a newer passphrase");
+        assert!(join(&code, &changed).err().unwrap().contains("out of date"));
+
+        // Nothing given at all.
+        assert!(open_to_join(&backend, DeviceId::generate(), &manifest, None, None, None).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_server_vault_uses_the_passphrase_saved_with_a_locked_key() {
+        // No secure storage in tests: secrets are plain files.
+        let _ = crate::api::store::set_no_device_key();
+        let store = Store::open_in_memory().unwrap();
+        let plain = promptly_ssh::generate_key(promptly_ssh::KeyKind::Ed25519, "")
+            .unwrap()
+            .private_openssh;
+        let locked = promptly_ssh::export_key(&plain, None, Some("open sesame")).unwrap();
+        let (key_id, secret_id, pass_id, host_id) = (
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+        );
+        secrets()
+            .put(&secret_id.to_string(), locked.as_bytes())
+            .unwrap();
+        let identity = |passphrase: Option<uuid::Uuid>| {
+            json!({
+                "id": key_id, "label": "laptop", "key_type": "ed25519",
+                "public_key": "ssh-ed25519 AAAA", "private_key_secret_id": secret_id,
+                "passphrase_secret_id": passphrase,
+            })
+            .to_string()
+        };
+        store
+            .put(Collection::Identities, &key_id.to_string(), &identity(None))
+            .unwrap();
+        let host = json!({
+            "id": host_id, "label": "nas", "hostname": "nas.local", "username": "ops",
+            "auth": {"kind": "identity", "identity_id": key_id},
+        });
+        store
+            .put(Collection::Hosts, &host_id.to_string(), &host.to_string())
+            .unwrap();
+
+        // Without its passphrase the key cannot be used unattended.
+        let err = sftp_params(&store, &host_id.to_string()).unwrap_err();
+        assert!(err.contains("passphrase that is not saved"), "{err}");
+
+        secrets().put(&pass_id.to_string(), b"open sesame").unwrap();
+        store
+            .put(
+                Collection::Identities,
+                &key_id.to_string(),
+                &identity(Some(pass_id)),
+            )
+            .unwrap();
+        let (params, label) = sftp_params(&store, &host_id.to_string()).unwrap();
+        assert_eq!(label, "nas");
+        match &params.auth {
+            promptly_ssh::AuthMethod::Key {
+                private_key,
+                passphrase,
+            } => {
+                assert_eq!(*private_key, locked);
+                assert_eq!(passphrase.as_deref(), Some("open sesame"));
+            }
+            other => panic!("expected a key login, got {other:?}"),
+        }
+        for id in [secret_id, pass_id] {
+            secrets().delete(&id.to_string()).unwrap();
+        }
+    }
+
     /// The one test here that uses the app's store, which lives for the
     /// whole process (in a folder of the tests' own): it walks through
     /// every problem in turn.
@@ -1585,6 +1790,7 @@ mod tests {
         sync_join_local_folder(
             path.clone(),
             Some("other passphrase".into()),
+            None,
             None,
             "Test box".into(),
         )

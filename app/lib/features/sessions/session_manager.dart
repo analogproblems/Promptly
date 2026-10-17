@@ -229,7 +229,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           auth: hopLogin.kind,
           password: hopLogin.password,
           privateKey: hopLogin.privateKey,
-          passphrase: null,
+          passphrase: hopLogin.passphrase,
         ),
       );
       next = _jumpHostIdFor(hop);
@@ -243,7 +243,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       auth: login.kind,
       password: login.password,
       privateKey: login.privateKey,
-      passphrase: null,
+      passphrase: login.passphrase,
       cols: 80,
       rows: 24,
       theme: theme,
@@ -280,9 +280,15 @@ class SessionManager extends Notifier<List<SessionEntry>> {
 
   /// How to log in to a host: its own settings, with the group filling in
   /// what it leaves blank.
-  ({String username, int port, SshAuthKind kind, String? password, String? privateKey, String? problem}) _loginFor(
-    Host host,
-  ) {
+  ({
+    String username,
+    int port,
+    SshAuthKind kind,
+    String? password,
+    String? privateKey,
+    String? passphrase,
+    String? problem,
+  }) _loginFor(Host host) {
     final engine = ref.read(engineProvider);
     final inherited = _inherited(host);
     final username = inherited.username;
@@ -299,6 +305,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           kind: SshAuthKind.key,
           password: null,
           privateKey: privateKey,
+          passphrase: ref.read(identitiesProvider.notifier).passphraseFor(identity),
           problem: privateKey == null ? 'The key for this host is missing. Edit the host and pick a key.' : null,
         );
       case AuthKind.password:
@@ -309,6 +316,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           kind: SshAuthKind.password,
           password: secretId == null ? null : _secret(engine, secretId),
           privateKey: null,
+          passphrase: null,
           problem: null,
         );
       case AuthKind.agent:
@@ -318,6 +326,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           kind: SshAuthKind.agent,
           password: null,
           privateKey: null,
+          passphrase: null,
           problem: null,
         );
       // The engine always tries a login without credentials first, so these
@@ -330,6 +339,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
           kind: SshAuthKind.interactive,
           password: null,
           privateKey: null,
+          passphrase: null,
           problem: null,
         );
     }
@@ -364,11 +374,76 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       engine: engine,
       request: request,
       unlock: () => ref.read(appLockProvider.notifier).unlockKeys(),
-    );
+    )
+      // Saved hosts use saved keys, which can keep their passphrase.
+      ..canRememberPassphrase = entry.hostId != null;
+    flow.onKeyPassphrase = (passphrase, remember) => _keyPassphraseTyped(engine, flow, passphrase, remember);
     entry.setFlow(flow);
     flow.addListener(() => _onFlow(entry, engine, flow));
     flow.start();
   }
+
+  /// A passphrase typed for a locked key. The keys are unlocked in the
+  /// order they are used (jump hosts first, nearest first, then the
+  /// host), so the one asking is the first it opens that does not have it
+  /// yet. It goes into the request, so a reconnect does not ask again,
+  /// and, with [remember], is saved with that key. A wrong one is left
+  /// alone: the engine asks again.
+  void _keyPassphraseTyped(Engine engine, ConnectFlow flow, String passphrase, bool remember) {
+    final r = flow.request;
+    String? publicOf(String? key, String? known) {
+      if (key == null || known == passphrase) return null;
+      try {
+        if (!engine.keyInspect(key, null).encrypted) return null;
+        return engine.keyInspect(key, passphrase).publicOpenssh;
+      } catch (_) {
+        return null; // not this key's passphrase
+      }
+    }
+
+    String? opened;
+    final jumps = <SshHop>[];
+    for (final h in r.jumps) {
+      final public = opened == null ? publicOf(h.privateKey, h.passphrase) : null;
+      if (public != null) opened = public;
+      jumps.add(public == null ? h : _hopWithPassphrase(h, passphrase));
+    }
+    final targetPublic = opened == null ? publicOf(r.privateKey, r.passphrase) : null;
+    opened ??= targetPublic;
+    if (opened == null) return;
+    flow.request = _withKeyPassphrases(r, jumps, targetPublic == null ? r.passphrase : passphrase);
+    if (!remember || !flow.canRememberPassphrase) return;
+    final keys = ref.read(identitiesProvider.notifier);
+    for (final identity in ref.read(identitiesProvider)) {
+      if (_sameKey(identity.publicKey, opened)) {
+        try {
+          keys.savePassphrase(identity.id, passphrase);
+        } catch (_) {
+          // Not saved: it is asked for next time, as before.
+        }
+        return;
+      }
+    }
+  }
+
+  /// Two OpenSSH public keys are the same key whatever their comments.
+  static bool _sameKey(String a, String b) {
+    List<String> core(String k) => k.trim().split(RegExp(r'\s+')).take(2).toList();
+    return listEquals(core(a), core(b));
+  }
+
+  static SshHop _hopWithPassphrase(SshHop h, String passphrase) => SshHop(
+        user: h.user,
+        host: h.host,
+        port: h.port,
+        auth: h.auth,
+        password: h.password,
+        privateKey: h.privateKey,
+        passphrase: passphrase,
+      );
+
+  static SshConnectRequest _withKeyPassphrases(SshConnectRequest r, List<SshHop> jumps, String? passphrase) =>
+      copyRequest(r, jumps: jumps, passphrase: passphrase);
 
   void _onFlow(SessionEntry entry, Engine engine, ConnectFlow flow) {
     if (entry.flow != flow) return; // a newer attempt replaced this one
@@ -530,3 +605,33 @@ class SessionManager extends Notifier<List<SessionEntry>> {
 
 final sessionManagerProvider =
     NotifierProvider<SessionManager, List<SessionEntry>>(SessionManager.new);
+
+/// [r] with whatever is given in place of its own.
+SshConnectRequest copyRequest(
+  SshConnectRequest r, {
+  SshAuthKind? auth,
+  String? password,
+  String? passphrase,
+  List<SshHop>? jumps,
+}) =>
+    SshConnectRequest(
+      user: r.user,
+      host: r.host,
+      port: r.port,
+      auth: auth ?? r.auth,
+      password: password ?? r.password,
+      privateKey: r.privateKey,
+      passphrase: passphrase ?? r.passphrase,
+      cols: r.cols,
+      rows: r.rows,
+      theme: r.theme,
+      label: r.label,
+      keepaliveSeconds: r.keepaliveSeconds,
+      reattachSessionId: r.reattachSessionId,
+      jumps: jumps ?? r.jumps,
+      persistent: r.persistent,
+      startupCommand: r.startupCommand,
+      env: r.env,
+      agentForward: r.agentForward,
+      forwards: r.forwards,
+    );
