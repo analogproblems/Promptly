@@ -111,6 +111,8 @@ class Host {
     this.portForwards = const [],
     this.lastConnectedAt,
     this.favourite = false,
+    this.production = false,
+    this.productionLabel = '',
     this.sync = 'vault',
   });
 
@@ -136,7 +138,16 @@ class Host {
   final List<PortForward> portForwards;
   final DateTime? lastConnectedAt;
   final bool favourite;
+
+  /// Sessions to this host carry a red bar with [productionBadge].
+  final bool production;
+
+  /// The bar's words; blank means "Production".
+  final String productionLabel;
   final String sync;
+
+  /// What a production host's sessions say on their red bar.
+  String get productionBadge => productionLabel.trim().isEmpty ? 'Production' : productionLabel.trim();
 
   String get endpoint => '$username@$hostname${port == 22 ? '' : ':$port'}';
 
@@ -153,6 +164,8 @@ class Host {
     int? keepaliveSeconds,
     Object? lastConnectedAt = _unset,
     bool? favourite,
+    bool? production,
+    String? productionLabel,
     Object? jumpHostId = _unset,
     Object? startupCommand = _unset,
     Map<String, String>? env,
@@ -181,6 +194,8 @@ class Host {
         portForwards: portForwards ?? this.portForwards,
         lastConnectedAt: lastConnectedAt == _unset ? this.lastConnectedAt : lastConnectedAt as DateTime?,
         favourite: favourite ?? this.favourite,
+        production: production ?? this.production,
+        productionLabel: productionLabel ?? this.productionLabel,
         sync: sync,
       );
 
@@ -205,6 +220,8 @@ class Host {
         'port_forwards': [for (final f in portForwards) f.toJson()],
         'last_connected_at': lastConnectedAt?.toUtc().toIso8601String(),
         'favourite': favourite,
+        'production': production,
+        'production_label': productionLabel,
         'sync': sync,
       };
 
@@ -232,6 +249,8 @@ class Host {
         ],
         lastConnectedAt: j['last_connected_at'] == null ? null : DateTime.tryParse(j['last_connected_at'] as String),
         favourite: j['favourite'] as bool? ?? false,
+        production: j['production'] as bool? ?? false,
+        productionLabel: j['production_label'] as String? ?? '',
         sync: j['sync'] as String? ?? 'vault',
       );
 }

@@ -9,6 +9,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../hosts/inheritance.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
 import '../shell/empty_state.dart';
@@ -331,12 +332,12 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
       ];
 
   List<Widget> _serverStep(PromptlyTokens t) {
-    final hosts = ref
-        .watch(hostsProvider)
-        .where((h) =>
-            h.auth.kind == AuthKind.identity ||
-            (h.auth.kind == AuthKind.password && h.auth.passwordSecretId != null))
-        .toList();
+    final groups = ref.watch(groupsProvider);
+    // A key from the host's group counts, as it does when sync connects.
+    final hosts = ref.watch(hostsProvider).where((h) {
+      final auth = Inherited(h, groups).auth;
+      return auth.kind == AuthKind.identity || (auth.kind == AuthKind.password && auth.passwordSecretId != null);
+    }).toList();
     return [
       const _Heading('Which server?'),
       const SizedBox(height: 8),

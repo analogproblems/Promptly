@@ -12,6 +12,7 @@ import '../shell/empty_state.dart';
 import '../sync/sync_providers.dart';
 import 'group_editor.dart';
 import 'host_colors.dart';
+import 'inheritance.dart';
 import 'models.dart';
 import 'reachability.dart';
 import 'repositories.dart';
@@ -94,13 +95,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
     if (ok == true) ref.read(hostsProvider.notifier).delete(host.id);
   }
 
-  bool _matches(Host h) {
-    if (_query.isEmpty) return true;
-    return h.label.toLowerCase().contains(_query) ||
-        h.hostname.toLowerCase().contains(_query) ||
-        h.username.toLowerCase().contains(_query) ||
-        h.tags.any((t) => t.toLowerCase().contains(_query));
-  }
+  bool _matches(Host h) => hostMatches(h, _query);
 
   @override
   Widget build(BuildContext context) {
@@ -166,7 +161,13 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                       ),
                     ),
                     const SizedBox(width: 6),
-                    Text(syncSummary(sync), style: TextStyle(fontSize: 12, color: t.muted)),
+                    Flexible(
+                      child: Text(
+                        syncSummary(sync),
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: t.muted),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -257,6 +258,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                             for (final h in list)
                               _HostRow(
                                 host: h,
+                                endpoint: Inherited(h, groups).endpoint,
                                 keyPrefix: prefix,
                                 reachOn: reachOn,
                                 reach: reach[h.id],
@@ -307,6 +309,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                             for (final h in list)
                               _HostRow(
                                 host: h,
+                                endpoint: Inherited(h, groups).endpoint,
                                 reachOn: reachOn,
                                 reach: reach[h.id],
                                 onConnect: () => _connect(h),
@@ -327,6 +330,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
 class _HostRow extends StatelessWidget {
   const _HostRow({
     required this.host,
+    required this.endpoint,
     required this.onConnect,
     required this.onEdit,
     required this.onDelete,
@@ -337,6 +341,9 @@ class _HostRow extends StatelessWidget {
   });
 
   final Host host;
+
+  /// `user@host:port`, with what the group fills in.
+  final String endpoint;
   final VoidCallback onConnect;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
@@ -428,7 +435,7 @@ class _HostRow extends StatelessWidget {
                       ],
                       Flexible(
                         child: Text(
-                          '${host.endpoint} · $auth',
+                          '$endpoint · $auth',
                           overflow: TextOverflow.ellipsis,
                           style: monoStyle(context, size: 12, color: t.muted),
                         ),

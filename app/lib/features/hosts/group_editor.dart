@@ -29,18 +29,39 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
   late final TextEditingController _label = TextEditingController(text: widget.group.label);
   late final TextEditingController _user =
       TextEditingController(text: widget.group.defaults['username'] as String? ?? '');
+  late final TextEditingController _port =
+      TextEditingController(text: (widget.group.defaults['port'] as num?)?.toInt().toString() ?? '');
   late String? _color = widget.group.color;
   late String? _identityId = widget.group.defaults['identity_id'] as String?;
+  late String? _jumpHostId = widget.group.defaults['jump_host_id'] as String?;
+  String? _portError;
 
   @override
   void dispose() {
     _label.dispose();
     _user.dispose();
+    _port.dispose();
     super.dispose();
   }
 
   void _save() {
+    final portText = _port.text.trim();
+    final port = int.tryParse(portText);
+    if (portText.isNotEmpty && (port == null || port < 1 || port > 65535)) {
+      setState(() => _portError = '1 to 65535, or blank');
+      return;
+    }
     final defaults = Map<String, dynamic>.from(widget.group.defaults);
+    if (port == null) {
+      defaults.remove('port');
+    } else {
+      defaults['port'] = port;
+    }
+    if (_jumpHostId == null) {
+      defaults.remove('jump_host_id');
+    } else {
+      defaults['jump_host_id'] = _jumpHostId;
+    }
     final user = _user.text.trim();
     if (user.isEmpty) {
       defaults.remove('username');
@@ -88,9 +109,12 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final identities = ref.watch(identitiesProvider);
+    // A host in this group can't be the group's own way in.
+    final jumpHosts = [for (final h in ref.watch(hostsProvider)) if (h.groupId != widget.group.id) h];
     final brightness = Theme.of(context).brightness;
     return AlertDialog(
       title: const Text('Group'),
+      scrollable: true,
       content: SizedBox(
         width: 460,
         child: Column(
@@ -134,7 +158,10 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
             const SizedBox(height: 16),
             Text('DEFAULTS FOR ITS HOSTS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted)),
             const SizedBox(height: 4),
-            Text('Used when a host leaves the field blank or asks each time.', style: TextStyle(fontSize: 12, color: t.muted)),
+            Text(
+              'Used when a host leaves the field blank: the key for hosts set to Agent or Ask each time, the jump host for hosts without one.',
+              style: TextStyle(fontSize: 12, color: t.muted),
+            ),
             const SizedBox(height: 8),
             TextField(
               key: const Key('group-user'),
@@ -143,26 +170,59 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
               decoration: const InputDecoration(labelText: 'User'),
             ),
             const SizedBox(height: 12),
+            TextField(
+              key: const Key('group-port'),
+              controller: _port,
+              keyboardType: TextInputType.number,
+              style: monoStyle(context, size: 13),
+              decoration: InputDecoration(
+                labelText: 'Port',
+                hintText: '22',
+                helperText: 'For hosts left on port 22.',
+                errorText: _portError,
+              ),
+            ),
+            const SizedBox(height: 12),
             DropdownButtonFormField<String?>(
               key: const Key('group-key'),
-              initialValue: _identityId,
+              initialValue: identities.any((i) => i.id == _identityId) ? _identityId : null,
+              isExpanded: true,
               decoration: const InputDecoration(labelText: 'Key'),
               items: [
                 const DropdownMenuItem<String?>(value: null, child: Text('None')),
-                for (final i in identities) DropdownMenuItem<String?>(value: i.id, child: Text(i.label)),
+                for (final i in identities)
+                  DropdownMenuItem<String?>(value: i.id, child: Text(i.label, overflow: TextOverflow.ellipsis)),
               ],
               onChanged: (v) => setState(() => _identityId = v),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String?>(
+              key: const Key('group-jump'),
+              initialValue: jumpHosts.any((h) => h.id == _jumpHostId) ? _jumpHostId : null,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Jump host'),
+              items: [
+                const DropdownMenuItem<String?>(value: null, child: Text('None, connect directly')),
+                for (final h in jumpHosts)
+                  DropdownMenuItem<String?>(value: h.id, child: Text(h.label, overflow: TextOverflow.ellipsis)),
+              ],
+              onChanged: (v) => setState(() => _jumpHostId = v),
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('group-delete'),
+                style: TextButton.styleFrom(foregroundColor: t.danger),
+                onPressed: _delete,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Delete group'),
+              ),
             ),
           ],
         ),
       ),
       actions: [
-        TextButton(
-          style: TextButton.styleFrom(foregroundColor: t.danger),
-          onPressed: _delete,
-          child: const Text('Delete group'),
-        ),
-        const Spacer(),
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(key: const Key('group-save'), onPressed: _save, child: const Text('Save')),
       ],

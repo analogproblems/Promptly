@@ -24,7 +24,12 @@ class ConnectFlow extends ChangeNotifier {
   ({String name, String instructions, List<SshKbPrompt> prompts})? keyboard;
 
   int? sessionId;
+
+  /// Why it failed: the technical reason, then the same in plain words
+  /// with what to try (null when the engine had none to give).
   String? error;
+  String? errorTitle;
+  String? errorHint;
   bool cancelled = false;
 
   bool get finished => sessionId != null || error != null || cancelled;
@@ -68,6 +73,8 @@ class ConnectFlow extends ChangeNotifier {
         sessionId = e.sessionId;
       case SshEventKind.failed:
         error = e.error ?? 'The connection failed.';
+        errorTitle = e.errorTitle;
+        errorHint = e.errorHint;
     }
     notifyListeners();
   }
@@ -96,6 +103,16 @@ class ConnectFlow extends ChangeNotifier {
     if (_attemptId != null) _call(() => engine.sshCancel(_attemptId!));
     notifyListeners();
   }
+
+  /// Hang up a connection that worked but that nobody will use, as after
+  /// a test.
+  void discard() {
+    if (_discarded || sessionId == null || _attemptId == null) return;
+    _discarded = true;
+    _call(() => engine.sshCancel(_attemptId!));
+  }
+
+  bool _discarded = false;
 
   void _call(void Function() f) {
     try {

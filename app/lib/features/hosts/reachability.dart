@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
 import '../settings/settings_providers.dart';
+import 'inheritance.dart';
 import 'repositories.dart';
 
 /// What the last knock on a host's port found.
@@ -42,6 +43,7 @@ class HostReachabilityNotifier extends Notifier<Map<String, HostReach>> {
   Future<void> refresh() async {
     if (_checking || !ref.read(reachabilityProvider)) return;
     final hosts = ref.read(hostsProvider);
+    final groups = ref.read(groupsProvider);
     if (hosts.isEmpty) {
       state = const {};
       return;
@@ -49,7 +51,7 @@ class HostReachabilityNotifier extends Notifier<Map<String, HostReach>> {
     _checking = true;
     try {
       final results = await ref.read(engineProvider).hostsReachability(
-            [for (final h in hosts) ReachTarget(id: h.id, host: h.hostname, port: h.port)],
+            [for (final h in hosts) ReachTarget(id: h.id, host: h.hostname, port: Inherited(h, groups).port)],
             timeoutMs,
           );
       final now = DateTime.now();

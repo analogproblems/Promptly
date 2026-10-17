@@ -18,6 +18,7 @@ import 'connecting_view.dart';
 import 'forwards_sheet.dart';
 import 'session_manager.dart';
 import 'snippets_drawer.dart';
+import 'status_dot.dart';
 
 /// One session, chrome included: the slim bar with its title and tools,
 /// the search bar when open, and the terminal (or the connecting view,
@@ -179,7 +180,10 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
           onPointerDown: widget.onFocus == null ? null : (_) => widget.onFocus!(),
           child: Column(
             children: [
-              if (accent != null) Container(key: const Key('host-colour-bar'), height: 3, color: accent),
+              if (entry.production != null)
+                ProductionBar(label: entry.production!, compact: widget.compact)
+              else if (accent != null)
+                Container(key: const Key('host-colour-bar'), height: 3, color: accent),
               Container(
                 height: barHeight,
                 padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -197,25 +201,7 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                       )
                     else
                       const SizedBox(width: 8),
-                    Semantics(
-                      label: live
-                          ? 'Connected'
-                          : entry.isConnecting
-                          ? 'Connecting'
-                          : 'Not connected',
-                      child: Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: live
-                              ? t.accent
-                              : entry.isConnecting
-                              ? t.warning
-                              : t.muted,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
+                    SessionStatusDot(entry: entry),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(

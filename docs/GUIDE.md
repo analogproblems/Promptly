@@ -160,7 +160,8 @@ On a computer with a window at least 900 pixels wide, the app gains a **menu bar
 
 Each session has a slim bar along its top edge. From left to right it shows:
 
-- A coloured dot: green when connected, otherwise connecting or not connected.
+- A coloured dot: green when connected, amber while connecting, amber and pulsing while reconnecting, grey when not connected. Point at it (or use a screen reader) to hear which.
+- For a [production host](#marking-a-production-host), a red bar above it with the host's label.
 - The session's title, usually set by the server's shell (for example `deploy@web-1: ~`).
 - The terminal's size in columns and rows, such as `120×40`.
 - Buttons for **Search**, **Snippets**, **Files** (SSH sessions only) and **Port forwards** (hosts that have some), and a **Close** button.
@@ -180,7 +181,7 @@ Above the full list you may see two shortcut sections:
 
 If you use groups, the full list is divided into one section per group, with ungrouped hosts under **Other**.
 
-**To find a host,** type in the search box. It matches labels, addresses, usernames and tags.
+**To find a host,** type in the search box. It matches labels, addresses, usernames, tags and notes.
 
 **To connect,** tap the host's row.
 
@@ -192,7 +193,7 @@ The small indicator at the top right of the list shows your sync status. Tap it 
 
 ### Adding a host
 
-Tap the **+** button on the **Hosts** tab. The form has six sections. Only the address and user are required; everything else is optional.
+Tap the **+** button on the **Hosts** tab. The form has six sections. Only the address and user are required; everything else is optional. If the host is in a group, the form shows what the group fills in for the fields you leave to it.
 
 **Basics**
 
@@ -200,7 +201,7 @@ Tap the **+** button on the **Hosts** tab. The form has six sections. Only the a
 |---|---|
 | **Label** | A short name for the list, such as `web-1`. If you leave it blank, the address is used. |
 | **Hostname or IP** | The server's address, such as `web-1.example.com` or `10.0.0.11`. |
-| **Port** | The SSH port. Usually `22`. |
+| **Port** | The SSH port. Usually `22`. If the host's group sets a port, leaving this at `22` (or blank) uses the group's. |
 | **User** | The account you log in as. If the host is in a group that sets a default user, you can leave this blank. |
 
 **Authentication.** Choose how Promptly proves who you are:
@@ -215,11 +216,17 @@ Tap the **+** button on the **Hosts** tab. The form has six sections. Only the a
 
 > **Note** Whatever you choose, Promptly first checks whether the server needs a login at all. If it doesn't, you're connected without any prompt.
 
+Some servers only ask for the password through their own login prompt (PAM). A host set to **Password** works with them too: Promptly answers the server's password question with the saved password, or asks you for it. Anything else the server asks, such as a two-factor code, is shown to you.
+
+**To check the settings before saving,** tap **Test connection**. Promptly runs the real connection steps with the form as it stands, asks any questions it needs to (a new host key, a password), then hangs up. Nothing is saved, and the startup command, persistent session and port forwards are left out of the test.
+
 **Organise**
 
 - **Group:** put the host in a group, or tap **New group** to make one. See [Groups](#groups) below.
 - **Colour:** pick the colour used for the host's tile and its sessions.
 - **Favourite:** show the host in the **Favourites** section.
+- **Tags:** words to find the host by, separated by commas, such as `web, eu-west`.
+- **Mark as production:** see [Marking a production host](#marking-a-production-host) below.
 
 **Connection.** Jump host, persistent session, agent forwarding, startup command, environment variables and keep-alive. These are explained in [chapter 13](#13-more-connection-options).
 
@@ -228,6 +235,10 @@ Tap the **+** button on the **Hosts** tab. The form has six sections. Only the a
 **Notes.** Anything worth remembering about the server.
 
 Tap **Save** when you're done.
+
+### Marking a production host
+
+Turn on **Mark as production** in the host's **Organise** section, and optionally type a **Label on the bar**, such as `Live payments`. Every session to that host then has a red bar across the top with the label in capitals (or **PRODUCTION** if you leave the label empty), and on a computer its tab carries the label too. The words are there as well as the colour, so the warning doesn't depend on seeing red.
 
 ### Editing and deleting a host
 
@@ -245,8 +256,12 @@ Groups keep a long list tidy (**Production**, **Homelab**, **Clients**) and save
 
 - Rename the group and choose its colour.
 - Set a default **User** for hosts that leave **User** blank.
+- Set a default **Port** for hosts left on port 22.
 - Set a default **Key** for hosts set to **Agent** or **Ask each time**.
+- Set a default **Jump host** for hosts that don't have one of their own.
 - Delete the group. Its hosts stay, listed under **Other**.
+
+A group made inside another group (for example by importing `Work/Databases` from a CSV file) takes the outer group's defaults for anything it leaves blank. SFTP sync uses the group's defaults and jump hosts too, the same way a terminal session does.
 
 ### Checking which hosts are up
 
@@ -319,11 +334,11 @@ Depending on the host's authentication method, Promptly may ask you for a passwo
 
 ### If the connection fails
 
-If Promptly can't connect, the session shows **Could not connect** with the reason. Tap **Try again** to retry, or **Close** to give up. [Chapter 20](#20-troubleshooting) covers the common causes.
+If Promptly can't connect, the session says what went wrong in plain words, such as **Couldn't find web-1.example** or **Nothing is answering on port 22**, and what to try next. Tap **Details** for the technical reason, which helps whoever runs the server. If the server refused the login, the advice says which ways in it accepts (only keys, for example). Tap **Try again** to retry, or **Close** to give up. [Chapter 20](#20-troubleshooting) covers the common causes.
 
 ### Dropped connections
 
-Networks drop, laptops sleep and phones change from Wi-Fi to mobile data. When an SSH connection drops, Promptly keeps the session's screen and reconnects by itself, waiting a little longer between each try (1, 2, 4, 8, 16, then 30 seconds), for up to ten tries. A bar over the session shows what's happening. Tap **Stop** to stop trying.
+Networks drop, laptops sleep and phones change from Wi-Fi to mobile data. When an SSH connection drops, Promptly keeps the session's screen and reconnects by itself, waiting a little longer between each try (1, 2, 4, 8, 16, then 30 seconds), for up to ten tries. A bar over the session shows what's happening, and the session's dot pulses amber. Tap **Stop** to stop trying.
 
 If reconnecting stops or runs out of tries, the session stays on screen with its output, marked as ended. Tap **Reconnect** to try again, or **Close** to close it. You can also reconnect from **Session › Reconnect** on a computer.
 
@@ -573,7 +588,7 @@ These options are in the **Connection** section of the host form.
 
 ### Jump host
 
-Some servers can only be reached through another server, often called a jump host or bastion. Set **Jump host** to the saved host to go through first. Promptly connects to the jump host, then on to the server, with each one using its own login. A jump host can have a jump host of its own, so you can chain as many as you need. Promptly checks the host key of every server along the way.
+Some servers can only be reached through another server, often called a jump host or bastion. Set **Jump host** to the saved host to go through first. If the host's group sets a jump host, the list shows it as the group's, and it's used unless you pick another. Promptly connects to the jump host, then on to the server, with each one using its own login. A jump host can have a jump host of its own, so you can chain as many as you need. Promptly checks the host key of every server along the way.
 
 ### Persistent session
 
@@ -593,7 +608,7 @@ Environment variables to send to the server, one `NAME=value` per line. The serv
 
 ### Keep-alive
 
-How often, in seconds, Promptly pings the server so an idle connection isn't dropped by a router or firewall. The default is 30. Set it to 0 to turn keep-alives off.
+How often, in seconds, Promptly pings the server so an idle connection isn't dropped by a router or firewall. The default is 30. Set it to 0 to turn keep-alives off; an idle connection may then be dropped by the network, and Promptly only notices when you next type.
 
 ## 14. Sync
 
@@ -764,7 +779,7 @@ Promptly is open source, so anyone can check what it does. To report a security 
 
 **"Could not connect" straight away.** Check the hostname and port in the host form, and that the server is reachable from your network (turn on **Show which hosts are up** to see at a glance). A server behind a firewall or on a private network may need a VPN or a [jump host](#jump-host).
 
-**The password is rejected.** If you saved the password, edit the host and type it again. Some servers turn off password logins entirely; use a [key](#6-keys) instead.
+**The password is rejected.** If you saved the password, edit the host and type it again, then tap **Test connection**. Some servers turn off password logins entirely; the message then says the server only accepts keys, so use a [key](#6-keys) instead.
 
 **The key is rejected.** Make sure the public key is in `~/.ssh/authorized_keys` on the server, for the user you log in as, and that the host is set to use that key. On the server, `~/.ssh` should be readable only by you (`chmod 700 ~/.ssh` and `chmod 600 ~/.ssh/authorized_keys`).
 
@@ -773,6 +788,8 @@ Promptly is open source, so anyone can check what it does. To report a security 
 **Hosts, saved passwords or keys are gone after a system reset.** The key that encrypts them lives in your system's secure storage. If that was cleared (a reset keychain or keyring, or a phone restored without it), Promptly can't read them any more. It moves the old hosts and settings aside, to a file named `promptly.db.unreadable-` and a number in its data folder, and starts again empty. If you use sync, remove the device from another one and join the vault again to get everything back; otherwise add the hosts again, type the passwords again and re-import your keys.
 
 **"The key for this host is missing."** The host points at a key that was deleted. Edit the host and pick another key.
+
+**"Couldn't use the SSH agent."** The host is set to **Agent**, but no agent is running, it holds no keys, or Promptly isn't allowed to open it. Start your agent and add a key with `ssh-add`, or set the host to use a key from the **Keys** tab.
 
 **Promptly warns that a server's key has changed.** Don't continue until you know why. If the server was rebuilt or its SSH keys were replaced, check the new fingerprint with whoever runs it, then tap **I know why it changed**, tick the box and tap **Trust the new key and connect**. Snippets run on several hosts and SFTP sync stop with a warning instead of connecting to such a server, until you've trusted the new key in the terminal.
 
