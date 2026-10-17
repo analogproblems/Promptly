@@ -140,7 +140,7 @@ Grouped by area. Each line is tagged with the milestone from [ROADMAP.md](ROADMA
 - Swipe down from the top edge to search scrollback; swipe up from the keyboard bar to open the snippets drawer. (M3)
 
 
-Built in M4: the terminal is a text-input client on phones and tablets and reads the system keyboard's edits as deltas, so typing arrives exactly as entered; a bar above the keyboard carries Esc, Tab, sticky Ctrl and Alt (one-shot, with a haptic tick), arrows, Home, End, paging, Delete, the shell's punctuation, the snippets drawer and a hide-keyboard key. Touch selection and the swipe gestures are still to come.
+Built in M4: the terminal is a text-input client on phones and tablets and reads the system keyboard's edits as deltas, so typing arrives exactly as entered; a bar above the keyboard carries Esc, Tab, sticky Ctrl and Alt (one-shot, with a haptic tick), arrows, Home, End, paging, Delete, the shell's punctuation, the snippets drawer and a hide-keyboard key. Since then: Ctrl and Alt lock on a double tap or long press, arrows and the editing keys send xterm's modified sequences with them, holding an arrow key and sliding sends arrows, and Settings chooses and orders the keys. Touch selection and the swipe gestures are still to come.
 ### 4.9 Themes and typography
 
 - Ships with JetBrains Mono (with Nerd Font symbols) and uses system fonts for the UI. Users can add any monospace font file. Ligatures on by default, switchable. (M1)

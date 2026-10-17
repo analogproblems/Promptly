@@ -442,8 +442,8 @@ Above the keyboard is a bar with the keys a phone keyboard lacks. Swipe it sidew
 | Key | What it does |
 |---|---|
 | **Esc**, **Tab** | Sends the key. |
-| **Ctrl**, **Alt** | Sticky: tap it, then the next key you type is sent with it. For example, tap **Ctrl** then type `c` to send Ctrl+C. |
-| **← ↓ ↑ →** | Arrow keys. |
+| **Ctrl**, **Alt** | Sticky: tap it, then the next key you type is sent with it. For example, tap **Ctrl** then type `c` to send Ctrl+C. To keep it held for several keys, tap it twice quickly or press and hold it: it shows a padlock and stays on until you tap it again. |
+| **← ↓ ↑ →** | Arrow keys. With **Ctrl** or **Alt** held they send the combination programs expect, so Ctrl+← jumps back a word in most shells. To move further, hold an arrow key for a moment, then slide your finger: the cursor follows it in any direction, like a trackpad. |
 | **- / \| ~ :** | Characters the shell uses often. |
 | **Home**, **End**, **PgUp**, **PgDn**, **Del** | Sends the key. |
 
@@ -451,6 +451,8 @@ Above the keyboard is a bar with the keys a phone keyboard lacks. Swipe it sidew
 <img src="screenshots/m4-phone-shell.png" alt="A session on a phone, with the keyboard bar above the tabs" width="300">
 
 At the right end of the bar, the **‹›** button opens your snippets, and the keyboard button hides the keyboard. Tap the terminal to bring it back.
+
+**To choose the keys on the bar,** go to **Settings › Terminal › Keyboard bar**. Drag a key by its handle to move it, tap **−** to take it off the bar, and tap a key under **More keys** to add it: there are F1 to F12, Insert and more symbols such as `_`, `\`, `*`, `&` and brackets. **Use the usual keys** puts the bar back as it came.
 
 > **Note** Selecting text and scrolling back with your finger aren't available yet on touch screens. To find earlier output, use **Search**.
 
@@ -802,6 +804,7 @@ If the file holds several themes, save the ones you want. Imported themes appear
 | | **Bell** | Flash the screen (the default), vibrate on a phone or tablet, or do nothing. See [The bell](#the-bell). |
 | | **Text size** | The terminal's text size. Zooming in a session changes it too. |
 | | **Lines to keep for scrolling back** | 1,000, 10,000 (the default), 50,000 or 100,000. Applies to sessions opened after the change. |
+| | **Keyboard bar** | Which keys sit above the keyboard on a phone or tablet, and their order. See [On a phone or tablet](#on-a-phone-or-tablet). |
 | **Updates** | **Check for updates automatically** | Asks GitHub once a day whether a new version is out. Off by default. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |
 | | **Import from a CSV file** | Imports hosts from a CSV file. |
