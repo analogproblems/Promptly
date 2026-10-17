@@ -150,8 +150,12 @@ pub enum ConnectError {
         port: u16,
         reason: String,
     },
-    #[error("the host key was not trusted")]
-    HostKeyRejected,
+    #[error("{}", if *changed { "the server's host key has changed, and the new one was not trusted" } else { "the host key was not trusted" })]
+    HostKeyRejected {
+        /// The server showed a different key from the one trusted before,
+        /// rather than one never seen.
+        changed: bool,
+    },
     #[error("{0}")]
     AuthFailed(String),
     #[error("cancelled")]
@@ -170,6 +174,8 @@ pub struct Handler {
     host: String,
     port: u16,
     remote_targets: Arc<Mutex<HashMap<u32, (String, u16)>>>,
+    /// Set when the server's key was refused, and whether it had changed.
+    refused: Arc<Mutex<Option<bool>>>,
     agent_forward: bool,
 }
 
@@ -247,6 +253,9 @@ impl client::Handler for Handler {
         }
         let info = HostKeyInfo::from_key(&self.host, self.port, &key);
         let trusted = self.prompter.confirm_host_key(info, status).await;
+        if !trusted {
+            *self.refused.lock().unwrap() = Some(status == HostKeyStatus::Changed);
+        }
         if trusted {
             if let Err(e) = self.known_hosts.remember(&self.host, self.port, &key) {
                 tracing::warn!("could not remember host key: {e}");
@@ -316,13 +325,22 @@ pub async fn connect_handle(
         waits: waits.clone(),
     });
 
+    let preferred = russh::Preferred {
+        key: crate::hostkey::preferred_host_key_algorithms(
+            &known_hosts.known_algorithms(&host, port),
+        )
+        .into(),
+        ..russh::Preferred::DEFAULT
+    };
     let config = Arc::new(client::Config {
         keepalive_interval: Some(params.keepalive),
         keepalive_max: 3,
         nodelay: true,
+        preferred,
         ..client::Config::default()
     });
     let remote_targets = Arc::new(Mutex::new(HashMap::new()));
+    let refused = Arc::new(Mutex::new(None));
     let handler = Handler {
         prompter: prompter.clone(),
         known_hosts: known_hosts.clone(),
@@ -330,6 +348,7 @@ pub async fn connect_handle(
         port,
         remote_targets: remote_targets.clone(),
         agent_forward: params.agent_forward,
+        refused: refused.clone(),
     };
 
     // A jump chain gets more time: every hop has its own handshake.
@@ -342,7 +361,8 @@ pub async fn connect_handle(
     let (mut handle, hops) = match timeout_excluding(&waits, timeout, opening).await {
         Ok(Ok(h)) => h,
         Ok(Err(ConnectError::Ssh(russh::Error::UnknownKey))) => {
-            return Err(ConnectError::HostKeyRejected)
+            let changed = refused.lock().unwrap().unwrap_or(false);
+            return Err(ConnectError::HostKeyRejected { changed });
         }
         Ok(Err(ConnectError::Ssh(russh::Error::IO(e)))) => {
             return Err(ConnectError::Connect {

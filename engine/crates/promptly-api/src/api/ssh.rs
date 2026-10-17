@@ -412,8 +412,11 @@ pub fn ssh_exec(
             exit_code: None,
             timed_out: false,
             error: Some(match e {
-                ConnectError::HostKeyRejected => format!(
+                ConnectError::HostKeyRejected { changed: false } => format!(
                     "Connect to {label} in the terminal once first, so its host key is trusted."
+                ),
+                ConnectError::HostKeyRejected { changed: true } => format!(
+                    "{label} showed a different host key from the one trusted before, so nothing was run. This can mean someone is intercepting the connection. Check with whoever runs the server before connecting to it in the terminal."
                 ),
                 ConnectError::Cancelled => format!(
                     "{label} asks for a login each time. Save a password or pick a key to run snippets on it."

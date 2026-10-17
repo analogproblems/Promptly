@@ -109,7 +109,10 @@ mod tests {
                 Duration::from_secs(10),
             ))
             .expect_err("an unknown host key is refused unattended");
-        assert!(matches!(err, ConnectError::HostKeyRejected), "{err}");
+        assert!(
+            matches!(err, ConnectError::HostKeyRejected { changed: false }),
+            "{err}"
+        );
 
         // Then with the key learnt, the way a terminal session leaves it.
         struct Trusting;

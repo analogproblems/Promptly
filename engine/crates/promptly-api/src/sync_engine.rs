@@ -74,17 +74,23 @@ impl KnownHosts for VaultKnownHosts {
                 first_seen_at: time::OffsetDateTime::now_utc(),
                 first_seen_device: store.device_id().to_string(),
             };
-            // One record per (host, port, key): skip if an identical one exists.
-            let exists = store
-                .list(Collection::KnownHosts)
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|r| serde_json::from_str::<KnownHost>(&r.json).ok())
-                .any(|k| {
-                    k.host == record.host
-                        && k.port == record.port
-                        && k.public_key == record.public_key
-                });
+            // One record per (host, port): the key trusted now replaces any
+            // trusted before, on every device.
+            let mut exists = false;
+            for r in store.list(Collection::KnownHosts).unwrap_or_default() {
+                let Ok(k) = serde_json::from_str::<KnownHost>(&r.json) else {
+                    continue;
+                };
+                if k.host != record.host || k.port != record.port {
+                    continue;
+                }
+                if k.public_key == record.public_key && !exists {
+                    exists = true;
+                } else {
+                    let _ = store.delete(Collection::KnownHosts, &r.id);
+                    notify_change();
+                }
+            }
             if !exists {
                 if let Ok(json) = serde_json::to_string(&record) {
                     let _ = store.put(Collection::KnownHosts, &record.id.to_string(), &json);
@@ -105,22 +111,42 @@ fn apply_pulled_known_hosts(store: &Store) -> Result<(), String> {
         .unwrap_or_default();
     let mut now = applied.clone();
     let files = FileKnownHosts::default_paths(&crate::api::engine::data_dir());
+    // Normally one record per host; two devices that trusted different
+    // keys at once leave two until one of them trusts again. The newest
+    // trust wins, the same on every device.
+    let mut newest: std::collections::BTreeMap<(String, u16), (KnownHost, bool)> =
+        Default::default();
     for r in store
         .list(Collection::KnownHosts)
         .map_err(|e| e.to_string())?
     {
-        if applied.contains(&r.id) {
-            continue;
-        }
         let Ok(k) = serde_json::from_str::<KnownHost>(&r.json) else {
             continue;
         };
+        let fresh = now.insert(r.id);
+        let slot = newest.entry((k.host.clone(), k.port));
+        match slot {
+            std::collections::btree_map::Entry::Vacant(v) => {
+                v.insert((k, fresh));
+            }
+            std::collections::btree_map::Entry::Occupied(mut o) => {
+                let (best, any_fresh) = o.get_mut();
+                *any_fresh |= fresh;
+                if (k.first_seen_at, k.id) > (best.first_seen_at, best.id) {
+                    *best = k;
+                }
+            }
+        }
+    }
+    for (k, any_fresh) in newest.into_values() {
+        if !any_fresh {
+            continue;
+        }
         if let Ok(key) = PublicKey::from_openssh(&k.public_key) {
             if files.check(&k.host, k.port, &key) != HostKeyStatus::Known {
                 let _ = files.remember(&k.host, k.port, &key);
             }
         }
-        now.insert(r.id);
     }
     if now.len() != applied.len() {
         store
@@ -317,9 +343,12 @@ pub fn connect_sftp(host_id: &str, remote_dir: &str) -> Result<Arc<SftpBackend>,
         remote_dir,
     )
     .map_err(|e| match e {
-        SftpError::Connect(ConnectError::HostKeyRejected) => {
+        SftpError::Connect(ConnectError::HostKeyRejected { changed: false }) => {
             format!("Connect to {label} in the terminal once first, so its host key is trusted.")
         }
+        SftpError::Connect(ConnectError::HostKeyRejected { changed: true }) => format!(
+            "{label} showed a different host key from the one trusted before, so sync stopped. This can mean someone is intercepting the connection. Check with whoever runs the server before connecting to it in the terminal."
+        ),
         SftpError::Connect(ConnectError::Cancelled)
         | SftpError::Connect(ConnectError::AuthFailed(_)) => format!(
             "The saved login for {label} did not work. Check the password or key on the host."

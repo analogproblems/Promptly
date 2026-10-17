@@ -1897,6 +1897,7 @@ name = "promptly-ssh"
 version = "1.0.1"
 dependencies = [
  "base64 0.23.1",
+ "hmac",
  "promptly-session",
  "promptly-term",
  "promptly-vault",
@@ -1905,6 +1906,7 @@ dependencies = [
  "russh-sftp",
  "serde",
  "serde_json",
+ "sha1",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
