@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective 15 October 2026.
+Effective 17 October 2026.
 
 Promptly is a terminal emulator and SSH client made by its contributors and published under the MIT licence. This page says what the app does with information, in plain words. The short version: **Promptly collects nothing about you, and has no server to send anything to.**
 
@@ -12,9 +12,9 @@ Promptly is a terminal emulator and SSH client made by its contributors and publ
 
 ## Where your data lives
 
-Everything you put into Promptly (hosts, groups, keys, snippets, settings, saved passwords) is stored on your device, in the app's own data folder, and the secrets among it in the operating system's protected storage where it offers one.
+Everything you put into Promptly (hosts, groups, keys, snippets, settings, saved passwords) is stored on your device, in the app's own data folder. Saved passwords and private keys are kept there as files that your system's permissions keep other users and apps from reading. They are not encrypted on the device itself, so protect the device and its backups as you would your `~/.ssh` folder.
 
-If you turn on sync, Promptly writes an encrypted copy of that data to a place **you** choose: a folder another app of yours already syncs (such as a cloud drive's folder), or a server of yours over SFTP. The copy is encrypted on your device with a key derived from your passphrase before it leaves it, and only devices that know the passphrase (or the recovery code) can read it. The storage provider you chose holds ciphertext and opaque file names. Promptly's makers never see it. Sync is off until you set it up.
+If you turn on sync, Promptly writes an encrypted copy of that data to a place **you** choose: a folder another app of yours already syncs (such as a cloud drive's folder), or a server of yours over SFTP. The copy is encrypted on your device with a key derived from your passphrase before it leaves it, and only devices that know the passphrase (or the recovery code), or have already joined, can read it. A device that has joined keeps the key, so removing it from the vault or changing the passphrase does not lock it out; to cut off a lost device, remove its access to the storage itself. The storage provider you chose holds ciphertext and opaque file names. Promptly's makers never see it. Sync is off until you set it up.
 
 ## What goes over the network
 
