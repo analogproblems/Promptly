@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
@@ -38,8 +40,12 @@ class RecordingEngine implements Engine {
     written.add(data);
   }
 
+  final List<String> pasted = [];
   @override
-  void terminalPaste(int id, String text) => calls.add('paste');
+  void terminalPaste(int id, String text) {
+    calls.add('paste');
+    pasted.add(text);
+  }
 
   /// Whether the "program" takes mouse events.
   bool takesMouse = false;
@@ -406,6 +412,242 @@ void main() {
     expect(moves, hasLength(2), reason: 'one per cell: $moves');
     expect(moves.first, 'mouse move null 0,0');
     await pointer.removePointer();
+    controller.dispose();
+  });
+
+
+  testWidgets('a paste through the soft keyboard is checked first and sent as a paste', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    final asked = <String>[];
+    String? answer;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(
+          body: TerminalView(
+            controller: controller,
+            imeInput: true,
+            confirmPaste: (text) async {
+              asked.add(text);
+              return answer;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+    void insert(String text) => client.updateEditingValueWithDeltas([
+          TextEditingDeltaInsertion(
+            oldText: ' ',
+            textInserted: text,
+            insertionOffset: 1,
+            selection: TextSelection.collapsed(offset: 1 + text.length),
+            composing: TextRange.empty,
+          ),
+        ]);
+
+    // Cancelled: nothing at all reaches the program.
+    final writes = engine.written.length;
+    insert('echo one\necho two\n');
+    await tester.pump();
+    expect(asked, ['echo one\necho two\n']);
+    expect(engine.written.length, writes);
+    expect(engine.pasted, isEmpty);
+
+    // Confirmed: sent as a paste, where the engine cleans and brackets it.
+    answer = 'echo one\necho two';
+    insert('echo one\necho two\n');
+    await tester.pump();
+    expect(engine.pasted, ['echo one\necho two']);
+    expect(engine.written.length, writes);
+
+    // The whole-value fallback goes the same way.
+    client.updateEditingValue(const TextEditingValue(text: ' a\nb'));
+    await tester.pump();
+    expect(asked.last, 'a\nb');
+
+    // Enter on its own is still Return, and stray control characters
+    // from a keyboard are dropped.
+    insert('\n');
+    expect(engine.written.last, [13]);
+    insert('x\x1b[201~y');
+    expect(engine.written.last, 'x[201~y'.codeUnits);
+    controller.dispose();
+  });
+
+  testWidgets('a keyboard paste that replaces typed text erases nothing until it is accepted', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    Completer<String?>? answer;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(
+          body: TerminalView(
+            controller: controller,
+            imeInput: true,
+            confirmPaste: (text) => (answer = Completer<String?>()).future,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' ',
+        textInserted: 'abc',
+        insertionOffset: 1,
+        selection: TextSelection.collapsed(offset: 4),
+        composing: TextRange.empty,
+      ),
+    ]);
+    final typed = engine.written.length;
+    void replaceAbc() => client.updateEditingValueWithDeltas([
+          const TextEditingDeltaReplacement(
+            oldText: ' abc',
+            replacementText: 'one\ntwo',
+            replacedRange: TextRange(start: 1, end: 4),
+            selection: TextSelection.collapsed(offset: 8),
+            composing: TextRange.empty,
+          ),
+        ]);
+
+    // While the check is up, and after Cancel, nothing is erased or sent,
+    // and typing meanwhile waits behind the paste.
+    replaceAbc();
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' one\ntwo',
+        textInserted: 'x',
+        insertionOffset: 8,
+        selection: TextSelection.collapsed(offset: 9),
+        composing: TextRange.empty,
+      ),
+    ]);
+    await tester.pump();
+    expect(engine.written.length, typed);
+    answer!.complete(null);
+    await tester.pump();
+    expect(engine.written.sublist(typed), ['x'.codeUnits]);
+    expect(engine.pasted, isEmpty);
+
+    // Accepted: the replaced text is erased, then the paste goes in.
+    final before = engine.written.length;
+    final calls = engine.calls.length;
+    replaceAbc();
+    answer!.complete('one\ntwo');
+    await tester.pump();
+    expect(engine.written.sublist(before), [
+      [0x7f, 0x7f, 0x7f],
+    ]);
+    expect(engine.calls.sublist(calls).last, 'paste');
+    expect(engine.pasted, ['one\ntwo']);
+
+    // The whole-value fallback holds its erasure back the same way.
+    final whole = engine.written.length;
+    client.updateEditingValue(const TextEditingValue(text: ' ab'));
+    client.updateEditingValue(const TextEditingValue(text: ' a\nb'));
+    await tester.pump();
+    expect(engine.written.length, whole + 1); // typing "ab" only
+    answer!.complete(null);
+    await tester.pump();
+    expect(engine.written.length, whole + 1);
+    controller.dispose();
+  });
+
+  testWidgets('a keyboard paste sent as a deletion then an insertion is checked as one change', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    final asked = <String>[];
+    Completer<String?>? answer;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(
+          body: TerminalView(
+            controller: controller,
+            imeInput: true,
+            confirmPaste: (text) {
+              asked.add(text);
+              return (answer = Completer<String?>()).future;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+    void type(String text) => client.updateEditingValueWithDeltas([
+          TextEditingDeltaInsertion(
+            oldText: ' ',
+            textInserted: text,
+            insertionOffset: 1,
+            selection: TextSelection.collapsed(offset: 1 + text.length),
+            composing: TextRange.empty,
+          ),
+        ]);
+    // What Android sends for Paste over a selection: delete it, then insert.
+    void pasteOver(String old, String text) => client.updateEditingValueWithDeltas([
+          TextEditingDeltaDeletion(
+            oldText: ' $old',
+            deletedRange: TextRange(start: 1, end: 1 + old.length),
+            selection: const TextSelection.collapsed(offset: 1),
+            composing: TextRange.empty,
+          ),
+          TextEditingDeltaInsertion(
+            oldText: ' ',
+            textInserted: text,
+            insertionOffset: 1,
+            selection: TextSelection.collapsed(offset: 1 + text.length),
+            composing: TextRange.empty,
+          ),
+        ]);
+
+    type('abc');
+    final typed = engine.written.length;
+    pasteOver('abc', 'one\ntwo');
+    await tester.pump();
+    expect(asked, ['one\ntwo']);
+    expect(engine.written.length, typed);
+    answer!.complete(null);
+    await tester.pump();
+    expect(engine.written.length, typed);
+    expect(engine.pasted, isEmpty);
+
+    // Accepted: one erase of the old text, then the paste.
+    type('abc');
+    final before = engine.written.length;
+    pasteOver('abc', 'one\ntwo');
+    answer!.complete('one\ntwo');
+    await tester.pump();
+    expect(engine.written.sublist(before), [
+      [0x7f, 0x7f, 0x7f],
+    ]);
+    expect(engine.pasted, ['one\ntwo']);
+
+    // A paste that starts like the text it replaces is still shown whole.
+    type('one');
+    pasteOver('one', 'one\ntwo');
+    expect(asked.last, 'one\ntwo');
+    answer!.complete(null);
+    await tester.pump();
+
+    // A plain Backspace still goes straight through.
+    final erased = engine.written.length;
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaDeletion(
+        oldText: ' x',
+        deletedRange: TextRange(start: 1, end: 2),
+        selection: TextSelection.collapsed(offset: 1),
+        composing: TextRange.empty,
+      ),
+    ]);
+    expect(engine.written.sublist(erased), [
+      [0x7f],
+    ]);
     controller.dispose();
   });
 

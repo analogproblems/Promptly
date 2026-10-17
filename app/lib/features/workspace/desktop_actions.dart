@@ -11,6 +11,7 @@ import '../sessions/forwards_sheet.dart';
 import '../sessions/session_manager.dart';
 import '../sessions/snippets_drawer.dart';
 import '../settings/settings_providers.dart';
+import '../terminal/paste_guard.dart';
 import 'workspace.dart';
 
 /// What the menu bar, the command palette and the shortcuts can do. One
@@ -78,7 +79,9 @@ class DesktopActions {
     final c = focused?.controller;
     if (c == null) return;
     final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text;
+    var text = data?.text;
+    if (text == null || text.isEmpty || !context.mounted) return;
+    text = await confirmPaste(context, text, warn: ref.read(pasteWarningProvider));
     if (text != null && text.isNotEmpty) c.paste(text);
   }
 

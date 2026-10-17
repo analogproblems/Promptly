@@ -14,6 +14,7 @@ abstract final class SettingKeys {
   static const reachability = 'reachability_check';
   static const onboardingDone = 'onboarding_done';
   static const updateCheck = 'update_check';
+  static const pasteWarning = 'paste_warning';
 }
 
 String? _readString(Engine engine, String key) {
@@ -132,3 +133,39 @@ class ReachabilityNotifier extends Notifier<bool> {
 }
 
 final reachabilityProvider = NotifierProvider<ReachabilityNotifier, bool>(ReachabilityNotifier.new);
+
+/// A yes-or-no setting kept in the store, with its value when never set.
+abstract class BoolSettingNotifier extends Notifier<bool> {
+  String get key;
+  bool get fallback;
+
+  @override
+  bool build() {
+    try {
+      final raw = ref.watch(engineProvider).settingGet(key);
+      if (raw == null) return fallback;
+      final value = jsonDecode(raw);
+      return value is bool ? value : fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  void set(bool on) {
+    state = on;
+    try {
+      ref.read(engineProvider).settingSet(key, jsonEncode(on));
+    } catch (_) {}
+  }
+}
+
+/// Whether pasting text with a newline in it shows it first. On by
+/// default: each newline runs a command.
+class PasteWarningNotifier extends BoolSettingNotifier {
+  @override
+  String get key => SettingKeys.pasteWarning;
+  @override
+  bool get fallback => true;
+}
+
+final pasteWarningProvider = NotifierProvider<PasteWarningNotifier, bool>(PasteWarningNotifier.new);

@@ -24,6 +24,7 @@ class TerminalView extends StatefulWidget {
     this.onFind,
     this.onOpenLink,
     this.imeInput,
+    this.confirmPaste,
   });
 
   /// The view that last took focus, so the keyboard bar can show or hide
@@ -49,6 +50,10 @@ class TerminalView extends StatefulWidget {
   /// Take typed text from the platform's soft keyboard (the IME) as well
   /// as from hardware key events. On by default on phones and tablets.
   final bool? imeInput;
+
+  /// Look at clipboard text before it is pasted. Returns the text to paste,
+  /// or null to paste nothing. Without one, text is pasted as it is.
+  final Future<String?> Function(String text)? confirmPaste;
 
   @override
   State<TerminalView> createState() => _TerminalViewState();
@@ -182,6 +187,45 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     c.write(c.encodeTyped(text));
   }
 
+  /// A keyboard paste waiting on its check. Keyboard input that arrives
+  /// meanwhile waits behind it, so nothing overtakes the paste.
+  Future<void>? _imePending;
+
+  /// An edit from the soft keyboard: erase [erase] characters, then type
+  /// [text]. Enter on its own is Enter; anything else with a line break in
+  /// it came from the keyboard's paste (or a dictated paragraph) and goes
+  /// through the same check and clean-up as any paste, erasure included, so
+  /// cancelling it changes nothing. Control characters a keyboard should
+  /// never produce are dropped.
+  void _imeText(String text, {int erase = 0}) {
+    final pending = _imePending;
+    final next = pending == null
+        ? _imeEdit(text, erase)
+        : pending.catchError((Object _) {}).then((_) => _imeEdit(text, erase));
+    if (next == null) return;
+    _imePending = next;
+    next.whenComplete(() {
+      if (identical(_imePending, next)) _imePending = null;
+    });
+  }
+
+  Future<void>? _imeEdit(String text, int erase) {
+    if (!mounted) return null;
+    if (text.length > 1 && (text.contains('\n') || text.contains('\r'))) {
+      return _pasteText(text, erase: erase, fromKeyboard: true);
+    }
+    _erase(erase);
+    if (text == '\n' || text == '\r') {
+      _writeText('\r');
+    } else {
+      final clean = text.replaceAll(_controlChars, '');
+      if (clean.isNotEmpty) _writeText(clean);
+    }
+    return null;
+  }
+
+  static final _controlChars = RegExp('[\x00-\x08\x0b-\x1f\x7f-\x9f]');
+
   @override
   TextEditingValue? get currentTextEditingValue => _imeValue;
 
@@ -190,15 +234,29 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
 
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
+    if (deltas.length > 1 && deltas.any(_isPaste)) {
+      // A paste can arrive as several edits (Android deletes the selection,
+      // then inserts the clipboard). Take the batch as one change, so its
+      // erasure waits for the paste check too.
+      var value = _imeValue;
+      for (final d in deltas) {
+        value = d.apply(d.oldText == value.text ? value : TextEditingValue(text: d.oldText));
+      }
+      // The shared start stops where the first edit begins, so the paste
+      // is checked whole even when it starts like the text it replaced.
+      _imeDiff(deltas.first.oldText, value.text, limit: deltas.map(_editStart).reduce(math.min));
+      _imeValue = value;
+      _trimImeBuffer();
+      return;
+    }
     for (final d in deltas) {
       switch (d) {
         case TextEditingDeltaInsertion(:final textInserted):
-          _writeText(textInserted.replaceAll('\n', '\r'));
+          _imeText(textInserted);
         case TextEditingDeltaDeletion(:final oldText, :final deletedRange):
-          _erase(_characters(oldText, deletedRange));
+          _imeText('', erase: _characters(oldText, deletedRange));
         case TextEditingDeltaReplacement(:final oldText, :final replacedRange, :final replacementText):
-          _erase(_characters(oldText, replacedRange));
-          _writeText(replacementText.replaceAll('\n', '\r'));
+          _imeText(replacementText, erase: _characters(oldText, replacedRange));
         case TextEditingDeltaNonTextUpdate():
           break;
       }
@@ -215,19 +273,38 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   /// what changed since last time is what was typed or erased.
   @override
   void updateEditingValue(TextEditingValue value) {
-    final before = _imeValue.text;
-    final after = value.text;
+    _imeDiff(_imeValue.text, value.text);
+    _imeValue = value;
+    _trimImeBuffer();
+  }
+
+  static int _editStart(TextEditingDelta d) => switch (d) {
+    TextEditingDeltaInsertion(:final insertionOffset) => insertionOffset,
+    TextEditingDeltaDeletion(:final deletedRange) => deletedRange.start,
+    TextEditingDeltaReplacement(:final replacedRange) => replacedRange.start,
+    _ => d.oldText.length,
+  };
+
+  static bool _isPaste(TextEditingDelta d) {
+    final text = switch (d) {
+      TextEditingDeltaInsertion(:final textInserted) => textInserted,
+      TextEditingDeltaReplacement(:final replacementText) => replacementText,
+      _ => '',
+    };
+    return text.length > 1 && (text.contains('\n') || text.contains('\r'));
+  }
+
+  /// Send the change from [before] to [after] as erasing what follows the
+  /// part they share (at most [limit] units), then typing the rest.
+  void _imeDiff(String before, String after, {int? limit}) {
     var common = 0;
-    while (common < before.length && common < after.length && before[common] == after[common]) {
+    final end = math.min(math.min(before.length, after.length), limit ?? before.length);
+    while (common < end && before[common] == after[common]) {
       common++;
     }
     // Never split an emoji's two halves between kept and changed.
     if (common > 0 && (before.codeUnitAt(common - 1) & 0xFC00) == 0xD800) common--;
-    _erase(before.substring(common).runes.length);
-    final typed = after.substring(common);
-    if (typed.isNotEmpty) _writeText(typed.replaceAll('\n', '\r'));
-    _imeValue = value;
-    _trimImeBuffer();
+    _imeText(after.substring(common), erase: before.substring(common).runes.length);
   }
 
   /// How many characters a range of the buffer holds. Offsets count UTF-16
@@ -366,7 +443,31 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
-    if (text != null && text.isNotEmpty) widget.controller.paste(text);
+    if (text == null || text.isEmpty || !mounted) return;
+    await _pasteText(text);
+  }
+
+  /// Paste [text]: shown first when the hook says so, then sent as a paste
+  /// (bracketed for programs that ask, control characters removed). [erase]
+  /// characters the paste replaces are erased only once it goes ahead.
+  Future<void> _pasteText(String original, {int erase = 0, bool fromKeyboard = false}) async {
+    String? text = original;
+    final confirm = widget.confirmPaste;
+    if (confirm != null) {
+      text = await confirm(text);
+      if (!mounted) return;
+      if (fromKeyboard) {
+        // The keyboard's buffer holds the paste whatever the answer; start
+        // it afresh so it matches what the program has.
+        _imeValue = _imeBase;
+        _ime?.setEditingState(_imeBase);
+      }
+      _focus.requestFocus();
+    }
+    if (text != null && text.isNotEmpty) {
+      _erase(erase);
+      widget.controller.paste(text);
+    }
   }
 
   Future<void> _copySelection() async {

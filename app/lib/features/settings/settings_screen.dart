@@ -109,14 +109,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               const SizedBox(height: 16),
               _Section(
                 title: 'Terminal',
-                child: SwitchListTile(
-                  key: const Key('program-clipboard'),
-                  title: const Text('Let programs copy to the clipboard'),
-                  subtitle: const Text(
-                    'tmux, vim and others can set your clipboard (OSC 52). Off, a remote program cannot touch what you copied.',
-                  ),
-                  value: programClipboard,
-                  onChanged: (v) => ref.read(programClipboardProvider.notifier).set(v),
+                child: Column(
+                  children: [
+                    SwitchListTile(
+                      key: const Key('paste-warning'),
+                      title: const Text('Show text before pasting several lines'),
+                      subtitle: const Text(
+                        'Each line of a paste runs as a command. On, you see the text and how many lines it has first.',
+                      ),
+                      value: ref.watch(pasteWarningProvider),
+                      onChanged: (v) => ref.read(pasteWarningProvider.notifier).set(v),
+                    ),
+                    SwitchListTile(
+                      key: const Key('program-clipboard'),
+                      title: const Text('Let programs copy to the clipboard'),
+                      subtitle: const Text(
+                        'tmux, vim and others can set your clipboard (OSC 52). Off, a remote program cannot touch what you copied.',
+                      ),
+                      value: programClipboard,
+                      onChanged: (v) => ref.read(programClipboardProvider.notifier).set(v),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(height: 16),

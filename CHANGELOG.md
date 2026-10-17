@@ -4,6 +4,7 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 
 ## Unreleased
 
+- Pasting text with more than one line shows it first, with how many lines it has, and offers *Paste*, *Paste without final newline* and *Cancel*, since each line runs as a command. It can be turned off in Settings, Terminal. Pasted text also loses any control characters, so a copied snippet can no longer slip commands past a program's paste protection.
 - A new user guide covers installing Promptly and every feature, step by step, and **User guide** in Help now opens it.
 - Saved passwords, private keys and the key to your sync vault are now encrypted on your device, with a key kept in the system's secure storage (Keychain, Android Keystore, Windows Credential Manager or the Linux keyring). On a Linux computer with no keyring they stay as owner-only files, and Settings says so. Linux builds now need libsecret. Passwords and keys saved by 1.0.0 or 1.0.1 aren't carried over: type the passwords again and re-import the keys.
 - The *Remove device* message and the privacy policy now say that removing a device or changing the passphrase does not lock out a device that has already joined. For a lost one, cut off its access to the vault's storage and change the passwords and keys it had.
