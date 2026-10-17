@@ -302,7 +302,10 @@ class SessionManager extends Notifier<List<SessionEntry>> {
         );
       case AuthKind.agent:
         return (username: username, kind: SshAuthKind.agent, password: null, privateKey: null, problem: null);
+      // The engine always tries a login without credentials first, so these
+      // two differ only in what the person picked.
       case AuthKind.interactive:
+      case AuthKind.none:
         return (username: username, kind: SshAuthKind.interactive, password: null, privateKey: null, problem: null);
     }
   }
