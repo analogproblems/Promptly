@@ -1,4 +1,5 @@
 import 'dart:io' show File, FileSystemException, Platform, Process, ProcessResult;
+import 'dart:math' show Random;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -45,7 +46,9 @@ Future<String?> _saveWithPlatform({required String suggestedName, required Strin
 /// Write `text` to `path` readable only by its owner, where the system has
 /// such modes. A new file beside it is made owner-only before the text goes
 /// in, then put in its place, so an existing file's wider mode does not
-/// carry over. If owner-only can't be set, nothing is written and it throws.
+/// carry over. The new file has a name of its own and is made only if
+/// nothing has that name, so it never writes through a link or over another
+/// file. If owner-only can't be set, nothing is written and it throws.
 Future<void> writeOwnerOnly(
   String path,
   String text, {
@@ -55,8 +58,10 @@ Future<void> writeOwnerOnly(
     await File(path).writeAsString(text, flush: true);
     return;
   }
-  final temp = File('$path.promptly-new');
-  await temp.writeAsString('');
+  final random = Random.secure();
+  final tag = List.generate(8, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+  final temp = File('$path.$tag.promptly-new');
+  await temp.create(exclusive: true);
   try {
     final chmod = await run('chmod', ['600', temp.path]);
     if (chmod.exitCode != 0) {

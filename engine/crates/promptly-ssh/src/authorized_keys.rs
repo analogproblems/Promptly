@@ -8,10 +8,23 @@ use russh::keys::PublicKey;
 const ADDED: &str = "promptly-key-added";
 /// Printed by the command when the key was there already.
 const PRESENT: &str = "promptly-key-present";
-/// Whether the file already lists the key: on a line that is not a comment,
-/// the first word that names a key type (anything before it is options)
-/// and the key after it. Text later on the line is its comment.
-const FIND: &str = "/^[ \\t]*#/{next} {for(i=1;i<NF;i++)if($i~/^(ssh-|ecdsa-|sk-)/){if($i==t&&$(i+1)==k)f=1;break}} END{exit f?0:1}";
+/// Whether the file already lists the key. Comment and blank lines are
+/// skipped. A line that does not start with a key type starts with its
+/// options, which run to the first space outside double quotes (a quote
+/// can be escaped with a backslash); the key type and key follow, and
+/// anything after them is the line's comment. One line, as the command
+/// may pass through a login shell that won't take a newline in quotes.
+const FIND: &str = concat!(
+    r#"/^[ \t]*(#|$)/{next} "#,
+    r#"{s=$0; sub(/^[ \t]+/,"",s); "#,
+    r#"if (s !~ /^(ssh-|ecdsa-|sk-)/) {q=0; n=length(s); "#,
+    r#"for (i=1; i<=n; i++) {c=substr(s,i,1); "#,
+    r#"if (c=="\\") {i++; continue} "#,
+    r#"if (c=="\"") q=!q; else if (!q && (c==" " || c=="\t")) break} "#,
+    r#"s=substr(s,i); sub(/^[ \t]+/,"",s)} "#,
+    r#"split(s,w,/[ \t]+/); if (w[1]==t && w[2]==k) f=1} "#,
+    r#"END{exit f?0:1}"#,
+);
 
 /// The one-line command that installs `public_key` (OpenSSH one-line
 /// form) for the login it runs as. A missing `~/.ssh` is made with mode
@@ -185,6 +198,20 @@ mod tests {
         assert!(std::fs::read_to_string(&file)
             .unwrap()
             .ends_with(&format!("\n{}\n", key.public_openssh)));
+
+        // Behind options whose quoted values hold spaces, escaped quotes
+        // and words that look like key types: found, and nothing is added
+        // that would get round the options.
+        for options in [
+            r#"command="echo ssh-rsa notice",restrict"#,
+            r#"command="say \" ssh-ed25519 x",no-pty"#,
+        ] {
+            let line = format!("{options} {bare} restricted\n");
+            std::fs::write(&file, &line).unwrap();
+            let (out, code) = run(&home, &command(&key.public_openssh).unwrap());
+            assert_eq!(outcome(&out, code), Ok(false), "{options}: {out}");
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), line);
+        }
         std::fs::remove_dir_all(home).unwrap();
     }
 

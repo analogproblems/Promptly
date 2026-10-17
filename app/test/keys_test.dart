@@ -2,8 +2,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/core/engine/engine.dart';
+import 'package:promptly/features/hosts/models.dart';
+import 'package:promptly/features/hosts/repositories.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
 import 'app_lock_test.dart' show FakeAuthenticator;
@@ -119,6 +122,32 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('host-row-h1')));
     await asking(tester);
+    await tester.enterText(find.byKey(const Key('secret-input')), FakeEngine.lockedPassphrase);
+    await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
+    await tester.pumpAndSettle();
+    expect(identity(engine, 'k1')['passphrase_secret_id'], isNotNull);
+    expect(identity(engine, 'k0')['passphrase_secret_id'], isNull);
+  });
+
+  testWidgets('trying again after the host was given another key saves the passphrase on the key tried', (tester) async {
+    final engine = lockedKeyEngine()
+      ..failWith = const SshEvent(kind: SshEventKind.failed, secretForKey: false, error: 'nothing is listening there');
+    engine.records['identities']!['k0'] = jsonEncode({...identity(engine, 'k1'), 'id': 'k0', 'label': 'other'});
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Try again'), findsOneWidget);
+
+    // Meanwhile the host is switched to the other key.
+    final hosts = ProviderScope.containerOf(tester.element(find.text('Try again'))).read(hostsProvider.notifier);
+    hosts.save(hosts.byId('h1')!.copyWith(auth: const HostAuth(kind: AuthKind.identity, identityId: 'k0')));
+    engine
+      ..failWith = null
+      ..askKeyPassphrase = true;
+    await tester.tap(find.text('Try again'));
+    await asking(tester);
+    expect(engine.requests.last.privateKey, engine.secrets['pk1'], reason: 'the same request, with k1');
     await tester.enterText(find.byKey(const Key('secret-input')), FakeEngine.lockedPassphrase);
     await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
     await tester.pumpAndSettle();

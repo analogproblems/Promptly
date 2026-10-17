@@ -35,6 +35,11 @@ class SessionEntry extends ChangeNotifier {
   /// The saved host this session was opened from, if any.
   final String? hostId;
 
+  /// The saved keys its connection uses, one per step, as the host was
+  /// when it was opened: a retry or reconnect sends the same request, so
+  /// these stay with it whatever the host has become since.
+  List<String?>? keyOwners;
+
   /// The host's colour name, so you always know which box you are typing
   /// into. Null for local shells and one-off connections.
   final String? color;
@@ -189,6 +194,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       state = [...state, entry];
       return entry;
     }
+    entry.keyOwners = _keyOwners(host);
     _startFlow(entry, engine, plan.request!);
     state = [...state, entry];
     return entry;
@@ -376,8 +382,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       unlock: () => ref.read(appLockProvider.notifier).unlockKeys(),
     );
     // Saved hosts use saved keys, which can keep their passphrase.
-    final host = entry.hostId == null ? null : ref.read(hostsProvider.notifier).byId(entry.hostId!);
-    final owners = host == null ? null : _keyOwners(host);
+    final owners = entry.keyOwners;
     flow.canRememberPassphrase = owners != null;
     flow.onKeyPassphrase = (passphrase, remember) => _keyPassphraseTyped(engine, flow, owners, passphrase, remember);
     entry.setFlow(flow);
@@ -444,8 +449,6 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     if (opened == null) return;
     flow.request = _withKeyPassphrases(r, jumps, target ? passphrase : r.passphrase);
     if (!remember || !flow.canRememberPassphrase) return;
-    // The steps are the request's own: a host changed since it was made
-    // no longer lines up, and nothing is saved.
     final owner = owners != null && owners.length == r.jumps.length + 1 ? owners[opened] : null;
     if (owner == null) return;
     try {

@@ -22,6 +22,21 @@ void main() {
     expect(dir.listSync(), hasLength(1), reason: 'nothing left beside it');
   }, skip: Platform.isWindows);
 
+  test('files and links beside it are left alone, and two saves at once both finish', () async {
+    final path = '${dir.path}/id_ed25519';
+    final sentinel = File('${dir.path}/sentinel')..writeAsStringSync('keep me');
+    File('$path.promptly-new').writeAsStringSync('not ours');
+    Link('$path.new').createSync(sentinel.path);
+
+    await Future.wait([writeOwnerOnly(path, 'one'), writeOwnerOnly(path, 'two')]);
+
+    expect(['one', 'two'], contains(File(path).readAsStringSync()));
+    expect(sentinel.readAsStringSync(), 'keep me');
+    expect(File('$path.promptly-new').readAsStringSync(), 'not ours');
+    expect(dir.listSync().map((e) => e.path.split('/').last).toSet(),
+        {'id_ed25519', 'sentinel', 'id_ed25519.promptly-new', 'id_ed25519.new'});
+  }, skip: Platform.isWindows);
+
   test('when owner-only cannot be set, nothing is written', () async {
     final path = '${dir.path}/id_ed25519';
     File(path).writeAsStringSync('old');
