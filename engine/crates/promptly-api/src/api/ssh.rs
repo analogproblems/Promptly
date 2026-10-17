@@ -162,7 +162,12 @@ pub struct SshEvent {
     pub kb_instructions: Option<String>,
     pub kb_prompts: Option<Vec<SshKbPrompt>>,
     pub session_id: Option<u32>,
+    /// For `Failed`: the technical reason, for a "Details" section.
     pub error: Option<String>,
+    /// For `Failed`: what happened, in plain words.
+    pub error_title: Option<String>,
+    /// For `Failed`: one line on what to try.
+    pub error_hint: Option<String>,
 }
 
 impl SshEvent {
@@ -177,6 +182,8 @@ impl SshEvent {
             kb_prompts: None,
             session_id: None,
             error: None,
+            error_title: None,
+            error_hint: None,
         }
     }
 }
@@ -328,7 +335,10 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
             }
             Err(err) => {
                 let mut e = SshEvent::blank(SshEventKind::Failed);
+                let plain = err.explain();
                 e.error = Some(err.to_string());
+                e.error_title = Some(plain.title);
+                e.error_hint = Some(plain.hint);
                 attempt.emit(e);
             }
         }
@@ -380,7 +390,7 @@ fn forward_spec(f: &SshForward) -> ForwardSpec {
 
 /// The engine's connection parameters for a request, jump chain included.
 /// The request's secrets move into them.
-fn params_for(
+pub(crate) fn params_for(
     request: &mut SshConnectRequest,
     endpoint: Endpoint,
     size: TermSize,
@@ -403,9 +413,7 @@ fn params_for(
             ),
             size,
         );
-        if request.keepalive_seconds > 0 {
-            p.keepalive = keepalive;
-        }
+        p.keepalive = keepalive;
         p.jump = jump;
         jump = Some(Box::new(p));
     }
@@ -416,9 +424,8 @@ fn params_for(
         &mut request.passphrase,
     );
     let mut params = ConnectParams::new(endpoint, auth, size);
-    if request.keepalive_seconds > 0 {
-        params.keepalive = keepalive;
-    }
+    // Zero turns keep-alives off, as the host form says.
+    params.keepalive = keepalive;
     params.jump = jump;
     let startup = request
         .startup_command
@@ -501,10 +508,16 @@ pub fn ssh_exec(
                 ConnectError::Cancelled => format!(
                     "{label} asks for a login each time. Save a password or pick a key to run snippets on it."
                 ),
-                ConnectError::AuthFailed(_) => format!(
+                ConnectError::KeyNeedsPassphrase => format!(
+                    "The key for {label} needs its passphrase, which can't be asked for here. Connect in the terminal instead."
+                ),
+                ConnectError::AuthFailed { .. } => format!(
                     "The saved login for {label} did not work. Check the password or key on the host."
                 ),
-                other => other.to_string(),
+                other => {
+                    let plain = other.explain();
+                    format!("{label}: {}. {}", plain.title, plain.hint)
+                }
             }),
         },
     }

@@ -122,6 +122,13 @@ pub struct Host {
     pub last_connected_at: Option<OffsetDateTime>,
     #[serde(default)]
     pub favourite: bool,
+    /// Sessions to this host carry a red bar with `production_label`, so
+    /// nobody types into a live server thinking it is a test box.
+    #[serde(default)]
+    pub production: bool,
+    /// The bar's words; the app says "Production" when this is empty.
+    #[serde(default)]
+    pub production_label: String,
     #[serde(default)]
     pub sync: SyncPolicy,
 }
@@ -158,6 +165,8 @@ impl Host {
             port_forwards: Vec::new(),
             last_connected_at: None,
             favourite: false,
+            production: false,
+            production_label: String::new(),
             sync: SyncPolicy::Vault,
         }
     }
@@ -325,6 +334,19 @@ mod tests {
         assert_eq!(h.port, 22);
         assert_eq!(h.keepalive_seconds, 30);
         assert_eq!(h.sync, SyncPolicy::Vault);
+        assert!(!h.production, "older records are not production hosts");
+        assert_eq!(h.production_label, "");
+    }
+
+    #[test]
+    fn a_production_host_keeps_its_label() {
+        let mut h = Host::new("db-1", "10.0.0.5");
+        h.production = true;
+        h.production_label = "LIVE · payments".into();
+        let json = serde_json::to_string(&h).unwrap();
+        assert!(json.contains(r#""production":true"#), "{json}");
+        let back: Host = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.production_label, "LIVE · payments");
     }
 
     #[test]

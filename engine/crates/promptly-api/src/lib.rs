@@ -6,6 +6,7 @@
 
 pub mod api;
 mod frb_generated;
+mod host_plan;
 mod ssh_flow;
 mod sync_engine;
 

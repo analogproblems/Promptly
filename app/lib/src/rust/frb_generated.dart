@@ -3477,8 +3477,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   SshEvent dco_decode_ssh_event(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 9)
-      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
+    if (arr.length != 11)
+      throw Exception('unexpected arr length: expect 11 but see ${arr.length}');
     return SshEvent(
       kind: dco_decode_ssh_event_kind(arr[0]),
       step: dco_decode_opt_box_autoadd_ssh_step(arr[1]),
@@ -3489,6 +3489,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       kbPrompts: dco_decode_opt_list_ssh_kb_prompt(arr[6]),
       sessionId: dco_decode_opt_box_autoadd_u_32(arr[7]),
       error: dco_decode_opt_String(arr[8]),
+      errorTitle: dco_decode_opt_String(arr[9]),
+      errorHint: dco_decode_opt_String(arr[10]),
     );
   }
 
@@ -4632,6 +4634,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_kbPrompts = sse_decode_opt_list_ssh_kb_prompt(deserializer);
     var var_sessionId = sse_decode_opt_box_autoadd_u_32(deserializer);
     var var_error = sse_decode_opt_String(deserializer);
+    var var_errorTitle = sse_decode_opt_String(deserializer);
+    var var_errorHint = sse_decode_opt_String(deserializer);
     return SshEvent(
       kind: var_kind,
       step: var_step,
@@ -4642,6 +4646,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       kbPrompts: var_kbPrompts,
       sessionId: var_sessionId,
       error: var_error,
+      errorTitle: var_errorTitle,
+      errorHint: var_errorHint,
     );
   }
 
@@ -5803,6 +5809,8 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_opt_list_ssh_kb_prompt(self.kbPrompts, serializer);
     sse_encode_opt_box_autoadd_u_32(self.sessionId, serializer);
     sse_encode_opt_String(self.error, serializer);
+    sse_encode_opt_String(self.errorTitle, serializer);
+    sse_encode_opt_String(self.errorHint, serializer);
   }
 
   @protected
