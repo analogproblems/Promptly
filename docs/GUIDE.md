@@ -585,7 +585,7 @@ Turn on **Agent forwarding** to let programs on the server use the SSH agent on 
 
 ### Startup command
 
-A command typed into the shell as soon as the session opens, such as `cd /srv/app && git status`.
+A command typed into the shell as soon as the session opens, such as `cd /srv/app && git status`. With *Persistent session* on, it is typed only when the tmux session is first made, so reconnecting never types it into whatever is running there.
 
 ### Environment
 

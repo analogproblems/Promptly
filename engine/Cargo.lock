@@ -1922,6 +1922,7 @@ version = "1.0.1"
 dependencies = [
  "base64 0.23.1",
  "hmac",
+ "portable-pty",
  "promptly-session",
  "promptly-term",
  "promptly-vault",

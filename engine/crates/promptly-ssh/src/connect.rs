@@ -121,26 +121,26 @@ impl ConnectParams {
     /// the server, falling back to a plain login shell where tmux is not
     /// installed.
     ///
-    /// `startup` is typed into the session only when tmux creates it, so a
+    /// `startup` is the host's startup command, which the caller also sends
+    /// as `startup_input`. Without tmux it is left for the login shell to
+    /// read, so it runs in the shell the person goes on using, as on a
+    /// plain connection. With tmux the script reads it first and throws it
+    /// away: tmux types it only into a session it has just created, so a
     /// reconnect that reattaches never types it into whatever is running
-    /// there (an editor, say). Without tmux it runs in the person's own
-    /// shell, set up as an interactive one so their functions and aliases
-    /// work, and the login shell that follows keeps its environment and
-    /// folder.
+    /// there (an editor, say).
     pub fn persistent_command(name: &str, startup: Option<&str>) -> String {
         let q = shell_quote;
         let target = q(&format!("={name}"));
         let mut new_session = format!("exec tmux new-session -s {}", q(name));
-        let mut fallback = "exec \"${SHELL:-/bin/sh}\" -l".to_string();
+        let mut discard = String::new();
         if let Some(cmd) = startup.map(str::trim).filter(|c| !c.is_empty()) {
             new_session.push_str(&format!(" \\; send-keys -l {} \\; send-keys Enter", q(cmd)));
-            let then_shell = format!("{cmd}\nexec \"$SHELL\" -l");
-            fallback = format!("exec \"${{SHELL:-/bin/sh}}\" -i -c {}", q(&then_shell));
+            discard = "IFS= read -r _; ".repeat(cmd.lines().count());
         }
         let script = format!(
-            "tmux has-session -t {target} 2>/dev/null && exec tmux attach-session -t {target}\n\
-             if command -v tmux >/dev/null 2>&1; then {new_session}; fi\n\
-             {fallback}"
+            "if tmux has-session -t {target} 2>/dev/null; then {discard}exec tmux attach-session -t {target}; fi\n\
+             if command -v tmux >/dev/null 2>&1; then {discard}{new_session}; fi\n\
+             exec \"${{SHELL:-/bin/sh}}\" -l"
         );
         // The server runs this with the user's own shell, which may be fish
         // or csh; sh reads the script the same everywhere.
@@ -1189,14 +1189,20 @@ mod tests {
         );
     }
 
-    #[test]
+    /// Runs `persistent_command` in a real terminal, with `tmux` in PATH
+    /// a stand-in that says which branch ran and what it read next. Types
+    /// `typed` as the app would, and returns everything the terminal shows.
     #[cfg(unix)]
-    fn persistent_command_without_tmux_runs_startup_in_the_users_shell() {
-        // A PATH with sh but no tmux.
-        let dir = std::env::temp_dir().join(format!("promptly-notmux-{}", std::process::id()));
+    fn run_persistent(tmux: Option<&str>, startup: &str, typed: &str) -> String {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+        use std::io::{Read, Write};
+
+        static RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("promptly-tmux-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        for tool in ["sh", "echo", "bash"] {
+        for tool in ["sh", "bash"] {
             let found = ["/bin", "/usr/bin"]
                 .iter()
                 .map(|d| std::path::Path::new(d).join(tool))
@@ -1204,38 +1210,84 @@ mod tests {
                 .unwrap();
             std::os::unix::fs::symlink(found, dir.join(tool)).unwrap();
         }
-        let run = |shell: &str, startup: Option<&str>| {
-            let cmd = ConnectParams::persistent_command("it's", startup);
-            let out = std::process::Command::new(dir.join("sh"))
-                .arg("-c")
-                .arg(&cmd)
-                .env("PATH", &dir)
-                .env("HOME", &dir)
-                .env("SHELL", dir.join(shell))
-                .stdin(std::process::Stdio::null())
-                .output()
-                .unwrap();
-            String::from_utf8_lossy(&out.stdout).into_owned()
-        };
-        // No startup command: straight to the login shell.
-        assert_eq!(run("echo", None), "-l\n");
-        // Bash-only syntax, which sh would refuse, runs in the person's
-        // shell, and what it exports reaches the shell that follows.
-        let startup = "[[ -n $BASH_VERSION ]] && export PROJECT=demo && echo \"in bash\"";
-        let cmd = ConnectParams::persistent_command("it's", Some(startup));
-        let out = std::process::Command::new(dir.join("sh"))
-            .arg("-c")
-            .arg(cmd.replace("exec \"$SHELL\" -l", "echo \"then $PROJECT\""))
-            .env("PATH", &dir)
-            .env("HOME", &dir)
-            .env("SHELL", dir.join("bash"))
-            .stdin(std::process::Stdio::null())
-            .output()
+        if let Some(has_session) = tmux {
+            let stub = dir.join("tmux");
+            std::fs::write(
+                &stub,
+                format!(
+                    "#!/bin/sh\n\
+                     case \"$1\" in\n\
+                     has-session) exit {has_session} ;;\n\
+                     *) IFS= read -r line; echo \"$1 then read:$line\" ;;\n\
+                     esac\n"
+                ),
+            )
             .unwrap();
-        let text = String::from_utf8_lossy(&out.stdout);
-        assert!(text.contains("in bash"), "{text}");
-        assert!(text.contains("then demo"), "{text}");
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let pty = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 200,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let mut cmd = CommandBuilder::new(dir.join("sh"));
+        cmd.arg("-c");
+        cmd.arg(ConnectParams::persistent_command("it's", Some(startup)));
+        cmd.env_clear();
+        cmd.env("PATH", &dir);
+        cmd.env("HOME", &dir);
+        cmd.env("SHELL", dir.join("bash"));
+        cmd.env("TERM", "dumb");
+        let mut child = pty.slave.spawn_command(cmd).unwrap();
+        drop(pty.slave);
+        let mut reader = pty.master.try_clone_reader().unwrap();
+        let reading = std::thread::spawn(move || {
+            let mut out = Vec::new();
+            let mut buf = [0u8; 4096];
+            // A closed terminal reads as an error on Linux, not as the end.
+            while let Ok(n @ 1..) = reader.read(&mut buf) {
+                out.extend_from_slice(&buf[..n]);
+            }
+            String::from_utf8_lossy(&out).into_owned()
+        });
+        let mut writer = pty.master.take_writer().unwrap();
+        writer
+            .write_all(format!("{startup}\n{typed}").as_bytes())
+            .unwrap();
+        child.wait().unwrap();
+        drop(writer);
+        drop(pty.master);
+        let out = reading.join().unwrap();
         let _ = std::fs::remove_dir_all(&dir);
+        out
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn without_tmux_the_startup_runs_in_the_shell_the_person_keeps() {
+        // An alias only lives in the shell that defined it.
+        let out = run_persistent(
+            None,
+            "alias project='echo from-$((40+2))'",
+            "project\nexit\n",
+        );
+        assert!(out.contains("from-42"), "{out}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn tmux_never_gets_the_startup_typed_into_it() {
+        // Reattaching, and making a new session (which types the startup
+        // itself), both skip the copy the app typed.
+        let attach = run_persistent(Some("0"), "make dev", "next\n");
+        assert!(attach.contains("attach-session then read:next"), "{attach}");
+        let new = run_persistent(Some("1"), "make dev", "next\n");
+        assert!(new.contains("new-session then read:next"), "{new}");
     }
 
     #[test]

@@ -425,14 +425,12 @@ fn params_for(
         .as_ref()
         .map(|c| c.trim())
         .filter(|c| !c.is_empty());
-    match tmux_session {
-        Some(name) => {
-            // tmux types the startup command itself, and only into a session
-            // it has just made.
-            params.command = Some(ConnectParams::persistent_command(name, startup));
-        }
-        None => params.startup_input = startup.map(|c| format!("{c}\n")),
+    if let Some(name) = tmux_session {
+        // tmux types the startup command itself, and only into a session it
+        // has just made; without tmux the login shell reads what's typed.
+        params.command = Some(ConnectParams::persistent_command(name, startup));
     }
+    params.startup_input = startup.map(|c| format!("{c}\n"));
     params.env = request
         .env
         .iter()
