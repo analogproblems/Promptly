@@ -234,6 +234,21 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
 
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
+    if (deltas.length > 1 && deltas.any(_isPaste)) {
+      // A paste can arrive as several edits (Android deletes the selection,
+      // then inserts the clipboard). Take the batch as one change, so its
+      // erasure waits for the paste check too.
+      var value = _imeValue;
+      for (final d in deltas) {
+        value = d.apply(d.oldText == value.text ? value : TextEditingValue(text: d.oldText));
+      }
+      // The shared start stops where the first edit begins, so the paste
+      // is checked whole even when it starts like the text it replaced.
+      _imeDiff(deltas.first.oldText, value.text, limit: deltas.map(_editStart).reduce(math.min));
+      _imeValue = value;
+      _trimImeBuffer();
+      return;
+    }
     for (final d in deltas) {
       switch (d) {
         case TextEditingDeltaInsertion(:final textInserted):
@@ -258,17 +273,38 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   /// what changed since last time is what was typed or erased.
   @override
   void updateEditingValue(TextEditingValue value) {
-    final before = _imeValue.text;
-    final after = value.text;
+    _imeDiff(_imeValue.text, value.text);
+    _imeValue = value;
+    _trimImeBuffer();
+  }
+
+  static int _editStart(TextEditingDelta d) => switch (d) {
+    TextEditingDeltaInsertion(:final insertionOffset) => insertionOffset,
+    TextEditingDeltaDeletion(:final deletedRange) => deletedRange.start,
+    TextEditingDeltaReplacement(:final replacedRange) => replacedRange.start,
+    _ => d.oldText.length,
+  };
+
+  static bool _isPaste(TextEditingDelta d) {
+    final text = switch (d) {
+      TextEditingDeltaInsertion(:final textInserted) => textInserted,
+      TextEditingDeltaReplacement(:final replacementText) => replacementText,
+      _ => '',
+    };
+    return text.length > 1 && (text.contains('\n') || text.contains('\r'));
+  }
+
+  /// Send the change from [before] to [after] as erasing what follows the
+  /// part they share (at most [limit] units), then typing the rest.
+  void _imeDiff(String before, String after, {int? limit}) {
     var common = 0;
-    while (common < before.length && common < after.length && before[common] == after[common]) {
+    final end = math.min(math.min(before.length, after.length), limit ?? before.length);
+    while (common < end && before[common] == after[common]) {
       common++;
     }
     // Never split an emoji's two halves between kept and changed.
     if (common > 0 && (before.codeUnitAt(common - 1) & 0xFC00) == 0xD800) common--;
     _imeText(after.substring(common), erase: before.substring(common).runes.length);
-    _imeValue = value;
-    _trimImeBuffer();
   }
 
   /// How many characters a range of the buffer holds. Offsets count UTF-16

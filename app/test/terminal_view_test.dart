@@ -556,6 +556,99 @@ void main() {
     controller.dispose();
   });
 
+  testWidgets('a keyboard paste sent as a deletion then an insertion is checked as one change', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    final asked = <String>[];
+    Completer<String?>? answer;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(
+          body: TerminalView(
+            controller: controller,
+            imeInput: true,
+            confirmPaste: (text) {
+              asked.add(text);
+              return (answer = Completer<String?>()).future;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+    void type(String text) => client.updateEditingValueWithDeltas([
+          TextEditingDeltaInsertion(
+            oldText: ' ',
+            textInserted: text,
+            insertionOffset: 1,
+            selection: TextSelection.collapsed(offset: 1 + text.length),
+            composing: TextRange.empty,
+          ),
+        ]);
+    // What Android sends for Paste over a selection: delete it, then insert.
+    void pasteOver(String old, String text) => client.updateEditingValueWithDeltas([
+          TextEditingDeltaDeletion(
+            oldText: ' $old',
+            deletedRange: TextRange(start: 1, end: 1 + old.length),
+            selection: const TextSelection.collapsed(offset: 1),
+            composing: TextRange.empty,
+          ),
+          TextEditingDeltaInsertion(
+            oldText: ' ',
+            textInserted: text,
+            insertionOffset: 1,
+            selection: TextSelection.collapsed(offset: 1 + text.length),
+            composing: TextRange.empty,
+          ),
+        ]);
+
+    type('abc');
+    final typed = engine.written.length;
+    pasteOver('abc', 'one\ntwo');
+    await tester.pump();
+    expect(asked, ['one\ntwo']);
+    expect(engine.written.length, typed);
+    answer!.complete(null);
+    await tester.pump();
+    expect(engine.written.length, typed);
+    expect(engine.pasted, isEmpty);
+
+    // Accepted: one erase of the old text, then the paste.
+    type('abc');
+    final before = engine.written.length;
+    pasteOver('abc', 'one\ntwo');
+    answer!.complete('one\ntwo');
+    await tester.pump();
+    expect(engine.written.sublist(before), [
+      [0x7f, 0x7f, 0x7f],
+    ]);
+    expect(engine.pasted, ['one\ntwo']);
+
+    // A paste that starts like the text it replaces is still shown whole.
+    type('one');
+    pasteOver('one', 'one\ntwo');
+    expect(asked.last, 'one\ntwo');
+    answer!.complete(null);
+    await tester.pump();
+
+    // A plain Backspace still goes straight through.
+    final erased = engine.written.length;
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaDeletion(
+        oldText: ' x',
+        deletedRange: TextRange(start: 1, end: 2),
+        selection: TextSelection.collapsed(offset: 1),
+        composing: TextRange.empty,
+      ),
+    ]);
+    expect(engine.written.sublist(erased), [
+      [0x7f],
+    ]);
+    controller.dispose();
+  });
+
   testWidgets('the soft keyboard types into the session, Enter is Return, sticky Ctrl makes control bytes', (
     tester,
   ) async {
