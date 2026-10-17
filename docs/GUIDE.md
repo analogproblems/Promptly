@@ -618,7 +618,7 @@ Sync keeps the same hosts, groups, keys, saved passwords, snippets, trusted host
 
 Promptly keeps your data in a **vault**: a small folder of encrypted files, usually under 100 KB. Everything is encrypted on your device with a key protected by your **passphrase** before it's written to the vault, so whoever stores the folder (Dropbox, Google, your own server) sees only scrambled files. Each device writes only to its own part of the vault, so devices never overwrite each other's work. If two devices change the same thing while offline, the most recent change wins.
 
-After you change something, Promptly syncs within a few seconds, and keeps checking for changes from your other devices while it's open. A host added on one computer usually appears on another within half a minute.
+After you change something, Promptly syncs within a few seconds, and keeps checking for changes from your other devices while it's open. It also syncs when you come back to the app, and you can pull the **Hosts** list (or the sync screen) down to sync straight away. A host added on one computer usually appears on another within half a minute. Promptly doesn't sync while it's closed or in the background on a phone.
 
 ### Choosing where the vault lives
 
@@ -659,9 +659,22 @@ Your hosts, keys and snippets arrive shortly after.
 - The first characters of your recovery code, so you can check you have the right one.
 - Every device that uses the vault, with its platform and the date it joined.
 
+If sync can't reach the vault, it tries again after ten seconds, then waits twice as long after each failed try, up to an hour. **Sync now**, or pulling a list down, tries straight away and starts the waiting over.
+
+Sometimes a few changes from another device can't be read yet: the file is still being copied by your sync service, iCloud hasn't downloaded it, or it arrived damaged. Promptly lists them under the status, applies everything else, and reads them again on every sync until they come through. Nothing in them is lost.
+
+### When sync pauses
+
+Promptly checks the vault's settings file every time it syncs. If something about the vault itself has changed, sync pauses, your data keeps working on this device, and **Settings › Sync** says what to do:
+
+- **The vault passphrase changed.** Someone changed it on another device. Type the new passphrase (or your recovery code) and tap **Unlock and sync**.
+- **The vault folder is missing.** The folder, or the settings file in it, was deleted or moved. If you moved it, disconnect and join it again in its new place. Otherwise, tap **Set up the vault again here**: Promptly writes the vault back from this device, locked with a passphrase you choose, and shows you a new recovery code (the old one stops working). Your other devices then ask for that passphrase once.
+- **A different vault is in the folder.** Type that vault's passphrase to join it, or disconnect this device.
+- **Promptly needs an update.** The vault was last changed by a newer version of Promptly. Update this one to keep syncing.
+
 ### Removing a device
 
-If you stop using a device, or lose one, remove it from another device: in **Settings › Sync**, tap the delete button beside it. Its part of the vault is deleted, after everything it contributed has been kept. Removing a device stops it appearing in the list, but it doesn't lock that device out. A device that has joined the vault keeps the key that unlocks it, so changing the passphrase doesn't stop it either.
+If you stop using a device, or lose one, remove it from another device: in **Settings › Sync**, tap the delete button beside it. Its part of the vault is deleted, after everything it contributed has been kept. Removing a device stops it appearing in the list, but it doesn't lock that device out. A device that has joined the vault keeps the key that unlocks it. Changing the passphrase makes Promptly on that device ask for the new one before it syncs again, but the key it already has still opens the vault's files, so that doesn't lock it out either.
 
 > **Important** If a device was lost or stolen, treat everything in Promptly on it as exposed:
 >
@@ -768,7 +781,7 @@ Every vault command takes the vault folder, and asks for the passphrase, or read
 | `promptly import VAULT FILE` | Merges a JSON file (in the export format) into the vault. Use `-` to read from standard input. |
 | `promptly sync VAULT` | Brings the tool's copy and the vault up to date with each other. |
 | `promptly ssh-config VAULT` | Writes an OpenSSH config for the vault's hosts. Add `--keys-dir DIR` to also write the private keys there. |
-| `promptly change-passphrase VAULT` | Sets a new vault passphrase, which new devices need to join. Your data, and the devices already in the vault, are unaffected. |
+| `promptly change-passphrase VAULT` | Sets a new vault passphrase, which new devices need to join. Your data is unaffected; the devices already in the vault ask for the new passphrase once before they sync again. |
 
 ## 19. Privacy and security
 
@@ -807,7 +820,7 @@ Promptly is open source, so anyone can check what it does. To report a security 
 
 **A snippet won't run on some hosts.** Those hosts ask for a login each time, or haven't been connected to before. Save a password or pick a key for them, and connect once in the terminal to trust each server's key.
 
-**Sync shows a problem.** Open **Settings › Sync** to read the message, then tap **Sync now**. For a folder vault, check that your sync service is running and the folder is still there. For a server vault, check you can connect to that host.
+**Sync shows a problem.** Open **Settings › Sync** to read the message, then tap **Sync now**. If it says sync is paused, follow its instructions (see [When sync pauses](#when-sync-pauses)). For a folder vault, check that your sync service is running and the folder is still there. For a server vault, check you can connect to that host.
 
 **A new device doesn't see my hosts.** Make sure it joined the same vault: the **Where** line in **Settings › Sync** should point at the same folder, and the device list should show both devices. Your sync service may also need a moment to copy the files across.
 

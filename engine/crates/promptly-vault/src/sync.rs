@@ -5,7 +5,7 @@
 //! the [`Clock`] and the [`SyncState`] (what has been applied so far) and
 //! persists them between runs.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -38,15 +38,24 @@ pub enum SyncError {
     NoVault,
     #[error("there is already a vault in this folder")]
     VaultExists,
+    #[error("this folder now holds a different vault")]
+    DifferentVault,
+    #[error("the vault's passphrase was changed on another device")]
+    KeysChanged,
 }
 
 /// What this device has applied from another device's folder.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Marker {
     /// The newest snapshot applied, by its number; 0 for none.
     pub snap: u64,
-    /// The highest segment number applied.
+    /// Every segment up to this number has been applied.
     pub seq: u64,
+    /// Segments above `seq` applied already, because one before them could
+    /// not be read yet (damaged, half synced, not arrived). `seq` stays
+    /// below the missing one so it is tried again; these are not re-read.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub ahead: BTreeSet<u64>,
 }
 
 /// Everything the caller persists between syncs besides the state itself.
@@ -130,6 +139,47 @@ impl<'a> Vault<'a> {
             Err(BackendError::NotFound(_)) => Err(SyncError::NoVault),
             Err(e) => Err(e.into()),
         }
+    }
+
+    /// Look at the manifest again, as every sync does before anything else,
+    /// and return its [`Manifest::keys_fingerprint`]. It is one small read.
+    /// `known` is the fingerprint this device saw last, if it has one.
+    ///
+    /// - No manifest: [`SyncError::NoVault`]. The folder was deleted or
+    ///   emptied, and writing into it would leave a vault no device can join.
+    /// - A newer format: the manifest error saying so.
+    /// - Another vault id: [`SyncError::DifferentVault`].
+    /// - Rewrapped keys (a passphrase change, or a new data key):
+    ///   [`SyncError::KeysChanged`], until this device unlocks it again.
+    pub fn check_manifest(&self, known: Option<&str>) -> Result<String, SyncError> {
+        let manifest = Self::read_manifest(self.backend)?;
+        if manifest.vault_id != self.vault_id {
+            return Err(SyncError::DifferentVault);
+        }
+        let now = manifest.keys_fingerprint();
+        match known {
+            Some(k) if k != now => Err(SyncError::KeysChanged),
+            _ => Ok(now),
+        }
+    }
+
+    /// Write a manifest again for a vault whose folder lost it, from the
+    /// data key this device still holds: same vault id, same key, so every
+    /// file still opens. Wrapped under `passphrase`, with a new recovery
+    /// code; the old code stops working.
+    pub fn recreate_manifest(
+        &self,
+        passphrase: &str,
+        params: KdfParams,
+    ) -> Result<(Manifest, RecoveryCode), SyncError> {
+        if Self::read_manifest(self.backend).is_ok() {
+            return Err(SyncError::VaultExists);
+        }
+        let (manifest, recovery) =
+            Manifest::create_for(self.vault_id.clone(), &self.dek, passphrase, params);
+        self.backend
+            .put_new(MANIFEST_NAME, manifest.to_json().as_bytes())?;
+        Ok((manifest, recovery))
     }
 
     /// Open an existing vault with its passphrase.
@@ -243,7 +293,10 @@ impl<'a> Vault<'a> {
                 .collect();
             files.sort_by_key(|(n, snap, _)| (*n, !*snap)); // snapshots before segments of the same number
 
-            // The newest snapshot, if it is newer than what we applied.
+            // The newest snapshot, if it is newer than what we applied. One
+            // that cannot be read stands for every segment it replaced, so
+            // those are not reported missing one by one.
+            let mut unread_snapshot = 0;
             if let Some((n, _, entry)) = files
                 .iter()
                 .filter(|(_, s, _)| *s)
@@ -266,26 +319,39 @@ impl<'a> Vault<'a> {
                             marker.snap = *n;
                             marker.seq = marker.seq.max(*n);
                         }
-                        Err(e) => report
-                            .warnings
-                            .push(format!("{}/{}: {e}", device, entry.name)),
+                        Err(e) => {
+                            unread_snapshot = *n;
+                            report
+                                .warnings
+                                .push(format!("{}/{}: {e}", device, entry.name));
+                        }
                     }
                 }
             }
-            // Then every segment above the marker, in order. Numbers have no
-            // gaps, so a missing one has not arrived yet (a mirror can deliver
-            // files out of order): stop there and pick it up next time.
+            // Then every segment above the marker. Merging does not depend
+            // on order, so one that cannot be read yet (damaged, still
+            // syncing, or not arrived: a mirror can deliver files out of
+            // order) is skipped and the rest still apply. The marker stays
+            // below it, so it is read again next time and nothing in it is
+            // lost if it turns up whole later.
+            let mut expect = marker.seq + 1;
+            let mut gap_reported = false;
             for (n, is_snap, entry) in &files {
                 if *is_snap || *n <= marker.seq {
                     continue;
                 }
-                if *n != marker.seq + 1 {
+                let first_missing = expect.max(unread_snapshot + 1);
+                if *n > first_missing && !gap_reported {
                     report.warnings.push(format!(
                         "{}/{}: has not arrived yet",
                         device,
-                        seg_name(marker.seq + 1)
+                        seg_name(first_missing)
                     ));
-                    break;
+                    gap_reported = true;
+                }
+                expect = n + 1;
+                if marker.ahead.contains(n) {
+                    continue;
                 }
                 match self.read_file::<Segment>(&device, &entry.name) {
                     Ok(seg) => {
@@ -296,16 +362,17 @@ impl<'a> Vault<'a> {
                             }
                         }
                         report.files_applied += 1;
-                        marker.seq = *n;
+                        marker.ahead.insert(*n);
                     }
-                    Err(e) => {
-                        report
-                            .warnings
-                            .push(format!("{}/{}: {e}", device, entry.name));
-                        // Leave the marker: a transient failure is retried next time.
-                        break;
-                    }
+                    Err(e) => report
+                        .warnings
+                        .push(format!("{}/{}: {e}", device, entry.name)),
                 }
+            }
+            let seq = marker.seq;
+            marker.ahead.retain(|n| *n > seq);
+            while marker.ahead.remove(&(marker.seq + 1)) {
+                marker.seq += 1;
             }
         }
         Ok(report)
@@ -620,14 +687,194 @@ mod tests {
         let mut b = Device::new();
         let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
         let report = b.sync(&vb);
-        assert!(b.hosts().is_empty(), "nothing applied past the gap");
+        assert_eq!(b.hosts().len(), 1, "the later segment applied anyway");
         assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
-        assert_eq!(b.sync.markers[&a.id].seq, 0);
+        assert!(report.warnings[0].contains("000001.seg: has not arrived yet"));
+        assert_eq!(b.sync.markers[&a.id].seq, 0, "still waiting for the first");
+        let report = b.sync(&vb);
+        assert_eq!(report.files_applied, 0, "the one applied is not read again");
 
         backend.put_new(&first, &held).unwrap();
         let report = b.sync(&vb);
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         assert_eq!(b.hosts().len(), 2);
+        assert_eq!(b.sync.markers[&a.id].seq, 2);
+        assert!(b.sync.markers[&a.id].ahead.is_empty());
+    }
+
+    #[test]
+    fn a_damaged_file_is_skipped_and_read_again_once_it_is_whole() {
+        let backend = MemoryBackend::default();
+        let mut a = Device::new();
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        for i in 1..=3 {
+            a.put(Collection::Hosts, &format!("h{i}"), json!({"label": i}));
+            a.sync(&va);
+        }
+        // The first segment is only partly synced, as a cloud folder can be.
+        let path = format!("devices/{}/000001.seg", a.id);
+        let whole = backend.get(&path).unwrap();
+        backend.delete(&path).unwrap();
+        backend.put_new(&path, &whole[..whole.len() / 2]).unwrap();
+
+        let mut b = Device::new();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        let report = b.sync(&vb);
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert!(report.warnings[0].contains("000001.seg"));
+        let labels: Vec<String> = b.hosts().into_iter().map(|(id, _)| id).collect();
+        assert_eq!(labels, ["h2", "h3"], "everything after it still applied");
+        assert_eq!(b.sync.markers[&a.id].seq, 0);
+
+        // A's own later work is not held up either.
+        a.put(Collection::Hosts, "h4", json!({"label": 4}));
+        a.sync(&va);
+        b.sync(&vb);
+        assert_eq!(b.hosts().len(), 3);
+
+        // The rest of the file arrives: it is read again and nothing is lost.
+        backend.delete(&path).unwrap();
+        backend.put_new(&path, &whole).unwrap();
+        let report = b.sync(&vb);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(b.hosts().len(), 4);
+        assert_eq!(b.sync.markers[&a.id].seq, 4);
+    }
+
+    #[test]
+    fn an_icloud_file_not_downloaded_yet_is_waited_for() {
+        let dir = std::env::temp_dir().join(format!("promptly-icloud-{}", rand::random::<u32>()));
+        let backend = crate::backend::LocalFolder::new(&dir);
+        let mut a = Device::new();
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        for i in 1..=2 {
+            a.put(Collection::Hosts, &format!("h{i}"), json!({"label": i}));
+            a.sync(&va);
+        }
+        // iCloud evicted the first segment, leaving its placeholder.
+        let folder = dir.join("devices").join(a.id.to_string());
+        let real = folder.join("000001.seg");
+        let held = std::fs::read(&real).unwrap();
+        std::fs::remove_file(&real).unwrap();
+        std::fs::write(folder.join(".000001.seg.icloud"), b"bplist").unwrap();
+
+        let mut b = Device::new();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        let report = b.sync(&vb);
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert!(
+            report.warnings[0].contains("still downloading"),
+            "{:?}",
+            report.warnings
+        );
+        assert_eq!(b.hosts().len(), 1);
+        assert_eq!(b.sync.markers[&a.id].seq, 0, "not skipped past");
+
+        std::fs::write(&real, held).unwrap();
+        std::fs::remove_file(folder.join(".000001.seg.icloud")).unwrap();
+        let report = b.sync(&vb);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(b.hosts().len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_damaged_snapshot_does_not_report_every_segment_it_replaced() {
+        let backend = MemoryBackend::default();
+        let mut a = Device::new();
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        for i in 0..3 {
+            a.put(Collection::Hosts, &format!("h{i}"), json!({"label": i}));
+            a.sync(&va);
+        }
+        va.write_snapshot(&mut a.sync, &a.state, &a.clock).unwrap();
+        a.put(Collection::Hosts, "late", json!({"label": "late"}));
+        a.sync(&va);
+        let snap = format!("devices/{}/000003.snap", a.id);
+        let whole = backend.get(&snap).unwrap();
+        backend.delete(&snap).unwrap();
+        backend.put_new(&snap, b"PVLT not really").unwrap();
+
+        let mut b = Device::new();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        let report = b.sync(&vb);
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert!(report.warnings[0].contains("000003.snap"));
+        assert_eq!(b.hosts().len(), 1, "the segment after it applied");
+        assert_eq!(b.sync.markers[&a.id].seq, 0);
+
+        backend.delete(&snap).unwrap();
+        backend.put_new(&snap, &whole).unwrap();
+        let report = b.sync(&vb);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(b.hosts().len(), 4);
+        assert_eq!(b.sync.markers[&a.id].seq, 4);
+    }
+
+    #[test]
+    fn every_sync_notices_a_missing_newer_or_rewrapped_manifest() {
+        let backend = MemoryBackend::default();
+        let a = Device::new();
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        let seen = va.check_manifest(None).unwrap();
+        assert_eq!(va.check_manifest(Some(&seen)).unwrap(), seen);
+
+        // The passphrase is changed on another device.
+        let mut m = Vault::read_manifest(&backend).unwrap();
+        m.change_passphrase(va.dek(), "new pass");
+        backend.delete(MANIFEST_NAME).unwrap();
+        backend
+            .put_new(MANIFEST_NAME, m.to_json().as_bytes())
+            .unwrap();
+        assert!(matches!(
+            va.check_manifest(Some(&seen)),
+            Err(SyncError::KeysChanged)
+        ));
+        // Unlocking with the new one gives the same key, and a new fingerprint to keep.
+        let reopened = Vault::open(&backend, a.id.clone(), "new pass").unwrap();
+        assert_eq!(reopened.dek(), va.dek());
+        let seen = reopened.check_manifest(None).unwrap();
+
+        // A newer app wrote the folder.
+        let newer = m.to_json().replace(r#""format": 1"#, r#""format": 2"#);
+        backend.delete(MANIFEST_NAME).unwrap();
+        backend.put_new(MANIFEST_NAME, newer.as_bytes()).unwrap();
+        assert!(matches!(
+            va.check_manifest(Some(&seen)),
+            Err(SyncError::Manifest(ManifestError::NewerFormat(2)))
+        ));
+
+        // Someone made a different vault in the same place.
+        let other = MemoryBackend::default();
+        Vault::create(&other, a.id.clone(), "pw", fast()).unwrap();
+        backend.delete(MANIFEST_NAME).unwrap();
+        backend
+            .put_new(MANIFEST_NAME, &other.get(MANIFEST_NAME).unwrap())
+            .unwrap();
+        assert!(matches!(
+            va.check_manifest(Some(&seen)),
+            Err(SyncError::DifferentVault)
+        ));
+
+        // The folder is gone. It can be set up again from the key this
+        // device holds, and its files still open.
+        backend.delete(MANIFEST_NAME).unwrap();
+        assert!(matches!(
+            va.check_manifest(Some(&seen)),
+            Err(SyncError::NoVault)
+        ));
+        let (_, code) = va.recreate_manifest("fresh pass", fast()).unwrap();
+        assert!(matches!(
+            va.recreate_manifest("again", fast()),
+            Err(SyncError::VaultExists)
+        ));
+        assert!(matches!(
+            va.check_manifest(Some(&seen)),
+            Err(SyncError::KeysChanged)
+        ));
+        let by_code = Vault::open_with_recovery(&backend, a.id.clone(), &code).unwrap();
+        assert_eq!(by_code.vault_id(), va.vault_id());
+        assert_eq!(by_code.dek(), va.dek());
     }
 
     #[test]

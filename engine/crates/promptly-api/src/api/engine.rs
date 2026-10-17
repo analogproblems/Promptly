@@ -11,6 +11,20 @@ static DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// The app sets this from the platform's application-support directory at
 /// startup; until then a sensible per-platform default is used.
 pub(crate) fn data_dir() -> PathBuf {
+    // Unit tests get a folder of their own, never the real one in the home folder.
+    #[cfg(test)]
+    {
+        static TEST_DIR: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
+            std::env::temp_dir().join(format!("promptly-api-test-{}", uuid::Uuid::new_v4()))
+        });
+        TEST_DIR.clone()
+    }
+    #[cfg(not(test))]
+    platform_data_dir()
+}
+
+#[cfg_attr(test, allow(dead_code))]
+fn platform_data_dir() -> PathBuf {
     // An override for running several copies side by side, as when testing sync.
     if let Some(d) = std::env::var_os("PROMPTLY_DATA_DIR") {
         return PathBuf::from(d);

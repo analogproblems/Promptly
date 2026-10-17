@@ -82,7 +82,7 @@ bytes 29..    XChaCha20-Poly1305 ciphertext followed by its 16-byte tag
 - Associated data (authenticated but not encrypted): the UTF-8 string `vault_id + "/" + device_id + "/" + file_name`. This binds a file to its place. A file copied into another device's folder or renamed will fail to open, so nobody can replay or shuffle files.
 - The plaintext is the JSON described below, compressed with zstd before encryption. JSON compresses roughly five to ten times, so the vault stays tiny.
 
-A decryption failure means the file is corrupt or tampered with. The reader records the file name, skips it, and shows a quiet warning in the sync status. It does not stop syncing other files.
+A decryption failure means the file is corrupt, tampered with, or not yet fully copied by the storage. The reader records the file name, skips it, and shows a quiet warning in the sync status. It does not stop syncing other files: later files from the same device still apply. The skipped file is read again on every pull until it opens or a snapshot from its device replaces it (section 9), so a file that was only half synced loses nothing.
 
 ## 6. Operations
 
@@ -154,13 +154,20 @@ Tombstones are kept indefinitely. They are a few dozen bytes each; the simplicit
 
 ## 9. Sync algorithm
 
-Each device stores locally, per other device, the highest segment number it has applied and the snapshot it last applied.
+Each device stores locally, per other device, the snapshot it last applied, the number below which every segment has been applied, and the segments above that number it has applied already.
+
+**Check the manifest** before anything else, every time. It is one small read.
+
+- Missing: the vault folder, or its manifest, was deleted. Stop without writing anything, because writing would leave a folder no device can join, and offer to set the vault up again (section 14).
+- A newer `format`: stop and ask the user to update the app.
+- Another `vault_id`: a different vault now lives here. Stop and offer to join it.
+- The wrapped keys changed since this device last unlocked (a passphrase change, a new recovery code or a new `dek`): stop and ask for the passphrase. If it unwraps the same `dek`, carry on as before; otherwise join afresh.
 
 **Pull**
 
 1. List `devices/`.
 2. For each device folder other than our own: list it, find the newest `.snap` (if any) and all `.seg` files numbered above the last one applied. If a snapshot is newer than what was applied, apply it first.
-3. Download, verify, decrypt and apply each in order. Advance the local markers.
+3. Download, verify, decrypt and apply each segment not applied yet. Merging does not depend on order, so a segment that cannot be read (damaged, still being copied, or not arrived: a mirror can deliver files out of order) is skipped with a warning and the ones after it still apply. The marker only moves past numbers that have all been applied, so the skipped one is tried again next time; once it, or a snapshot covering it, is applied, the marker catches up.
 4. Listing is cheap and file reads happen only for new files, so a steady-state pull is one list call per device folder.
 
 **Push**
@@ -170,7 +177,7 @@ Each device stores locally, per other device, the highest segment number it has 
 
 **Compact** as in section 8, after a successful push.
 
-**When**: after any local change, debounced by two seconds; when the app comes to the foreground; on pull-to-refresh; every thirty seconds while the app is open on a desktop (a listing is one cheap call per device folder; phones stretch this to save battery); and via platform background fetch where the OS offers it. A failed sync is retried with exponential backoff up to an hour and shown as a small, dismissible notice. It never interrupts the user.
+**When**: after any local change, debounced by two seconds; when the app comes to the foreground (at most once every twenty seconds, since a desktop window does that on every focus); on pull-to-refresh; and every thirty seconds while the app is open (a listing is one cheap call per device folder). Platform background fetch on phones is not done yet. A failed sync is retried after ten seconds, then with the wait doubling after each failure, up to an hour; a successful sync, or one the user asks for, starts the wait over. Failures show as a small notice. They never interrupt the user.
 
 **Offline**: everything works offline. Changes queue as pending operations and go out when a backend is reachable.
 
@@ -187,12 +194,14 @@ trait Backend {
 }
 ```
 
-`put_new` is the only subtle one. Where the backend supports it, a conditional write is used (`If-None-Match: *` on S3 and WebDAV, `O_EXCL` on a filesystem). Where it does not, the per-device naming already guarantees there is no other writer, so a plain write is safe; the condition is belt and braces.
+`put_new` is the only subtle one. Where the backend supports it, a conditional write is used (`If-None-Match: *` on S3 and WebDAV, a rename that refuses to replace on SFTP). On a filesystem the file is written under a temporary name and hard-linked into place, which fails if the name exists; where hard links are not supported it is created with `O_EXCL` instead, so an existing file is never replaced either way. Where a backend offers no condition at all, the per-device naming already guarantees there is no other writer, so a plain write is safe; the condition is belt and braces.
+
+A backend that knows of a file it cannot hand over yet lists it anyway and reports it as not downloaded when read. The reader treats it like any other file it cannot read yet: skipped for now, read again next time, never stepped over.
 
 | Backend | How | Credentials | Notes |
 |---|---|---|---|
 | Local folder | Filesystem | None | Desktop only. Lets Syncthing, rsync, the Dropbox desktop client or anything else do the transport. |
-| iCloud Drive | Platform channel to the ubiquity container; appears to the engine as a local folder | Signed-in Apple ID | Recommended default on Apple. The platform side must request download of placeholder files before the engine reads them. |
+| iCloud Drive | Platform channel to the ubiquity container; appears to the engine as a local folder | Signed-in Apple ID | Recommended default on Apple. A file iCloud has not downloaded yet is a hidden `.NAME.icloud` placeholder; the local folder lists it as NAME and reports it as not downloaded. On a Mac, reading one asks iCloud to fetch it (`brctl download`); iOS has no such command, so there the file waits until the system downloads it. Today a mirrored iCloud folder works through the local folder backend; the platform channel is still to do. |
 | Google Drive | REST API, the hidden `appDataFolder` scope or a visible folder | OAuth | Recommended default on Android. |
 | SFTP | `russh-sftp` over an existing Promptly host | An identity already in the vault | "Sync to a server you already have." Zero new accounts. |
 | Dropbox | HTTP API, app-folder scope | OAuth | |
@@ -239,16 +248,17 @@ The JSON export format is the natural one: the data model from DESIGN.md section
 
 | Situation | What happens |
 |---|---|
-| Upload cut off mid-file | Cloud APIs upload atomically, so partial files do not appear. On a plain filesystem the writer writes to a temporary name and renames. If a partial file ever does appear, it fails authentication on read and is skipped with a warning; the writer retries the same segment number. |
+| Upload cut off mid-file | Cloud APIs upload atomically, so partial files do not appear. On a plain filesystem the writer writes to a temporary name and links it into place. If a partial file ever does appear (a mirror still copying it, or a filesystem without links), it fails authentication on read and is skipped with a warning, and read again on the next pull until it is whole. |
 | Listing lags by minutes | Nothing breaks; the data arrives when the listing catches up. |
 | Two devices both compact | Each compacts only its own folder. |
 | Device clock wrong | Irrelevant; ordering uses logical clocks. |
 | Same record edited on two offline devices | Field-by-field last-writer-wins on reconnect. |
 | Backend credentials expire | Sync pauses with a notice; everything else works. |
 | Manifest rewritten by two devices at once (a passphrase change race) | The second writer notices the manifest changed under it, aborts, and asks the user to retry. |
+| Passphrase changed on another device | Every other device notices the rewrapped keys on its next sync, pauses, and asks for the new passphrase. The same `dek` comes out, so it carries on where it was. |
 | Passphrase forgotten | Recovery key. Failing that, the data is unrecoverable by design. The app says this at setup, twice. |
-| Vault folder deleted on the provider | Every device still has the full state locally and offers to recreate the vault with one tap. |
-| Old app version meets a newer format | The manifest `format` number gates reading; the app asks the user to update and keeps working locally. |
+| Vault folder deleted on the provider | Sync pauses and nothing is written, so the folder is not half recreated without its manifest. Every device still has the full state locally and offers to set the vault up again: a new manifest for the same `vault_id` and `dek`, wrapped under a passphrase the user picks, with a new recovery code, and a full snapshot beside it. The other devices then see changed keys and ask for that passphrase. |
+| Old app version meets a newer format | The manifest `format` number gates reading, on every sync; the app asks the user to update and keeps working locally. |
 
 ## 15. Size budget
 

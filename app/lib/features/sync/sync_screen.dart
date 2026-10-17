@@ -737,96 +737,111 @@ class _ConfiguredView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final kb = (status.vaultBytes / 1024).toStringAsFixed(status.vaultBytes < 10240 ? 1 : 0);
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
-      children: [
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      status.lastError != null ? Icons.cloud_off_outlined : Icons.cloud_done_outlined,
-                      color: status.lastError != null ? t.warning : t.accent,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        syncSummary(status),
-                        key: const Key('sync-summary'),
-                        style: TextStyle(fontWeight: FontWeight.w600, color: t.text),
+    return PullToSync(
+      enabled: true,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
+        children: [
+          if (status.attention case final attention?) ...[
+            AttentionCard(attention: attention, message: status.lastError ?? ''),
+            const SizedBox(height: 16),
+          ],
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        status.lastError != null ? Icons.cloud_off_outlined : Icons.cloud_done_outlined,
+                        color: status.lastError != null ? t.warning : t.accent,
                       ),
-                    ),
-                    OutlinedButton.icon(
-                      key: const Key('sync-now'),
-                      onPressed: status.syncing ? null : () => _syncNow(context, ref),
-                      icon: const Icon(Icons.sync, size: 16),
-                      label: const Text('Sync now'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _Row('Where', status.location ?? '', mono: true),
-                _Row('This device', status.deviceName),
-                _Row('Vault size', '$kb KB · ${status.pendingOps} change${status.pendingOps == 1 ? '' : 's'} waiting'),
-                if (status.recoveryHint != null) _Row('Recovery code starts with', status.recoveryHint!, mono: true),
-                for (final w in status.warnings)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(w, style: TextStyle(fontSize: 12, color: t.warning)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          syncSummary(status),
+                          key: const Key('sync-summary'),
+                          style: TextStyle(fontWeight: FontWeight.w600, color: t.text),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        key: const Key('sync-now'),
+                        onPressed: status.syncing ? null : () => _syncNow(context, ref),
+                        icon: const Icon(Icons.sync, size: 16),
+                        label: const Text('Sync now'),
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 12),
+                  _Row('Where', status.location ?? '', mono: true),
+                  _Row('This device', status.deviceName),
+                  _Row('Vault size', '$kb KB · ${status.pendingOps} change${status.pendingOps == 1 ? '' : 's'} waiting'),
+                  if (status.recoveryHint != null) _Row('Recovery code starts with', status.recoveryHint!, mono: true),
+                  if (status.warnings.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      'Some changes from other devices could not be read yet, so they wait. Everything else synced, and these are tried again each time.',
+                      key: const Key('sync-warnings'),
+                      style: TextStyle(fontSize: 13, color: t.warning, height: 1.4),
+                    ),
+                    for (final w in status.warnings)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(w, style: monoStyle(context, size: 11, color: t.muted)),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 6),
+            child: Text('DEVICES', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted)),
+          ),
+          Card(
+            child: Column(
+              children: [
+                for (final d in status.devices)
+                  ListTile(
+                    leading: Icon(_platformIcon(d.platform), color: d.isThisDevice ? t.accent : t.muted),
+                    title: Text(d.name),
+                    subtitle: Text(
+                      '${d.platform} · since ${DateTime.tryParse(d.enrolledAt)?.toLocal().toString().split(' ').first ?? d.enrolledAt}'
+                      '${d.isThisDevice ? ' · this device' : ''}',
+                    ),
+                    trailing: d.isThisDevice
+                        ? null
+                        : IconButton(
+                            tooltip: 'Remove device',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _remove(context, ref, d),
+                          ),
+                  ),
+                ListTile(
+                  leading: Icon(Icons.qr_code_2, color: t.muted),
+                  title: const Text('Add another device'),
+                  subtitle: const Text('Show a code to scan, or join from the other device with the passphrase.'),
+                  trailing: TextButton(onPressed: () => _showQr(context, ref), child: const Text('Show code')),
+                ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 6),
-          child: Text('DEVICES', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted)),
-        ),
-        Card(
-          child: Column(
-            children: [
-              for (final d in status.devices)
-                ListTile(
-                  leading: Icon(_platformIcon(d.platform), color: d.isThisDevice ? t.accent : t.muted),
-                  title: Text(d.name),
-                  subtitle: Text(
-                    '${d.platform} · since ${DateTime.tryParse(d.enrolledAt)?.toLocal().toString().split(' ').first ?? d.enrolledAt}'
-                    '${d.isThisDevice ? ' · this device' : ''}',
-                  ),
-                  trailing: d.isThisDevice
-                      ? null
-                      : IconButton(
-                          tooltip: 'Remove device',
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () => _remove(context, ref, d),
-                        ),
-                ),
-              ListTile(
-                leading: Icon(Icons.qr_code_2, color: t.muted),
-                title: const Text('Add another device'),
-                subtitle: const Text('Show a code to scan, or join from the other device with the passphrase.'),
-                trailing: TextButton(onPressed: () => _showQr(context, ref), child: const Text('Show code')),
-              ),
-            ],
+          const SizedBox(height: 24),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              key: const Key('sync-disconnect'),
+              style: TextButton.styleFrom(foregroundColor: t.danger),
+              onPressed: () => _disconnect(context, ref),
+              icon: const Icon(Icons.link_off, size: 18),
+              label: const Text('Disconnect this device'),
+            ),
           ),
-        ),
-        const SizedBox(height: 24),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            key: const Key('sync-disconnect'),
-            style: TextButton.styleFrom(foregroundColor: t.danger),
-            onPressed: () => _disconnect(context, ref),
-            icon: const Icon(Icons.link_off, size: 18),
-            label: const Text('Disconnect this device'),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -834,6 +849,243 @@ class _ConfiguredView extends ConsumerWidget {
         'android' || 'ios' => Icons.smartphone,
         _ => Icons.computer_outlined,
       };
+}
+
+/// When the vault itself needs the person: what happened, in the engine's
+/// plain words, and the one thing that sets it right.
+class AttentionCard extends ConsumerStatefulWidget {
+  const AttentionCard({super.key, required this.attention, required this.message});
+
+  final SyncAttention attention;
+  final String message;
+
+  @override
+  ConsumerState<AttentionCard> createState() => _AttentionCardState();
+}
+
+class _AttentionCardState extends ConsumerState<AttentionCard> {
+  final _pass = TextEditingController();
+  final _code = TextEditingController();
+  bool _useCode = false;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _pass.dispose();
+    _code.dispose();
+    super.dispose();
+  }
+
+  Future<void> _run(Future<void> Function() action) async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await action();
+    } catch (e) {
+      if (mounted) setState(() => _error = e is String ? e : e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _unlock() => _run(() async {
+        await ref.read(engineProvider).syncUnlock(
+              passphrase: _useCode ? null : _pass.text,
+              recoveryCode: _useCode ? _code.text : null,
+            );
+        _pass.clear();
+        _code.clear();
+      });
+
+  Future<void> _recreate() async {
+    final passphrase = await showDialog<String>(context: context, builder: (_) => const _NewPassphraseDialog());
+    if (passphrase == null) return;
+    await _run(() async {
+      final result = await ref.read(engineProvider).syncRecreateVault(passphrase);
+      // The new recovery code, shown by the screen above like a fresh setup.
+      ref.read(pendingRecoveryProvider.notifier).set(result);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final title = switch (widget.attention) {
+      SyncAttention.updateNeeded => 'Promptly needs an update',
+      SyncAttention.passphraseChanged => 'The vault passphrase changed',
+      SyncAttention.vaultMissing => 'The vault folder is missing',
+      SyncAttention.differentVault => 'A different vault is in the folder',
+    };
+    final asksForPassphrase = widget.attention == SyncAttention.passphraseChanged ||
+        widget.attention == SyncAttention.differentVault;
+    return Card(
+      key: const Key('sync-attention'),
+      shape: RoundedRectangleBorder(
+        side: BorderSide(color: t.warning, width: 1.5),
+        borderRadius: BorderRadius.circular(PromptlyTokens.panelRadius),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.pause_circle_outline, color: t.warning),
+                const SizedBox(width: 10),
+                Expanded(child: Text(title, style: TextStyle(fontWeight: FontWeight.w600, color: t.text))),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(widget.message, style: TextStyle(color: t.muted, height: 1.45)),
+            const SizedBox(height: 12),
+            if (asksForPassphrase) ...[
+              if (_useCode)
+                TextField(
+                  key: const Key('sync-unlock-code'),
+                  controller: _code,
+                  style: monoStyle(context, size: 14),
+                  decoration: const InputDecoration(
+                    labelText: 'Recovery code',
+                    hintText: 'XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX',
+                  ),
+                  onSubmitted: (_) => _unlock(),
+                )
+              else
+                TextField(
+                  key: const Key('sync-unlock-passphrase'),
+                  controller: _pass,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: widget.attention == SyncAttention.passphraseChanged ? 'New passphrase' : 'Its passphrase',
+                  ),
+                  onSubmitted: (_) => _unlock(),
+                ),
+              TextButton(
+                onPressed: () => setState(() => _useCode = !_useCode),
+                child: Text(_useCode ? 'Use the passphrase instead' : 'Use a recovery code instead'),
+              ),
+              FilledButton(
+                key: const Key('sync-unlock'),
+                onPressed: _busy ? null : _unlock,
+                child: Text(_busy
+                    ? 'Unlocking…'
+                    : widget.attention == SyncAttention.passphraseChanged
+                        ? 'Unlock and sync'
+                        : 'Join this vault'),
+              ),
+            ],
+            if (widget.attention == SyncAttention.vaultMissing) ...[
+              Text(
+                'Setting it up again writes the vault back from this device, locked with a passphrase you choose now. Your other devices then ask for that passphrase once.',
+                style: TextStyle(fontSize: 12, color: t.muted, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              FilledButton.icon(
+                key: const Key('sync-recreate'),
+                onPressed: _busy ? null : _recreate,
+                icon: const Icon(Icons.restore, size: 18),
+                label: Text(_busy ? 'Setting up…' : 'Set up the vault again here'),
+              ),
+            ],
+            if (widget.attention == SyncAttention.updateNeeded)
+              OutlinedButton.icon(
+                key: const Key('sync-check-updates'),
+                onPressed: () => context.go('/settings/about'),
+                icon: const Icon(Icons.system_update_alt, size: 18),
+                label: const Text('Check for updates'),
+              ),
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Text(_error!, key: const Key('sync-attention-error'), style: TextStyle(color: t.danger, fontSize: 13)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Asks for the passphrase a vault set up again is locked with, twice.
+class _NewPassphraseDialog extends StatefulWidget {
+  const _NewPassphraseDialog();
+
+  @override
+  State<_NewPassphraseDialog> createState() => _NewPassphraseDialogState();
+}
+
+class _NewPassphraseDialogState extends State<_NewPassphraseDialog> {
+  final _pass = TextEditingController();
+  final _confirm = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _pass.dispose();
+    _confirm.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_pass.text.length < 8) {
+      setState(() => _error = 'Use a passphrase of at least eight characters.');
+    } else if (_pass.text != _confirm.text) {
+      setState(() => _error = 'The two passphrases differ.');
+    } else {
+      Navigator.pop(context, _pass.text);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Set up the vault again'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Choose the passphrase that locks it from now on. It can be the one you used before. You get a new recovery code next.',
+              style: TextStyle(height: 1.4),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('sync-recreate-passphrase'),
+              controller: _pass,
+              obscureText: true,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Passphrase'),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              key: const Key('sync-recreate-confirm'),
+              controller: _confirm,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Again'),
+              onSubmitted: (_) => _submit(),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(_error!, style: TextStyle(color: context.tokens.danger, fontSize: 13)),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          key: const Key('sync-recreate-confirm-button'),
+          onPressed: _submit,
+          child: const Text('Set up again'),
+        ),
+      ],
+    );
+  }
 }
 
 class _Row extends StatelessWidget {

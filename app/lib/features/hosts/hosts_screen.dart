@@ -244,81 +244,84 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                         title: 'No hosts match',
                         message: 'Nothing matches "$_query". Type user@host to connect to somewhere new.',
                       )
-                    : ListView(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 96),
-                        children: [
-                          for (final (title, prefix, list) in shortcuts) ...[
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
-                              child: Text(
-                                title.toUpperCase(),
-                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted),
-                              ),
-                            ),
-                            for (final h in list)
-                              _HostRow(
-                                host: h,
-                                endpoint: Inherited(h, groups).endpoint,
-                                keyPrefix: prefix,
-                                reachOn: reachOn,
-                                reach: reach[h.id],
-                                onConnect: () => _connect(h),
-                                onEdit: () => context.go('/hosts/${h.id}'),
-                                onDelete: () => _delete(h),
-                                onFavourite: () => ref.read(hostsProvider.notifier).toggleFavourite(h.id),
-                              ),
-                          ],
-                          if (shortcuts.isNotEmpty && sections.first.$1 == null)
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
-                              child: Text(
-                                'ALL HOSTS',
-                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted),
-                              ),
-                            ),
-                          for (final (title, group, list) in sections) ...[
-                            if (title != null)
+                    : PullToSync(
+                        enabled: sync?.configured ?? false,
+                        child: ListView(
+                          padding: const EdgeInsets.fromLTRB(12, 0, 12, 96),
+                          children: [
+                            for (final (title, prefix, list) in shortcuts) ...[
                               Padding(
                                 padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        title.toUpperCase(),
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w600,
-                                          letterSpacing: 0.8,
-                                          color: t.muted,
-                                        ),
-                                      ),
-                                    ),
-                                    Text('${list.length}', style: TextStyle(fontSize: 11, color: t.muted)),
-                                    if (group case final g?)
-                                      IconButton(
-                                        key: Key('group-edit-${g.id}'),
-                                        tooltip: 'Edit group',
-                                        visualDensity: VisualDensity.compact,
-                                        iconSize: 16,
-                                        icon: Icon(Icons.tune, color: t.muted),
-                                        onPressed: () => showGroupEditor(context, ref, g),
-                                      ),
-                                  ],
+                                child: Text(
+                                  title.toUpperCase(),
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted),
                                 ),
                               ),
-                            for (final h in list)
-                              _HostRow(
-                                host: h,
-                                endpoint: Inherited(h, groups).endpoint,
-                                reachOn: reachOn,
-                                reach: reach[h.id],
-                                onConnect: () => _connect(h),
-                                onEdit: () => context.go('/hosts/${h.id}'),
-                                onDelete: () => _delete(h),
-                                onFavourite: () => ref.read(hostsProvider.notifier).toggleFavourite(h.id),
+                              for (final h in list)
+                                _HostRow(
+                                  host: h,
+                                  endpoint: Inherited(h, groups).endpoint,
+                                  keyPrefix: prefix,
+                                  reachOn: reachOn,
+                                  reach: reach[h.id],
+                                  onConnect: () => _connect(h),
+                                  onEdit: () => context.go('/hosts/${h.id}'),
+                                  onDelete: () => _delete(h),
+                                  onFavourite: () => ref.read(hostsProvider.notifier).toggleFavourite(h.id),
+                                ),
+                            ],
+                            if (shortcuts.isNotEmpty && sections.first.$1 == null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+                                child: Text(
+                                  'ALL HOSTS',
+                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.8, color: t.muted),
+                                ),
                               ),
+                            for (final (title, group, list) in sections) ...[
+                              if (title != null)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+                                  child: Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          title.toUpperCase(),
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w600,
+                                            letterSpacing: 0.8,
+                                            color: t.muted,
+                                          ),
+                                        ),
+                                      ),
+                                      Text('${list.length}', style: TextStyle(fontSize: 11, color: t.muted)),
+                                      if (group case final g?)
+                                        IconButton(
+                                          key: Key('group-edit-${g.id}'),
+                                          tooltip: 'Edit group',
+                                          visualDensity: VisualDensity.compact,
+                                          iconSize: 16,
+                                          icon: Icon(Icons.tune, color: t.muted),
+                                          onPressed: () => showGroupEditor(context, ref, g),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              for (final h in list)
+                                _HostRow(
+                                  host: h,
+                                  endpoint: Inherited(h, groups).endpoint,
+                                  reachOn: reachOn,
+                                  reach: reach[h.id],
+                                  onConnect: () => _connect(h),
+                                  onEdit: () => context.go('/hosts/${h.id}'),
+                                  onDelete: () => _delete(h),
+                                  onFavourite: () => ref.read(hostsProvider.notifier).toggleFavourite(h.id),
+                                ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
           ),
         ],

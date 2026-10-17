@@ -15,6 +15,7 @@ import 'package:promptly/core/file_picker.dart';
 import 'package:promptly/core/platform.dart';
 import 'package:promptly/features/files/files_screen.dart';
 import 'package:promptly/features/files/fs.dart';
+import 'package:promptly/features/help/about_screen.dart';
 import 'package:promptly/features/terminal/keyboard_bar.dart';
 import 'package:promptly/features/sessions/session_body.dart';
 import 'package:promptly/features/sessions/session_thumbnail.dart';
@@ -647,8 +648,17 @@ class FakeEngine implements Engine {
   /// Folders that already hold a vault, for the join path.
   final Set<String> foldersWithVaults = {};
 
-  void _configured(String path, String name) {
+  /// Set up, but stopped on a problem with the vault itself.
+  void needsAttention(SyncAttention attention, String message) => _configured(
+        '/shared/vault',
+        'test-box (Linux)',
+        attention: attention,
+        lastError: message,
+      );
+
+  void _configured(String path, String name, {SyncAttention? attention, String? lastError}) {
     sync = SyncStatus(
+      attention: attention,
       configured: true,
       kind: SyncBackendKind.localFolder,
       location: path,
@@ -657,7 +667,7 @@ class FakeEngine implements Engine {
       deviceName: name,
       syncing: false,
       lastSyncAt: DateTime.now().toUtc().toIso8601String(),
-      lastError: null,
+      lastError: lastError,
       warnings: const [],
       pendingOps: 0,
       devices: [
@@ -741,6 +751,26 @@ class FakeEngine implements Engine {
   Future<SyncStatus> syncNow() async {
     syncCalls.add('sync-now');
     return sync;
+  }
+
+  @override
+  void syncWake() => syncCalls.add('wake');
+
+  /// The passphrase the vault takes now; any other is wrong.
+  String vaultPassphrase = 'new passphrase';
+
+  @override
+  Future<void> syncUnlock({String? passphrase, String? recoveryCode}) async {
+    syncCalls.add('unlock pass=$passphrase code=$recoveryCode');
+    if (passphrase != vaultPassphrase) throw 'the passphrase is wrong';
+    _configured('/shared/vault', 'test-box (Linux)');
+  }
+
+  @override
+  Future<SyncSetupResult> syncRecreateVault(String passphrase) async {
+    syncCalls.add('recreate $passphrase');
+    _configured('/shared/vault', 'test-box (Linux)');
+    return const SyncSetupResult(vaultId: 'vault-1', recoveryCode: 'NEWC-ODE0-0000-0000-0000-0000-0000-0001');
   }
 
   @override
@@ -1248,6 +1278,126 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.syncCalls.last, 'create-sftp h1 vaults/promptly test-box (Linux)');
     expect(find.text('AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH'), findsOneWidget);
+  });
+
+  Future<void> openSync(WidgetTester tester) async {
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.text('Open'));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('a passphrase changed on another device is asked for, and a wrong one is reported', (tester) async {
+    final engine = FakeEngine()
+      ..needsAttention(SyncAttention.passphraseChanged, 'The vault\'s passphrase was changed on another device.');
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.text('Sync paused: type the new passphrase'), findsOneWidget, reason: 'the hosts status line');
+    await openSync(tester);
+    expect(find.text('The vault passphrase changed'), findsOneWidget);
+    expect(find.text('The vault\'s passphrase was changed on another device.'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('sync-unlock-passphrase')), 'old passphrase');
+    await tapVisible(tester, find.byKey(const Key('sync-unlock')));
+    await tester.pumpAndSettle();
+    expect(find.text('the passphrase is wrong'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('sync-unlock-passphrase')), 'new passphrase');
+    await tapVisible(tester, find.byKey(const Key('sync-unlock')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls.last, 'unlock pass=new passphrase code=null');
+    expect(find.byKey(const Key('sync-attention')), findsNothing, reason: 'syncing again');
+    expect(find.textContaining('Synced just now'), findsOneWidget);
+  });
+
+  testWidgets('a deleted vault folder can be set up again here, with a new recovery code', (tester) async {
+    final engine = FakeEngine()..needsAttention(SyncAttention.vaultMissing, 'The vault folder is gone.');
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await openSync(tester);
+    expect(find.text('The vault folder is missing'), findsOneWidget);
+    await tapVisible(tester, find.byKey(const Key('sync-recreate')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('sync-recreate-passphrase')), 'short');
+    await tester.enterText(find.byKey(const Key('sync-recreate-confirm')), 'short');
+    await tester.tap(find.byKey(const Key('sync-recreate-confirm-button')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('at least eight'), findsOneWidget);
+    expect(engine.syncCalls, isEmpty);
+    await tester.enterText(find.byKey(const Key('sync-recreate-passphrase')), 'a long passphrase');
+    await tester.enterText(find.byKey(const Key('sync-recreate-confirm')), 'a long passphrase');
+    await tester.tap(find.byKey(const Key('sync-recreate-confirm-button')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['recreate a long passphrase']);
+    expect(find.text('Write this down'), findsOneWidget);
+    expect(find.text('NEWC-ODE0-0000-0000-0000-0000-0000-0001'), findsOneWidget);
+  });
+
+  testWidgets('a vault from a newer Promptly says to update and points at the update check', (tester) async {
+    final engine = FakeEngine()..needsAttention(SyncAttention.updateNeeded, 'Update Promptly on this device.');
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await openSync(tester);
+    expect(find.text('Promptly needs an update'), findsOneWidget);
+    expect(find.byKey(const Key('sync-unlock')), findsNothing);
+    await tapVisible(tester, find.byKey(const Key('sync-check-updates')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AboutScreen), findsOneWidget);
+  });
+
+  testWidgets('pulling the hosts list down syncs, and coming back to the front asks for a sync', (tester) async {
+    final engine = FakeEngine()..records['hosts'] = {'h1': hostJson('h1', 'web-1'), 'h2': hostJson('h2', 'nas')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('pull-to-sync')), findsNothing, reason: 'nothing to sync with yet');
+    engine._configured('/shared/vault', 'test-box (Linux)');
+    await tester.pumpAndSettle();
+    await tester.fling(find.text('web-1'), const Offset(0, 400), 1000);
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['sync-now']);
+
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+    await tester.pump();
+    expect(engine.syncCalls.last, 'wake');
+    // A window flicking in and out of focus does not sync each time.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(engine.syncCalls.where((c) => c == 'wake').length, 1);
+  });
+
+  testWidgets('the sync screen shows files that could not be read yet in plain words', (tester) async {
+    final engine = FakeEngine();
+    engine.sync = SyncStatus(
+      configured: true,
+      kind: SyncBackendKind.localFolder,
+      location: '/shared/vault',
+      vaultId: 'vault-1',
+      deviceId: 'this-device',
+      deviceName: 'test-box (Linux)',
+      syncing: false,
+      lastSyncAt: DateTime.now().toUtc().toIso8601String(),
+      warnings: const ['7f3a/000004.seg: the file is damaged or was tampered with'],
+      pendingOps: 0,
+      devices: const [],
+      vaultBytes: 100,
+      changes: 0,
+    );
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await openSync(tester);
+    expect(find.byKey(const Key('sync-warnings')), findsOneWidget);
+    expect(find.textContaining('000004.seg'), findsOneWidget);
+    await tester.fling(find.byKey(const Key('sync-summary')), const Offset(0, 400), 1000);
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls.last, 'sync-now', reason: 'the sync screen pulls to refresh too');
   });
 
   testWidgets('hosts from ~/.ssh/config can be picked and imported', (tester) async {
