@@ -79,7 +79,7 @@ class RustLib extends BaseEntrypoint<RustLibApi, RustLibApiImpl, RustLibWire> {
   String get codegenVersion => '2.13.0';
 
   @override
-  int get rustContentHash => -828119831;
+  int get rustContentHash => -213422978;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -421,6 +421,8 @@ abstract class RustLibApi extends BaseApi {
   });
 
   String? crateApiTerminalTerminalSelectionText({required int id});
+
+  void crateApiTerminalTerminalSetScrollback({required int lines});
 
   void crateApiTerminalTerminalSetTheme({
     required int id,
@@ -3073,6 +3075,32 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
+  void crateApiTerminalTerminalSetScrollback({required int lines}) {
+    return handler.executeSync(
+      SyncTask(
+        callFfi: () {
+          final serializer = SseSerializer(generalizedFrbRustBinding);
+          sse_encode_u_32(lines, serializer);
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 91)!;
+        },
+        codec: SseCodec(
+          decodeSuccessData: sse_decode_unit,
+          decodeErrorData: null,
+        ),
+        constMeta: kCrateApiTerminalTerminalSetScrollbackConstMeta,
+        argValues: [lines],
+        apiImpl: this,
+      ),
+    );
+  }
+
+  TaskConstMeta get kCrateApiTerminalTerminalSetScrollbackConstMeta =>
+      const TaskConstMeta(
+        debugName: "terminal_set_scrollback",
+        argNames: ["lines"],
+      );
+
+  @override
   void crateApiTerminalTerminalSetTheme({
     required int id,
     required String theme,
@@ -3083,7 +3111,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
           sse_encode_String(theme, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 91)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 92)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -3113,7 +3141,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_u_32(id, serializer);
           sse_encode_list_prim_u_8_loose(data, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 92)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 93)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -3139,7 +3167,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(id, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 93)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 94)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,
@@ -3166,7 +3194,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_String(text, serializer);
           sse_encode_String(filename, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 94)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 95)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_theme_info,
@@ -3192,7 +3220,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_box_autoadd_theme_info(theme, serializer);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 95)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 96)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_theme_info,
@@ -3214,7 +3242,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       SyncTask(
         callFfi: () {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 96)!;
+          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 97)!;
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_list_theme_info,
@@ -4091,14 +4119,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TerminalRow dco_decode_terminal_row(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 5)
-      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
+    if (arr.length != 6)
+      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
     return TerminalRow(
       line: dco_decode_u_16(arr[0]),
       glyphs: dco_decode_list_String(arr[1]),
       fg: dco_decode_list_prim_u_32_strict(arr[2]),
       bg: dco_decode_list_prim_u_32_strict(arr[3]),
       flags: dco_decode_list_prim_u_16_strict(arr[4]),
+      underline: dco_decode_list_prim_u_32_strict(arr[5]),
     );
   }
 
@@ -5335,12 +5364,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     var var_fg = sse_decode_list_prim_u_32_strict(deserializer);
     var var_bg = sse_decode_list_prim_u_32_strict(deserializer);
     var var_flags = sse_decode_list_prim_u_16_strict(deserializer);
+    var var_underline = sse_decode_list_prim_u_32_strict(deserializer);
     return TerminalRow(
       line: var_line,
       glyphs: var_glyphs,
       fg: var_fg,
       bg: var_bg,
       flags: var_flags,
+      underline: var_underline,
     );
   }
 
@@ -6444,6 +6475,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_list_prim_u_32_strict(self.fg, serializer);
     sse_encode_list_prim_u_32_strict(self.bg, serializer);
     sse_encode_list_prim_u_16_strict(self.flags, serializer);
+    sse_encode_list_prim_u_32_strict(self.underline, serializer);
   }
 
   @protected

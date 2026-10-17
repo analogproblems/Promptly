@@ -1,6 +1,7 @@
 //! The emulator: bytes in, frames out.
 
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
@@ -10,7 +11,6 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::search::{RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{self, Processor};
-use std::sync::LazyLock;
 
 use crate::frame::{self, CursorShape, CursorState, Frame, RowUpdate};
 use crate::palette::{dim, mix, pack, unpack, Palette, Rgb};
@@ -72,11 +72,12 @@ struct Search {
     focused: bool,
 }
 
-/// Plain-text URLs worth a click. Trailing punctuation is trimmed when the
-/// link is read back.
-static URL: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r#"(?i)\b(?:https?|ftp|ssh|git|file)://[^\s<>"'`]+"#).expect("url regex")
-});
+/// Lines of scrollback a terminal keeps unless told otherwise.
+pub const DEFAULT_SCROLLBACK: usize = 10_000;
+
+/// The most scrollback a terminal may keep. Each line costs a row of cells,
+/// so this bounds the memory one busy session can take.
+pub const MAX_SCROLLBACK: usize = 100_000;
 
 #[derive(Clone, Default)]
 struct Listener(Arc<Mutex<Vec<Event>>>);
@@ -104,9 +105,14 @@ pub struct Emulator {
 
 impl Emulator {
     pub fn new(size: TermSize, palette: Palette) -> Self {
+        Self::with_scrollback(size, palette, DEFAULT_SCROLLBACK)
+    }
+
+    /// A terminal that keeps `lines` of history (at most [`MAX_SCROLLBACK`]).
+    pub fn with_scrollback(size: TermSize, palette: Palette, lines: usize) -> Self {
         let events = Listener::default();
         let config = Config {
-            scrolling_history: 10_000,
+            scrolling_history: lines.min(MAX_SCROLLBACK),
             ..Config::default()
         };
         let term = Term::new(config, &size, events.clone());
@@ -238,23 +244,24 @@ impl Emulator {
 
     // ---- Links -------------------------------------------------------------
 
-    /// The link under a viewport cell: an OSC 8 hyperlink, or a URL written
-    /// in the text of that row.
+    /// The link under a viewport cell: an OSC 8 hyperlink, or a URL, file
+    /// path or IP address written in the text of that row. Only a URL has
+    /// `://` in it, which is how the UI tells what to do with one.
     pub fn link_at(&self, col: u16, line: i32) -> Option<String> {
         let point = self.point_at(col, line);
         let grid = self.term.grid();
         if let Some(link) = grid[point.line][point.column].hyperlink() {
             return Some(link.uri().to_string());
         }
-        let (text, columns, _) = row_text(grid, point.line);
-        for m in URL.find_iter(&text) {
-            let cols = (columns[m.start()], columns[m.end().saturating_sub(1)]);
-            if point.column.0 >= cols.0 && point.column.0 <= cols.1 {
-                return Some(
-                    m.as_str()
-                        .trim_end_matches(['.', ',', ';', ':', ')', ']', '}', '\'', '"', '!', '?'])
-                        .to_string(),
-                );
+        let (text, columns, wide) = row_text(grid, point.line);
+        for found in crate::links::find(&text) {
+            let first = columns[found.start];
+            let mut last = columns[found.end - 1];
+            if wide[last] {
+                last += 1;
+            }
+            if point.column.0 >= first && point.column.0 <= last {
+                return Some(text[found.start..found.end].to_string());
             }
         }
         None
@@ -335,8 +342,33 @@ impl Emulator {
 
     /// Feed bytes from the program. Returns what the program asked for.
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<EmulatorEvent> {
+        // A synchronized update that ran out of time ends before more
+        // output lands, or the parser would go on holding everything back.
+        if self.sync_deadline().is_some_and(|d| d <= Instant::now()) {
+            self.parser.stop_sync(&mut self.term);
+        }
         self.parser.advance(&mut self.term, bytes);
         self.drain_events()
+    }
+
+    /// When the synchronized update in progress is given up on, or `None`
+    /// when there is none. Full-screen programs wrap a redraw in one (DEC
+    /// mode 2026) so it lands in one go; until it ends, its output is held
+    /// back.
+    pub fn sync_deadline(&self) -> Option<Instant> {
+        self.parser.sync_timeout().sync_timeout()
+    }
+
+    /// Show what a synchronized update has drawn so far if it is past its
+    /// deadline (the program never said it was done), so the screen does
+    /// not stay frozen. Returns what the held-back output asked for, or
+    /// `None` when nothing was due.
+    pub fn end_stalled_sync(&mut self, now: Instant) -> Option<Vec<EmulatorEvent>> {
+        if !self.sync_deadline().is_some_and(|d| d <= now) {
+            return None;
+        }
+        self.parser.stop_sync(&mut self.term);
+        Some(self.drain_events())
     }
 
     pub fn resize(&mut self, size: TermSize) {
@@ -473,8 +505,9 @@ impl Emulator {
         let mut fg = Vec::with_capacity(cols);
         let mut bg = Vec::with_capacity(cols);
         let mut flags_out = Vec::with_capacity(cols);
+        let mut underline = Vec::with_capacity(cols);
 
-        // Search matches and plain URLs are found on the row's text once.
+        // Search matches and plain links are found on the row's text once.
         let (text, columns, wide) = row_text(grid, line);
         let mut marks = vec![0u16; cols];
         let focused_sel = selection.filter(|_| self.search.as_ref().is_some_and(|s| s.focused));
@@ -490,15 +523,12 @@ impl Emulator {
                 );
             }
         }
-        for m in URL.find_iter(&text) {
-            mark(
-                &mut marks,
-                &columns,
-                &wide,
-                m.start(),
-                m.end(),
-                frame::flags::LINK,
-            );
+        for found in crate::links::find(&text) {
+            let flag = match found.kind {
+                crate::links::LinkKind::Url => frame::flags::LINK,
+                _ => frame::flags::PATH_OR_ADDRESS,
+            };
+            mark(&mut marks, &columns, &wide, found.start, found.end, flag);
         }
 
         for col in 0..cols {
@@ -527,6 +557,11 @@ impl Emulator {
             if cf.contains(Flags::HIDDEN) {
                 f = b;
             }
+            let u = match cell.underline_color() {
+                _ if cf.contains(Flags::HIDDEN) => b,
+                Some(c) => self.palette.resolve(c, overrides, cf, false),
+                None => f,
+            };
 
             let mut out = 0u16;
             if cf.contains(Flags::BOLD) {
@@ -599,6 +634,7 @@ impl Emulator {
             fg.push(f);
             bg.push(b);
             flags_out.push(out);
+            underline.push(u);
         }
 
         RowUpdate {
@@ -607,6 +643,7 @@ impl Emulator {
             fg,
             bg,
             flags: flags_out,
+            underline,
         }
     }
 
@@ -919,12 +956,12 @@ mod tests {
         let first = &f.rows_changed[0];
         assert_eq!(first.flags[3] & frame::flags::LINK, 0);
         assert_ne!(first.flags[4] & frame::flags::LINK, 0);
-        assert_ne!(
-            first.flags[27] & frame::flags::LINK,
+        assert_ne!(first.flags[27] & frame::flags::LINK, 0);
+        assert_eq!(
+            first.flags[28] & frame::flags::LINK,
             0,
-            "the comma is flagged with the url"
+            "the comma after the url is not part of it"
         );
-        assert_eq!(first.flags[29] & frame::flags::LINK, 0);
         assert_eq!(
             e.link_at(10, 0).as_deref(),
             Some("https://example.com/docs"),
@@ -1110,5 +1147,103 @@ mod tests {
         assert_eq!(r.glyphs[1], "");
         assert_ne!(r.flags[1] & frame::flags::WIDE_SPACER, 0);
         assert_eq!(r.glyphs[2], "本");
+    }
+
+    #[test]
+    fn paths_and_addresses_are_flagged_apart_from_links() {
+        let mut e = Emulator::new(TermSize::new(60, 4), Palette::promptly_dark());
+        e.feed(b"log /var/log/syslog via 10.0.0.1:22 v1.2.3");
+        let f = e.frame();
+        let r = &f.rows_changed[0];
+        let path = frame::flags::PATH_OR_ADDRESS;
+        assert_eq!(r.flags[3] & path, 0);
+        assert_ne!(r.flags[4] & path, 0);
+        assert_ne!(r.flags[18] & path, 0);
+        assert_eq!(
+            r.flags[4] & frame::flags::LINK,
+            0,
+            "paths are not drawn as links"
+        );
+        assert_ne!(r.flags[24] & path, 0);
+        assert_ne!(r.flags[34] & path, 0);
+        assert!(r.flags[36..].iter().all(|f| f & path == 0), "not a version");
+        assert_eq!(e.link_at(10, 0).as_deref(), Some("/var/log/syslog"));
+        assert_eq!(e.link_at(30, 0).as_deref(), Some("10.0.0.1:22"));
+        assert_eq!(e.link_at(38, 0), None);
+    }
+
+    #[test]
+    fn underline_styles_and_colours_reach_the_frame() {
+        let p = Palette::promptly_dark();
+        let mut e = Emulator::new(TermSize::new(20, 2), Palette::promptly_dark());
+        // Plain, curly in red (58;2), dotted in palette blue (58;5;4),
+        // dashed, double, and curly after the colour was reset (59).
+        e.feed(b"\x1b[4mA\x1b[4:3;58;2;255;0;0mB\x1b[4:4;58;5;4mC\x1b[59;4:5mD\x1b[4:2mE\x1b[0m");
+        e.feed(b"\x1b[31;4:3mF\x1b[0m");
+        let f = e.frame();
+        let r = &f.rows_changed[0];
+        assert_ne!(r.flags[0] & frame::flags::UNDERLINE, 0);
+        assert_ne!(r.flags[1] & frame::flags::UNDERCURL, 0);
+        assert_ne!(r.flags[2] & frame::flags::DOTTED_UNDERLINE, 0);
+        assert_ne!(r.flags[3] & frame::flags::DASHED_UNDERLINE, 0);
+        assert_ne!(r.flags[4] & frame::flags::DOUBLE_UNDERLINE, 0);
+        assert_eq!(
+            r.flags[1] & frame::flags::UNDERLINE,
+            0,
+            "one style at a time"
+        );
+        assert_eq!(r.underline[0], p.foreground, "no colour set: the text's");
+        assert_eq!(r.underline[1], 0xFF0000);
+        assert_eq!(r.underline[2], p.ansi[4]);
+        assert_eq!(r.underline[3], p.foreground, "59 resets it");
+        assert_ne!(r.flags[5] & frame::flags::UNDERCURL, 0);
+        assert_eq!(r.underline[5], p.ansi[1], "follows red text");
+    }
+
+    #[test]
+    fn scrollback_keeps_the_lines_asked_for() {
+        let mut e = Emulator::with_scrollback(TermSize::new(20, 4), Palette::promptly_dark(), 50);
+        for i in 0..200 {
+            e.feed(format!("{i}\r\n").as_bytes());
+        }
+        assert_eq!(e.frame().history_len, 50);
+        // Asking for more than the most allowed gets the most allowed.
+        let mut big =
+            Emulator::with_scrollback(TermSize::new(2, 4), Palette::promptly_dark(), 1 << 30);
+        big.feed(&b"x\r\n".repeat(MAX_SCROLLBACK + 100));
+        assert_eq!(big.frame().history_len as usize, MAX_SCROLLBACK);
+    }
+
+    #[test]
+    fn a_synchronized_update_that_never_ends_is_shown_after_a_while() {
+        let mut e = emu();
+        e.feed(b"before");
+        let _ = e.frame();
+
+        // Begun and ended: shown at once.
+        e.feed(b"\x1b[?2026h\rfirst\x1b[?2026l");
+        assert!(e.screen_text().starts_with("first"));
+        assert!(e.sync_deadline().is_none());
+
+        // Begun and never ended: held back until its deadline.
+        e.feed(b"\x1b[?2026h\rsecond\x07");
+        assert!(e.screen_text().starts_with("first"), "held back for now");
+        let deadline = e.sync_deadline().expect("a deadline");
+        assert!(deadline <= Instant::now() + std::time::Duration::from_millis(150));
+        assert!(e.end_stalled_sync(Instant::now()).is_none(), "not due yet");
+        let events = e.end_stalled_sync(deadline).expect("due");
+        assert!(
+            events.contains(&EmulatorEvent::Bell),
+            "its bell still rings"
+        );
+        assert!(e.screen_text().starts_with("second"));
+        assert!(e.sync_deadline().is_none());
+        assert!(e.frame().rows_changed.iter().any(|r| r.glyphs[0] == "s"));
+
+        // Output arriving after the deadline is not held back either.
+        e.feed(b"\x1b[?2026h\rthird!");
+        std::thread::sleep(std::time::Duration::from_millis(160));
+        e.feed(b" more");
+        assert!(e.screen_text().starts_with("third! more"));
     }
 }

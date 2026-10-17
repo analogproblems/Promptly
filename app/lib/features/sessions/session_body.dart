@@ -11,7 +11,9 @@ import '../../core/theme/tokens.dart';
 import '../hosts/host_colors.dart';
 import '../settings/settings_providers.dart';
 import '../terminal/keyboard_bar.dart';
+import '../terminal/link_kind.dart';
 import '../terminal/paste_guard.dart';
+import '../terminal/terminal_bell.dart';
 import '../terminal/terminal_view.dart';
 import '../workspace/workspace.dart' show findRequestProvider;
 import 'connecting_view.dart';
@@ -120,7 +122,16 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
     });
   }
 
+  /// A web link opens in the browser; a file path or address is copied,
+  /// since it means something on the other machine, not this one.
   Future<void> _openLink(String uri) async {
+    if (linkKind(uri) != LinkKind.web) {
+      await Clipboard.setData(ClipboardData(text: uri));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Copied $uri')));
+      }
+      return;
+    }
     final ok = await openExternalLink(uri);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open $uri')));
@@ -277,13 +288,17 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                             child: Stack(
                               fit: StackFit.expand,
                               children: [
-                                TerminalView(
+                                TerminalBell(
                                   controller: c,
-                                  autofocus: widget.focused,
-                                  onFind: _openSearch,
-                                  onOpenLink: _openLink,
-                                  confirmPaste: (text) =>
-                                      confirmPaste(context, text, warn: ref.read(pasteWarningProvider)),
+                                  mode: ref.watch(bellProvider),
+                                  child: TerminalView(
+                                    controller: c,
+                                    autofocus: widget.focused,
+                                    onFind: _openSearch,
+                                    onOpenLink: _openLink,
+                                    confirmPaste: (text) =>
+                                        confirmPaste(context, text, warn: ref.read(pasteWarningProvider)),
+                                  ),
                                 ),
                                 if (entry.reconnecting)
                                   _ReconnectOverlay(

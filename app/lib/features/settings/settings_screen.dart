@@ -11,6 +11,7 @@ import 'settings_providers.dart';
 import '../hosts/csv_import.dart';
 import '../hosts/ssh_config_import.dart';
 import '../lock/lock_settings.dart';
+import '../sessions/session_manager.dart' show sessionManagerProvider;
 import '../sessions/sessions_screen.dart' show supportsLocalShell;
 import '../sync/sync_providers.dart';
 import '../updates/updates.dart';
@@ -130,6 +131,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       value: programClipboard,
                       onChanged: (v) => ref.read(programClipboardProvider.notifier).set(v),
                     ),
+                    const TerminalChoices(),
                   ],
                 ),
               ),
@@ -322,6 +324,108 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Text sizes offered in Settings; zooming can land between them.
+const fontSizeChoices = [10.0, 12.0, 13.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0];
+
+/// The terminal's bell, text size and scrollback, in the Terminal section.
+class TerminalChoices extends ConsumerWidget {
+  const TerminalChoices({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final fontSize = ref.watch(fontSizeProvider);
+    return Column(
+      children: [
+        _ChoiceTile<BellMode>(
+          key: const Key('bell'),
+          title: 'Bell',
+          description:
+              'What happens when a program rings the bell. Vibrate works on phones and tablets; elsewhere the screen flashes.',
+          value: ref.watch(bellProvider),
+          choices: const {
+            BellMode.flash: 'Flash the screen',
+            BellMode.vibrate: 'Vibrate',
+            BellMode.off: 'Do nothing',
+          },
+          onChanged: (v) => ref.read(bellProvider.notifier).set(v),
+        ),
+        _ChoiceTile<double>(
+          key: const Key('font-size'),
+          title: 'Text size',
+          description: 'Zooming in a session (Ctrl and + or −) changes it too, and the last size is kept.',
+          value: fontSize,
+          choices: {
+            for (final size in {...fontSizeChoices, fontSize}.toList()..sort())
+              size: size == FontSizeNotifier.normal ? '${size.round()}, the usual size' : '${size.round()}',
+          },
+          onChanged: (v) {
+            ref.read(fontSizeProvider.notifier).set(v);
+            ref.read(sessionManagerProvider.notifier).applyFontSize(v);
+          },
+        ),
+        _ChoiceTile<int>(
+          key: const Key('scrollback'),
+          title: 'Lines to keep for scrolling back',
+          description: 'More lines use more memory. A change applies to sessions opened after it.',
+          value: ref.watch(scrollbackProvider),
+          choices: {
+            for (final lines in ScrollbackNotifier.choices)
+              lines: lines == 10000 ? '${_thousands(lines)}, the usual' : _thousands(lines),
+          },
+          onChanged: (v) => ref.read(scrollbackProvider.notifier).set(v),
+        ),
+      ],
+    );
+  }
+}
+
+/// 100000 as "100,000".
+String _thousands(int n) => n.toString().replaceAllMapped(RegExp(r'\B(?=(\d{3})+$)'), (_) => ',');
+
+/// A setting with a few choices: the title, what it does, and a dropdown
+/// under them that takes the full width, so long labels and large text
+/// wrap instead of overflowing.
+class _ChoiceTile<T> extends StatelessWidget {
+  const _ChoiceTile({
+    super.key,
+    required this.title,
+    required this.description,
+    required this.value,
+    required this.choices,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String description;
+  final T value;
+  final Map<T, String> choices;
+  final ValueChanged<T> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      title: Text(title),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(description),
+          DropdownButton<T>(
+            isExpanded: true,
+            value: value,
+            items: [
+              for (final e in choices.entries)
+                DropdownMenuItem(value: e.key, child: Text(e.value, overflow: TextOverflow.ellipsis)),
+            ],
+            onChanged: (v) {
+              if (v != null) onChanged(v);
+            },
+          ),
+        ],
+      ),
     );
   }
 }

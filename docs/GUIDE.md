@@ -409,17 +409,25 @@ Some full-screen programs, such as `vim` with mouse support on, `tmux` and `htop
 
 Scroll with the mouse wheel or trackpad, or press Shift+Page Up and Shift+Page Down. Typing anything jumps back to the bottom.
 
+Each session keeps the last 10,000 lines. For more (up to 100,000) or fewer, change **Lines to keep for scrolling back** in Settings, Terminal. More lines use more memory, and the change applies to sessions you open after making it.
+
 ### Finding text
 
 Tap the magnifier in the session bar, or press Ctrl+Shift+F. Type what you're looking for: every match in the screen and the scrollback is highlighted, and the count is shown. Press Enter to move to the previous (older) match and Shift+Enter for the next one, or use the arrow buttons. The current match is selected, ready to copy. Press Esc to close the search bar.
 
 ### Links
 
-Web addresses in the output are underlined when you point at them. **Ctrl+click** a link to open it in your browser (Cmd+click on a Mac), or **right-click** it and choose **Open link** or **Copy link**.
+Web addresses in the output are faintly underlined. **Ctrl+click** a link to open it in your browser (Cmd+click on a Mac), or **right-click** it and choose **Open link** or **Copy link**.
+
+File paths that start with `/` or `~/` (such as `/var/log/syslog`) and IP addresses (such as `10.0.0.1` or `10.0.0.1:22`) are found too. They aren't underlined, so the screen stays calm, but the pointer changes over them. **Ctrl+click** one to copy it, or **right-click** it and choose **Copy path** or **Copy address**. Version numbers such as `1.2.3` are left alone.
 
 ### Text size
 
-Press Ctrl+= for bigger text, Ctrl+- for smaller, and Ctrl+0 to go back to the normal size. These are also in the **View** menu. The terminal resizes to fit, and the server is told the new size.
+Press Ctrl+= for bigger text, Ctrl+- for smaller, and Ctrl+0 to go back to the normal size. These are also in the **View** menu. The terminal resizes to fit, and the server is told the new size. Promptly remembers the size, so new sessions open at it. You can also pick it with **Text size** in Settings, Terminal, which changes open sessions too.
+
+### The bell
+
+Programs ring the bell to get your attention, for example when you press Tab and there is nothing to complete. Promptly flashes the terminal briefly; with reduced motion turned on in your device's settings, a thin outline appears instead of a flash. Under **Bell** in Settings, Terminal, you can choose **Vibrate** instead (phones and tablets; elsewhere the screen still flashes) or **Do nothing**.
 
 ### Letting programs set your clipboard
 
@@ -779,6 +787,9 @@ If the file holds several themes, save the ones you want. Imported themes appear
 | | **Ask again** | How long a check lasts before keys ask again, and how long Promptly can be away before it locks: every time, or after 1, 5, 15 or 60 minutes. 5 minutes by default. |
 | | | Turning either lock off, asking less often, or removing the app passcode asks first, so someone holding your unlocked device can't simply switch them off. |
 | | **App passcode** | Only on computers with no fingerprint or PIN check that apps can use (Linux). Sets a passcode Promptly asks for instead. It's stored only as a hash, on that computer. |
+| | **Bell** | Flash the screen (the default), vibrate on a phone or tablet, or do nothing. See [The bell](#the-bell). |
+| | **Text size** | The terminal's text size. Zooming in a session changes it too. |
+| | **Lines to keep for scrolling back** | 1,000, 10,000 (the default), 50,000 or 100,000. Applies to sessions opened after the change. |
 | **Updates** | **Check for updates automatically** | Asks GitHub once a day whether a new version is out. Off by default. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |
 | | **Import from a CSV file** | Imports hosts from a CSV file. |

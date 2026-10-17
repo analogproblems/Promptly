@@ -6,14 +6,16 @@
 //! handed to the stream in order.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use flutter_rust_bridge::frb;
 
 use crate::frb_generated::StreamSink;
 use promptly_session::{pump, LocalShell, Session, SessionEvent, SessionKind, Transport};
-use promptly_term::{CursorShape, Frame, Palette, SelectKind, TermSize};
+use promptly_term::{
+    CursorShape, Frame, Palette, SelectKind, TermSize, DEFAULT_SCROLLBACK, MAX_SCROLLBACK,
+};
 
 struct Entry {
     session: Arc<Session>,
@@ -32,6 +34,14 @@ impl Entry {
 static SESSIONS: LazyLock<Mutex<HashMap<u32, Arc<Entry>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
+
+/// Lines of history new sessions keep; see [`terminal_set_scrollback`].
+static SCROLLBACK: AtomicUsize = AtomicUsize::new(DEFAULT_SCROLLBACK);
+
+/// How many lines of history a session opened now should keep.
+pub(crate) fn scrollback() -> usize {
+    SCROLLBACK.load(Ordering::Relaxed)
+}
 
 fn entry(id: u32) -> Result<Arc<Entry>, String> {
     SESSIONS
@@ -67,6 +77,8 @@ pub struct TerminalRow {
     pub fg: Vec<u32>,
     pub bg: Vec<u32>,
     pub flags: Vec<u16>,
+    /// Underline colour per column: the program's own, or the text colour.
+    pub underline: Vec<u32>,
 }
 
 pub struct TerminalFrame {
@@ -154,6 +166,7 @@ impl From<Frame> for TerminalFrame {
                     fg: r.fg,
                     bg: r.bg,
                     flags: r.flags,
+                    underline: r.underline,
                 })
                 .collect(),
             cursor: TerminalCursor {
@@ -267,13 +280,22 @@ pub fn terminal_open_local(
     let kind = SessionKind::LocalShell {
         program: shell.program().to_string(),
     };
-    let session = Arc::new(Session::new(
+    let session = Arc::new(Session::with_scrollback(
         kind,
         size,
         palette_for(&theme),
         Box::new(shell),
+        scrollback(),
     ));
     Ok(register_session(session, reader))
+}
+
+/// How many lines of history sessions opened from now on keep, up to
+/// 100,000. Sessions already open keep what they started with.
+#[frb(sync)]
+pub fn terminal_set_scrollback(lines: u32) {
+    let lines = (lines as usize).clamp(1, MAX_SCROLLBACK);
+    SCROLLBACK.store(lines, Ordering::Relaxed);
 }
 
 /// Subscribe to a session's frames. Starts the read loop on first call.
@@ -486,7 +508,8 @@ pub fn terminal_search_step(id: u32, backward: bool) -> Result<Option<TerminalSe
     }))
 }
 
-/// The link under a viewport cell: an OSC 8 hyperlink or a URL in the text.
+/// The link under a viewport cell: an OSC 8 hyperlink, or a URL, file path
+/// or IP address in the text. Only a URL contains `://`.
 #[frb(sync)]
 pub fn terminal_link_at(id: u32, col: u16, line: i32) -> Result<Option<String>, String> {
     Ok(entry(id)?.session.link_at(col, line))
@@ -553,4 +576,28 @@ pub fn terminal_list() -> Vec<SessionInfo> {
         .collect();
     out.sort_by_key(|s| s.id);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scrollback_for_new_sessions_stays_in_range() {
+        terminal_set_scrollback(0);
+        assert_eq!(scrollback(), 1);
+        terminal_set_scrollback(5_000_000);
+        assert_eq!(scrollback(), MAX_SCROLLBACK);
+        terminal_set_scrollback(50_000);
+        assert_eq!(scrollback(), 50_000);
+        terminal_set_scrollback(DEFAULT_SCROLLBACK as u32);
+    }
+
+    #[test]
+    fn frames_carry_underline_colours() {
+        let mut e = promptly_term::Emulator::new(TermSize::new(4, 1), Palette::promptly_dark());
+        e.feed(b"\x1b[4:3;58;2;1;2;3mx");
+        let frame: TerminalFrame = e.frame().into();
+        assert_eq!(frame.rows_changed[0].underline[0], 0x010203);
+    }
 }

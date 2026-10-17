@@ -59,6 +59,9 @@ abstract class Engine {
   /// a theme id from [themesList].
   int terminalOpenLocal({required int cols, required int rows, required String theme});
 
+  /// How many lines of history sessions opened from now on keep.
+  void terminalSetScrollback(int lines);
+
   /// Frames and lifecycle events for a session, in order.
   Stream<rust_term.TerminalEvent> terminalEvents(int id);
   void terminalWrite(int id, List<int> data);
@@ -289,6 +292,9 @@ class RustEngine implements Engine {
   @override
   int terminalOpenLocal({required int cols, required int rows, required String theme}) =>
       rust_term.terminalOpenLocal(cols: cols, rows: rows, theme: theme);
+
+  @override
+  void terminalSetScrollback(int lines) => rust_term.terminalSetScrollback(lines: lines);
 
   @override
   Stream<rust_term.TerminalEvent> terminalEvents(int id) => rust_term.terminalEvents(id: id);

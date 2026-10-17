@@ -10,6 +10,7 @@ import '../../core/engine/engine.dart' show TerminalMouseAction, TerminalMouseBu
 import '../../core/platform.dart';
 import '../workspace/app_shortcuts.dart';
 import 'key_mapper.dart';
+import 'link_kind.dart';
 import 'terminal_controller.dart';
 import 'terminal_grid.dart';
 import 'terminal_painter.dart';
@@ -44,7 +45,8 @@ class TerminalView extends StatefulWidget {
   /// search bar.
   final VoidCallback? onFind;
 
-  /// Ctrl+click (or Cmd+click) on a link, and "Open link" in the menu.
+  /// Ctrl+click (or Cmd+click) on a link, file path or address, and "Open
+  /// link" in the menu. [linkKind] tells which it is.
   final void Function(String uri)? onOpenLink;
 
   /// Take typed text from the platform's soft keyboard (the IME) as well
@@ -488,12 +490,12 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     return (col: col, line: line, right: right);
   }
 
-  /// True when the cell holds part of a link.
+  /// True when the cell holds part of a link, file path or address.
   bool _isLinkCell(_Cell cell) {
     final grid = widget.controller.grid;
     if (cell.line < 0 || cell.line >= grid.lines.length) return false;
     final row = grid.lines[cell.line];
-    return cell.col < row.flags.length && (row.flags[cell.col] & CellFlags.link) != 0;
+    return cell.col < row.flags.length && (row.flags[cell.col] & CellFlags.clickable) != 0;
   }
 
   void _onHover(PointerHoverEvent e) {
@@ -628,13 +630,14 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   Future<void> _showContextMenu(Offset global, _Cell cell) async {
     final hasSelection = widget.controller.selectionText()?.isNotEmpty == true;
     final link = _isLinkCell(cell) ? widget.controller.linkAt(cell.col, cell.line) : null;
+    final kind = link == null ? null : linkKind(link);
     final choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
       items: [
-        if (link != null) ...[
-          const PopupMenuItem(value: 'open-link', child: Text('Open link')),
-          const PopupMenuItem(value: 'copy-link', child: Text('Copy link')),
+        if (kind != null) ...[
+          if (kind == LinkKind.web) const PopupMenuItem(value: 'open-link', child: Text('Open link')),
+          PopupMenuItem(value: 'copy-link', child: Text(copyLabel(kind))),
           const PopupMenuDivider(),
         ],
         PopupMenuItem(value: 'copy', enabled: hasSelection, child: const Text('Copy')),

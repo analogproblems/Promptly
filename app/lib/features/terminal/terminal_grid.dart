@@ -18,27 +18,35 @@ abstract final class CellFlags {
   static const selected = 1 << 11;
   static const match = 1 << 12;
   static const link = 1 << 13;
+  static const pathOrAddress = 1 << 14;
 
   static const anyUnderline =
       underline | doubleUnderline | undercurl | dottedUnderline | dashedUnderline;
+
+  /// Anything that can be clicked: a link, a file path or an IP address.
+  static const clickable = link | pathOrAddress;
 }
 
 /// One row of cells. The lists are shared with the frame that delivered them;
 /// a row is replaced whole, never edited in place.
 class GridRow {
-  GridRow(this.glyphs, this.fg, this.bg, this.flags);
+  GridRow(this.glyphs, this.fg, this.bg, this.flags, this.underline);
 
   factory GridRow.blank(int cols, int fg, int bg) => GridRow(
         List<String>.filled(cols, ''),
         Uint32List(cols)..fillRange(0, cols, fg),
         Uint32List(cols)..fillRange(0, cols, bg),
         Uint16List(cols),
+        Uint32List(cols)..fillRange(0, cols, fg),
       );
 
   final List<String> glyphs;
   final Uint32List fg;
   final Uint32List bg;
   final Uint16List flags;
+
+  /// The colour to underline each cell in.
+  final Uint32List underline;
 }
 
 /// The app's mirror of the engine's screen. Frames update it; the painter
@@ -74,7 +82,7 @@ class TerminalGrid {
     }
     for (final r in f.rowsChanged) {
       if (r.line < rows) {
-        lines[r.line] = GridRow(r.glyphs, r.fg, r.bg, r.flags);
+        lines[r.line] = GridRow(r.glyphs, r.fg, r.bg, r.flags, r.underline);
       }
     }
     cursor = f.cursor;

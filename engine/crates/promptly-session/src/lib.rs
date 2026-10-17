@@ -8,12 +8,14 @@
 pub mod local;
 
 use std::io::{self, Read};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use promptly_term::{Emulator, EmulatorEvent, Frame, Palette, SearchHit, SelectKind, TermSize};
+use promptly_term::{
+    Emulator, EmulatorEvent, Frame, Palette, SearchHit, SelectKind, TermSize, DEFAULT_SCROLLBACK,
+};
 
 pub use local::LocalShell;
 
@@ -63,9 +65,20 @@ impl Session {
         palette: Palette,
         transport: Box<dyn Transport>,
     ) -> Self {
+        Self::with_scrollback(kind, size, palette, transport, DEFAULT_SCROLLBACK)
+    }
+
+    /// A session whose terminal keeps `scrollback` lines of history.
+    pub fn with_scrollback(
+        kind: SessionKind,
+        size: TermSize,
+        palette: Palette,
+        transport: Box<dyn Transport>,
+        scrollback: usize,
+    ) -> Self {
         Self {
             kind,
-            emulator: Mutex::new(Emulator::new(size, palette)),
+            emulator: Mutex::new(Emulator::with_scrollback(size, palette, scrollback)),
             transport: Mutex::new(transport),
             exited: Mutex::new(None),
             generation: AtomicU64::new(0),
@@ -242,16 +255,74 @@ impl Session {
 /// large file) into a few hundred frames a second at most.
 const MIN_FRAME_GAP: Duration = Duration::from_millis(6);
 
+type Emit = Arc<dyn Fn(SessionEvent) + Send + Sync>;
+
+/// Act on what the program asked for: replies go back to it, clipboard
+/// writes to the viewer. True when it asked the terminal to exit.
+fn deliver(session: &Session, events: Vec<EmulatorEvent>, emit: &Emit) -> bool {
+    let mut exit = false;
+    for event in events {
+        match event {
+            EmulatorEvent::PtyWrite(bytes) => {
+                if let Err(e) = session.transport.lock().unwrap().write(&bytes) {
+                    tracing::warn!("reply to program failed: {e}");
+                }
+            }
+            EmulatorEvent::ClipboardStore(text) => emit(SessionEvent::Clipboard(text)),
+            EmulatorEvent::Exit => exit = true,
+            EmulatorEvent::Title(_) | EmulatorEvent::Bell => {}
+        }
+    }
+    exit
+}
+
+/// Wait out a synchronized update that the program has not ended, then show
+/// it anyway. The read loop is blocked waiting for output meanwhile, so this
+/// runs on a thread of its own, one at a time per read loop: `armed` is set
+/// while it runs, and both sides change it only with the emulator locked.
+fn watch_sync(session: Arc<Session>, generation: u64, emit: Emit, armed: Arc<AtomicBool>) {
+    let spawned = thread::Builder::new().name("promptly-sync".into()).spawn({
+        let armed = armed.clone();
+        move || loop {
+            let mut emu = session.emulator.lock().unwrap();
+            let current = session.generation.load(Ordering::SeqCst) == generation;
+            let Some(deadline) = emu.sync_deadline().filter(|_| current) else {
+                armed.store(false, Ordering::SeqCst);
+                return;
+            };
+            let now = Instant::now();
+            if deadline > now {
+                drop(emu);
+                thread::sleep(deadline - now);
+                continue;
+            }
+            if let Some(events) = emu.end_stalled_sync(now) {
+                let exit = deliver(&session, events, &emit);
+                emit(SessionEvent::Frame(emu.frame()));
+                if exit {
+                    // The read loop sees the end and reports it.
+                    session.close();
+                }
+            }
+        }
+    });
+    if spawned.is_err() {
+        armed.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Run the read loop for `session` on a new thread. `emit` is called with
 /// every event, in order, until `Exited`.
 pub fn pump(
     session: Arc<Session>,
     mut reader: Box<dyn Read + Send>,
-    emit: impl Fn(SessionEvent) + Send + 'static,
+    emit: impl Fn(SessionEvent) + Send + Sync + 'static,
 ) -> JoinHandle<()> {
     // Taken now, not on the new thread, so a reader handed over just before a
     // reconnect can't adopt the newer transport's number.
     let generation = session.generation.load(Ordering::SeqCst);
+    let emit: Emit = Arc::new(emit);
+    let sync_watched = Arc::new(AtomicBool::new(false));
     thread::Builder::new()
         .name("promptly-session".into())
         .spawn(move || {
@@ -283,24 +354,20 @@ pub fn pump(
                     return;
                 }
                 let events = emu.feed(&buf[..n]);
-                let mut exit = false;
-                for event in events {
-                    match event {
-                        EmulatorEvent::PtyWrite(bytes) => {
-                            if let Err(e) = session.transport.lock().unwrap().write(&bytes) {
-                                tracing::warn!("reply to program failed: {e}");
-                            }
-                        }
-                        EmulatorEvent::ClipboardStore(text) => emit(SessionEvent::Clipboard(text)),
-                        EmulatorEvent::Exit => exit = true,
-                        EmulatorEvent::Title(_) | EmulatorEvent::Bell => {}
-                    }
-                }
+                let exit = deliver(&session, events, &emit);
                 emit(SessionEvent::Frame(emu.frame()));
                 if exit {
                     // Still ours while the emulator is locked.
                     session.close();
                     break;
+                }
+                if emu.sync_deadline().is_some() && !sync_watched.swap(true, Ordering::SeqCst) {
+                    watch_sync(
+                        session.clone(),
+                        generation,
+                        emit.clone(),
+                        sync_watched.clone(),
+                    );
                 }
                 drop(emu);
                 last = Instant::now();
@@ -462,6 +529,70 @@ mod tests {
         shell.write(&vec![b'x'; 1 << 20]).unwrap();
         assert!(started.elapsed() < Duration::from_secs(1));
         shell.close();
+    }
+
+    /// A reader fed by a channel; ends when the sender goes.
+    struct Feed(mpsc::Receiver<Vec<u8>>);
+
+    impl Read for Feed {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let Ok(bytes) = self.0.recv() else {
+                return Ok(0);
+            };
+            buf[..bytes.len()].copy_from_slice(&bytes);
+            Ok(bytes.len())
+        }
+    }
+
+    /// A transport that goes nowhere.
+    struct Nowhere;
+
+    impl Transport for Nowhere {
+        fn write(&mut self, _: &[u8]) -> io::Result<()> {
+            Ok(())
+        }
+        fn resize(&mut self, _: TermSize) -> io::Result<()> {
+            Ok(())
+        }
+        fn exit_code(&mut self) -> Option<i32> {
+            None
+        }
+        fn close(&mut self) {}
+    }
+
+    #[test]
+    fn a_synchronized_update_left_open_is_shown_while_the_program_is_quiet() {
+        let session = Arc::new(Session::with_scrollback(
+            SessionKind::Ssh { host: "t".into() },
+            TermSize::new(20, 3),
+            Palette::promptly_dark(),
+            Box::new(Nowhere),
+            100,
+        ));
+        let (input, output) = mpsc::channel();
+        let (tx, rx) = mpsc::channel();
+        let _h = pump(session.clone(), Box::new(Feed(output)), move |e| {
+            let _ = tx.send(e);
+        });
+        // Begin an update, draw, and then say nothing more.
+        input.send(b"\x1b[?2026hdrawn".to_vec()).unwrap();
+        let started = Instant::now();
+        loop {
+            match rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(SessionEvent::Frame(f)) => {
+                    if f.rows_changed.iter().any(|r| r.glyphs[0] == "d") {
+                        break;
+                    }
+                }
+                Ok(other) => panic!("unexpected {other:?}"),
+                Err(_) => panic!("the screen stayed frozen"),
+            }
+        }
+        let waited = started.elapsed();
+        assert!(waited >= Duration::from_millis(100), "held back first");
+        assert!(waited < Duration::from_secs(1), "but not for long");
+        assert!(session.screen_text().starts_with("drawn"));
+        drop(input);
     }
 
     /// A reader that ends when told to.

@@ -25,6 +25,10 @@ pub mod flags {
     pub const MATCH: u16 = 1 << 12;
     /// This cell is part of a link: an OSC 8 hyperlink or a URL in the text.
     pub const LINK: u16 = 1 << 13;
+    /// This cell is part of a file path or IP address in the text. It can be
+    /// clicked like a link but is not underlined, since paths are everywhere
+    /// (the prompt, `ls -l`) and would make the screen busy.
+    pub const PATH_OR_ADDRESS: u16 = 1 << 14;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +57,9 @@ pub struct RowUpdate {
     pub fg: Vec<Rgb>,
     pub bg: Vec<Rgb>,
     pub flags: Vec<u16>,
+    /// The underline colour per column: the one the program set (SGR 58)
+    /// or else the text colour.
+    pub underline: Vec<Rgb>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
