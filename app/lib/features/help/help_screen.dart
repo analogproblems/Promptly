@@ -79,7 +79,7 @@ class HelpScreen extends ConsumerWidget {
           HelpSection(
             title: 'More',
             children: [
-              HelpLink(icon: Icons.menu_book_outlined, title: 'User guide', subtitle: 'The documentation site', url: AppLinks.website),
+              HelpLink(icon: Icons.menu_book_outlined, title: 'User guide', subtitle: 'Everything Promptly does, step by step', url: AppLinks.guide),
               HelpLink(icon: Icons.bug_report_outlined, title: 'Report a problem', subtitle: 'Issues on GitHub', url: AppLinks.issues),
               HelpLink(icon: Icons.code_outlined, title: 'Source code', subtitle: 'MIT licensed, open to read', url: AppLinks.source),
               HelpLink(icon: Icons.privacy_tip_outlined, title: 'Privacy', subtitle: 'Nothing leaves this device unless you set up sync', url: AppLinks.privacy),

@@ -6,6 +6,8 @@ Promptly is a terminal emulator and SSH client for phone, tablet and desktop. It
 
 Everything you set up in Promptly lives in an encrypted **vault**: a small folder of files that Promptly keeps wherever you already keep files. iCloud Drive, Google Drive, Dropbox, OneDrive, a WebDAV share, an S3 bucket, or an SSH server you already own. Promptly runs no servers, needs no account, and has nothing to charge you for every month.
 
+**New to Promptly?** The [user guide](docs/GUIDE.md) covers installing it, connecting to your first server, and everything after.
+
 ## Keyboard shortcuts on desktop
 
 | Keys | What |

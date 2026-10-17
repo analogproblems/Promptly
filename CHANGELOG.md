@@ -4,6 +4,7 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 
 ## Unreleased
 
+- A new user guide covers installing Promptly and every feature, step by step, and **User guide** in Help now opens it.
 - The mouse works in full-screen programs that ask for it, such as vim with `mouse=a`, tmux and htop: clicks, drags and the wheel go to the program. Hold Shift to select text or scroll as before.
 - Sync no longer loses changes when a synced folder delivers files out of order, or when a device leaves the vault and joins again. Removing a device waits until all of its changes have arrived, and changing the vault passphrase can no longer leave the folder without its key file.
 - Cancelling an SSH connection really stops it. Checking a new server's fingerprint has no time limit, a reconnect is no longer undone by the old connection closing late, and Stop on automatic reconnect stays stopped.

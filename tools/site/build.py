@@ -23,9 +23,9 @@ REPO_URL = "https://github.com/analogproblems/Promptly"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Navigation order; any other docs/*.md file still gets a page.
-NAV = ["README.md", "docs/DESIGN.md", "docs/ROADMAP.md", "docs/DISTRIBUTION.md",
+NAV = ["README.md", "docs/GUIDE.md", "docs/DESIGN.md", "docs/ROADMAP.md", "docs/DISTRIBUTION.md",
        "docs/DEVELOPMENT.md", "docs/VAULT.md", "docs/PRIVACY.md", "CHANGELOG.md"]
-NAV_LABELS = {"README.md": "Home"}
+NAV_LABELS = {"README.md": "Home", "docs/GUIDE.md": "User guide"}
 
 
 def page_dir(source):
