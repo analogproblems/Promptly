@@ -29,10 +29,28 @@ fn is_local_only(fields: &Map<String, Value>) -> bool {
     fields.get("sync").and_then(Value::as_str) == Some("local_only")
 }
 
-fn secret_ref(fields: &Map<String, Value>, name: &str, out: &mut BTreeSet<(Collection, String)>) {
+fn secret_ref(fields: &Map<String, Value>, name: &str, out: &mut Vec<String>) {
     if let Some(id) = fields.get(name).and_then(Value::as_str) {
-        out.insert((Collection::Secrets, id.to_string()));
+        out.push(id.to_string());
     }
+}
+
+/// The saved passwords and private keys a host or key uses.
+pub fn secrets_used(col: Collection, fields: &Map<String, Value>) -> Vec<String> {
+    let mut out = Vec::new();
+    match col {
+        Collection::Hosts => {
+            if let Some(auth) = fields.get("auth").and_then(Value::as_object) {
+                secret_ref(auth, "password_secret_id", &mut out);
+            }
+        }
+        Collection::Identities => {
+            secret_ref(fields, "private_key_secret_id", &mut out);
+            secret_ref(fields, "passphrase_secret_id", &mut out);
+        }
+        _ => {}
+    }
+    out
 }
 
 /// Every record that must stay on this device: hosts and keys marked
@@ -40,20 +58,21 @@ fn secret_ref(fields: &Map<String, Value>, name: &str, out: &mut BTreeSet<(Colle
 /// local only themselves (such as a storage login).
 pub fn kept_on_device(state: &State) -> BTreeSet<(Collection, String)> {
     let mut out = BTreeSet::new();
+    let mut keep = |col: Collection, id: String, fields: &Map<String, Value>| {
+        for secret in secrets_used(col, fields) {
+            out.insert((Collection::Secrets, secret));
+        }
+        out.insert((col, id));
+    };
     for (id, fields) in state.list(Collection::Hosts) {
         if is_local_only(&fields) {
-            if let Some(auth) = fields.get("auth").and_then(Value::as_object) {
-                secret_ref(auth, "password_secret_id", &mut out);
-            }
-            out.insert((Collection::Hosts, id));
+            keep(Collection::Hosts, id, &fields);
         }
     }
     for (id, fields) in state.list(Collection::Identities) {
         let hardware = fields.get("hardware").is_some_and(|h| !h.is_null());
         if hardware || is_local_only(&fields) {
-            secret_ref(&fields, "private_key_secret_id", &mut out);
-            secret_ref(&fields, "passphrase_secret_id", &mut out);
-            out.insert((Collection::Identities, id));
+            keep(Collection::Identities, id, &fields);
         }
     }
     for (id, fields) in state.list(Collection::Secrets) {

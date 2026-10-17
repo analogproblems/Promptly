@@ -745,6 +745,14 @@ impl Store {
         })
     }
 
+    /// Encrypt the database under `key` from now on, for when the key it
+    /// is derived from changes. Only for a store opened with a key.
+    pub fn rekey(&self, key: &DbKey) -> Result<(), StoreError> {
+        let inner = self.inner.lock().unwrap();
+        inner.conn.pragma_update(None, "rekey", key.literal())?;
+        Ok(())
+    }
+
     /// Forget the sync markers, for when the vault is disconnected. The
     /// records and the clock stay.
     pub fn reset_sync_state(&self) -> Result<(), StoreError> {
@@ -1097,6 +1105,29 @@ mod tests {
         drop(plain);
         assert!(matches!(Store::open(&path, None), Err(StoreError::Locked)));
         assert!(connect(&path, Some(&DbKey::derive(&Dek::generate()))).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_rekeyed_database_opens_with_the_new_key_only() {
+        let dir = temp_dir("rekey");
+        let path = dir.join("promptly.db");
+        let (old, new) = (
+            DbKey::derive(&Dek::generate()),
+            DbKey::derive(&Dek::generate()),
+        );
+        let device;
+        {
+            let s = Store::open(&path, Some(&old)).unwrap();
+            device = s.device_id().clone();
+            s.put(Collection::Hosts, "h", HOST).unwrap();
+            s.rekey(&new).unwrap();
+            s.put(Collection::Hosts, "h2", HOST).unwrap();
+        }
+        assert!(connect(&path, Some(&old)).is_err());
+        let again = Store::open(&path, Some(&new)).unwrap();
+        assert_eq!(again.device_id(), &device, "the same database");
+        assert_eq!(again.list(Collection::Hosts).unwrap().len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

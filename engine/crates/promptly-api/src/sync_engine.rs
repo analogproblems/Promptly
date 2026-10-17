@@ -370,9 +370,27 @@ fn keep_on_device<'a>(
 ) -> Result<(Vault<'a>, KeptPlan), String> {
     let previous = saved_kept(store)?;
     let plan = store.with_state(|state| policy::plan_kept(state, &previous));
+    // A host or key going back takes the passwords and keys it uses along,
+    // even one saved before sync was set up, which has no record yet.
+    let mut back = plan.back.clone();
     for (col, id) in &plan.back {
+        let used = store.with_state(|state| {
+            state
+                .record(*col, id)
+                .map(|r| policy::secrets_used(*col, &r.visible_fields()))
+                .unwrap_or_default()
+        });
+        for secret in used {
+            let key = (Collection::Secrets, secret);
+            if !plan.kept.contains_key(&key) && !back.contains(&key) {
+                back.push(key);
+            }
+        }
+    }
+    for (col, id) in &back {
         match store.get(*col, id).map_err(|e| e.to_string())? {
-            Some(record) => {
+            // Only one that was kept here last time needs writing again.
+            Some(record) if plan.back.contains(&(*col, id.clone())) => {
                 store.delete(*col, id).map_err(|e| e.to_string())?;
                 store
                     .put(*col, id, &record.json)
@@ -381,6 +399,7 @@ fn keep_on_device<'a>(
                     mark_secret(store, id, store.newest_ts(*col, id).as_ref())?;
                 }
             }
+            Some(_) => {}
             // A password kept here from the start has no record yet.
             None if *col == Collection::Secrets => {
                 if let Some(value) = secrets().get(id).map_err(|e| e.to_string())? {
@@ -793,6 +812,11 @@ pub fn sync_once() -> Result<(), String> {
         }
         apply_pulled_secrets(&store, &dek)?;
         apply_pulled_known_hosts(&store)?;
+        // A key change that stopped part way: lock again whatever secrets
+        // are still under the old key, from this device's copies.
+        if config.snapshot_due {
+            reseal_secrets(&store, None, &dek)?;
+        }
         store.push(&vault).map_err(|e| e.to_string())?;
         // A snapshot now when records just left the vault (it carries their
         // tombstones) or one is owed after a key change.
@@ -954,8 +978,10 @@ pub fn recreate(passphrase: &str, params: promptly_vault::KdfParams) -> Result<S
 }
 
 /// Encrypt every saved secret again under `new`, from the record (opened
-/// with `old`) or, failing that, from the copy on this device.
-fn reseal_secrets(store: &Store, old: &Dek, new: &Dek) -> Result<(), String> {
+/// with `old`, when there is one) or, failing that, from the copy on this
+/// device. Records `new` opens already are left as they are, so this can
+/// run again after stopping part way.
+fn reseal_secrets(store: &Store, old: Option<&Dek>, new: &Dek) -> Result<(), String> {
     for r in store.list(Collection::Secrets).map_err(|e| e.to_string())? {
         let fields: serde_json::Value = serde_json::from_str(&r.json).map_err(|e| e.to_string())?;
         let kind = fields
@@ -964,11 +990,17 @@ fn reseal_secrets(store: &Store, old: &Dek, new: &Dek) -> Result<(), String> {
             .unwrap_or("password")
             .to_string();
         let aad = format!("secret/{}", r.id);
-        let from_record = fields
+        let ct = fields
             .get("ciphertext")
-            .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok())
-            .and_then(|ct| crypto::open(old, aad.as_bytes(), &ct).ok());
-        let value = match from_record {
+            .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok());
+        let opens = |dek: &Dek| {
+            ct.as_ref()
+                .and_then(|ct| crypto::open(dek, aad.as_bytes(), ct).ok())
+        };
+        if opens(new).is_some() {
+            continue;
+        }
+        let value = match old.and_then(opens) {
             Some(v) => Some(v),
             None => secrets().get(&r.id).map_err(|e| e.to_string())?,
         };
@@ -1017,33 +1049,50 @@ pub fn rotate_key(passphrase: &str, params: promptly_vault::KdfParams) -> Result
             SyncError::KeysChanged => "The vault's passphrase or key was changed on another device just now. Sync, then try again.".to_string(),
             other => other.to_string(),
         })?;
-    // The vault is locked with the new key from here on; keep it first.
-    secrets()
-        .put(DEK_SECRET_ID, B64.encode(vault.dek().0).as_bytes())
-        .map_err(|e| {
-            format!("The vault has a new key, but this device could not keep it ({e}). Type the passphrase on the Sync screen to unlock it again.")
-        })?;
-    config.manifest_keys = Some(manifest.keys_fingerprint());
-    config.recovery_hint = Some(code.hint());
-    config.snapshot_due = true;
-    save_config(&store, &config)?;
-    reseal_secrets(&store, &old_dek, vault.dek())?;
-    // Written now if the storage allows; otherwise the next sync does it.
-    let written = store
-        .push(&vault)
-        .and_then(|_| store.compact(&vault, true))
-        .map_err(|e| e.to_string());
-    match written {
-        Ok(_) => {
-            config.snapshot_due = false;
-            save_config(&store, &config)?;
-            save_kept(&store, &plan.kept)?;
-            let mut st = ENGINE.status.lock().unwrap();
+    // The vault is locked with the new key from here on, so the new code
+    // must reach the person whatever follows. Until the snapshot under the
+    // new key is out, the next sync finishes what is left: the secrets
+    // locked again from this device's copies, then the snapshot.
+    let mut trouble = None;
+    let mut note = |e: String| {
+        trouble.get_or_insert(e);
+    };
+    if let Err(e) = secrets().put(DEK_SECRET_ID, B64.encode(vault.dek().0).as_bytes()) {
+        // Nothing more under the old key: the next sync finds the key
+        // changed and asks for the passphrase, which locks everything again.
+        note(format!("The vault has a new key, but this device could not keep it ({e}). Type the passphrase on the Sync screen to unlock it again."));
+    } else {
+        config.manifest_keys = Some(manifest.keys_fingerprint());
+        config.recovery_hint = Some(code.hint());
+        config.snapshot_due = true;
+        if let Err(e) = save_config(&store, &config) {
+            note(e);
+        }
+        let written = reseal_secrets(&store, Some(&old_dek), vault.dek()).and_then(|_| {
+            store
+                .push(&vault)
+                .and_then(|_| store.compact(&vault, true))
+                .map_err(|e| e.to_string())
+        });
+        match written {
+            Ok(_) => {
+                config.snapshot_due = false;
+                if let Err(e) =
+                    save_config(&store, &config).and_then(|_| save_kept(&store, &plan.kept))
+                {
+                    note(e);
+                }
+            }
+            Err(e) => note(e),
+        }
+    }
+    {
+        let mut st = ENGINE.status.lock().unwrap();
+        if trouble.is_none() {
             st.last_sync_at = Some(promptly_vault::ops::now_rfc3339());
-            st.last_error = None;
             st.attention = None;
         }
-        Err(e) => ENGINE.status.lock().unwrap().last_error = Some(e),
+        st.last_error = trouble;
     }
     drop(guard);
     emit();
@@ -1410,6 +1459,36 @@ mod tests {
         sync_once().unwrap();
         assert_eq!(listed(&other, Collection::Hosts), ["h1"]);
 
+        // A password saved here before sync was set up has no record of
+        // its own; when its host goes into the vault, it goes too.
+        let secret_in = |vault: &Vault, id: &str| -> Option<Vec<u8>> {
+            let (mut sync, mut state) = (SyncState::default(), State::new());
+            let mut clock = Clock::new(DeviceId::generate());
+            vault.pull(&mut sync, &mut state, &mut clock).unwrap();
+            let (_, fields) = state
+                .list(Collection::Secrets)
+                .into_iter()
+                .find(|(i, _)| i == id)?;
+            let ct: Vec<u8> = serde_json::from_value(fields.get("ciphertext")?.clone()).ok()?;
+            crypto::open(vault.dek(), format!("secret/{id}").as_bytes(), &ct).ok()
+        };
+        let pw = "0192f3a0-0000-7000-8000-0000000000a1";
+        secrets().put(pw, b"hunter2").unwrap();
+        let with_password = |sync: &str| {
+            let json = json!({"id": "h3", "label": "h3", "hostname": "h", "sync": sync,
+                "auth": {"kind": "password", "password_secret_id": pw}});
+            store
+                .put(Collection::Hosts, "h3", &json.to_string())
+                .unwrap();
+        };
+        with_password("local_only");
+        sync_once().unwrap();
+        assert_eq!(secret_in(&other, pw), None);
+        with_password("vault");
+        sync_once().unwrap();
+        assert_eq!(listed(&other, Collection::Hosts), ["h1", "h3"]);
+        assert_eq!(secret_in(&other, pw).as_deref(), Some(&b"hunter2"[..]));
+
         // Another device, a phone, joins; then this one removes it. What
         // it wrote before counts, nothing after does.
         let vault_id = config().unwrap().unwrap().vault_id;
@@ -1531,6 +1610,22 @@ mod tests {
         let mine = |dir: &DeviceId| backend.list(&format!("devices/{dir}")).unwrap();
         let only_snapshots = |dir: &DeviceId| mine(dir).iter().all(|e| e.name.ends_with(".snap"));
         assert!(only_snapshots(&vault_device(&store)));
+        assert_eq!(secret_in(&rotated, pw).as_deref(), Some(&b"hunter2"[..]));
+
+        // A key change that stopped before every secret was locked again:
+        // the next sync finishes it, then writes the snapshot it owes.
+        let stale =
+            crypto::seal(other.dek(), format!("secret/{pw}").as_bytes(), b"hunter2").unwrap();
+        let record = json!({"id": pw, "kind": "password", "ciphertext": stale, "sync": "vault"});
+        store
+            .put(Collection::Secrets, pw, &record.to_string())
+            .unwrap();
+        let mut owed = config().unwrap().unwrap();
+        owed.snapshot_due = true;
+        save_config(&store, &owed).unwrap();
+        sync_once().unwrap();
+        assert_eq!(secret_in(&rotated, pw).as_deref(), Some(&b"hunter2"[..]));
+        assert!(!config().unwrap().unwrap().snapshot_due);
 
         // Then the laptop gives it another: this device asks for the
         // passphrase, and with it carries on under the newest key.
