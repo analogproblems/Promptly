@@ -4,6 +4,7 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 
 ## Unreleased
 
+- A new user guide covers installing Promptly and every feature, step by step, and **User guide** in Help now opens it.
 - Windows has an installer. It installs for you alone, with no administrator prompt, and adds Promptly to the Start menu and to Settings, Apps for uninstalling. The zip is still there for anyone who prefers it.
 - Promptly can tell you about new versions. Press *Check* on the About page, or turn on *Check for updates automatically* in Settings to have it look once a day (off by default). On Windows, when installed with the installer, *Update and restart* installs the new version and opens it again; elsewhere it opens the download page.
 - Search highlights the match it is on in solid yellow, with the other matches in a softer yellow, so the current one is easy to spot. Searching for text that repeats inside itself, such as "22" in "222", no longer shows "0 of 1" or a half-highlighted match.

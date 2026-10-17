@@ -57,7 +57,7 @@ class AboutScreen extends ConsumerWidget {
           HelpSection(
             title: 'Project',
             children: [
-              HelpLink(icon: Icons.menu_book_outlined, title: 'User guide', subtitle: AppLinks.website, url: AppLinks.website),
+              HelpLink(icon: Icons.menu_book_outlined, title: 'User guide', subtitle: AppLinks.guide, url: AppLinks.guide),
               HelpLink(icon: Icons.code_outlined, title: 'Source code', subtitle: AppLinks.source, url: AppLinks.source),
               HelpLink(icon: Icons.bug_report_outlined, title: 'Report a problem', subtitle: AppLinks.issues, url: AppLinks.issues),
               HelpLink(icon: Icons.privacy_tip_outlined, title: 'Privacy policy', subtitle: AppLinks.privacy, url: AppLinks.privacy),
