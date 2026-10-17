@@ -511,7 +511,12 @@ pub async fn connect_handle(
 
     prompter.progress(ConnectStep::Authenticating);
     authenticate(&mut handle, params, &prompter).await?;
-    Ok(Connection::new(handle, hops, remote_targets))
+    let server = format!(
+        "{}:{}",
+        params.endpoint.host.to_ascii_lowercase(),
+        params.endpoint.port
+    );
+    Ok(Connection::new(handle, hops, remote_targets, server))
 }
 
 /// The client settings for one hop.

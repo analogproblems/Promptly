@@ -588,7 +588,7 @@ Each item's **⋮** menu offers:
 
 ### Copying files between your computer and the server
 
-On a computer, the file browser shows two panes: your own files on the left and the server's on the right. **Drag** a file from one side to the other to copy it into the folder open there, or use **Download to this device** or **Upload to the server** from its **⋮** menu. A **Transfers** bar at the bottom shows each copy's progress; tap **✕** beside one to stop it, or **Clear finished** to tidy the list. When you stop a copy, Promptly removes the part it had copied, and tells you if it can't. While that happens, another copy to the same place waits its turn.
+On a computer, the file browser shows two panes: your own files on the left and the server's on the right. **Drag** a file from one side to the other to copy it into the folder open there, or use **Download to this device** or **Upload to the server** from its **⋮** menu. A **Transfers** bar at the bottom shows each copy's progress; tap **✕** beside one to stop it, or **Clear finished** to tidy the list. When you stop a copy, Promptly removes the part it had copied, and tells you if it can't. Until that is done, Promptly won't start another copy to the same place. If you stop a copy at the very moment it opens the file it writes to, that file can be left empty: Promptly leaves it alone rather than risk removing a file that was there before.
 
 <img src="screenshots/m3-files-dual-pane.png" alt="The file browser on a computer: this device's files on the left, the server's on the right, and a finished transfer" width="640">
 

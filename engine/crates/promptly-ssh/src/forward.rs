@@ -95,6 +95,7 @@ pub struct Connection {
     /// knows where a `forwarded-tcpip` channel should go.
     remote_targets: Targets,
     forwards: Mutex<Vec<ForwardState>>,
+    server: String,
 }
 
 impl Connection {
@@ -102,13 +103,21 @@ impl Connection {
         handle: client::Handle<Handler>,
         hops: Vec<Arc<client::Handle<Handler>>>,
         remote_targets: Targets,
+        server: String,
     ) -> Self {
         Self {
             handle: Arc::new(handle),
             hops,
             remote_targets,
             forwards: Mutex::new(Vec::new()),
+            server,
         }
+    }
+
+    /// The server this reaches, as `host:port`, to tell one server's files
+    /// from another's.
+    pub fn server(&self) -> &str {
+        &self.server
     }
 
     pub fn handle(&self) -> &Arc<client::Handle<Handler>> {

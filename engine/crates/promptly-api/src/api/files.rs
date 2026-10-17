@@ -41,6 +41,8 @@ pub struct FileTransfer {
 
 struct Browser {
     fs: Arc<RemoteFs>,
+    /// Which server the files are on, as `host:port`.
+    server: String,
     transfers: Arc<Transfers>,
 }
 
@@ -87,6 +89,7 @@ pub fn files_open(session_id: u32) -> Result<u32, String> {
         id,
         Arc::new(Browser {
             fs: Arc::new(fs),
+            server: conn.server().to_string(),
             transfers: Arc::default(),
         }),
     );
@@ -207,7 +210,7 @@ pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Re
     let b = browser(id)?;
     let name = remote.rsplit('/').next().unwrap_or(&remote).to_string();
     let fs = b.fs.clone();
-    let partial = Partial::Remote(remote.clone());
+    let partial = Partial::Remote(b.server.clone(), remote.clone());
     b.transfers
         .spawn(name, true, partial, move |progress| async move {
             fs.upload(&PathBuf::from(local), &remote, replace, progress)
@@ -228,7 +231,7 @@ pub fn files_cancel_transfer(id: u32, transfer: u32) -> Result<(), String> {
                 Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
                 _ => Ok(()),
             },
-            Partial::Remote(path) => fs.remove_file(&path).await.map_err(friendly),
+            Partial::Remote(_, path) => fs.remove_file(&path).await.map_err(friendly),
         }
     });
     Ok(())

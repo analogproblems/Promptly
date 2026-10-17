@@ -27,7 +27,8 @@ fn release(dest: &Partial) {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Partial {
     Local(PathBuf),
-    Remote(String),
+    /// A path on the server named first (`host:port`).
+    Remote(String, String),
 }
 
 /// A copy still going: how to stop it, and what to tidy up if it is.
@@ -239,9 +240,12 @@ mod tests {
     fn a_failed_copy_keeps_its_message() {
         let transfers = Arc::new(Transfers::default());
         transfers
-            .spawn("b".into(), true, Partial::Remote("/b".into()), |_| async {
-                Err("The server would not allow that.".to_string())
-            })
+            .spawn(
+                "b".into(),
+                true,
+                Partial::Remote("h:22".into(), "/b".into()),
+                |_| async { Err("The server would not allow that.".to_string()) },
+            )
             .unwrap();
         wait_for(|| transfers.snapshot()[0].finished);
         let s = &transfers.snapshot()[0];
@@ -271,7 +275,7 @@ mod tests {
             .spawn(
                 "big.iso".into(),
                 true,
-                Partial::Remote("/srv/big.iso".into()),
+                Partial::Remote("h:22".into(), "/srv/big.iso".into()),
                 |progress| async move {
                     progress(0, 100);
                     // Never finishes by itself.
@@ -290,7 +294,7 @@ mod tests {
         assert!(tx.is_closed());
         assert_eq!(
             *log.lock().unwrap(),
-            [Partial::Remote("/srv/big.iso".into())]
+            [Partial::Remote("h:22".into(), "/srv/big.iso".into())]
         );
         // Still tidying, so not yet shown as cancelled, and nothing else may
         // write there yet: the tidying would remove it.
@@ -299,11 +303,20 @@ mod tests {
             transfers.spawn(
                 "big.iso".into(),
                 true,
-                Partial::Remote("/srv/big.iso".into()),
+                Partial::Remote("h:22".into(), "/srv/big.iso".into()),
                 |_| async { Ok(0) },
             )
         };
         assert!(again(&transfers).unwrap_err().contains("still running"));
+        // The same path on another server is another place.
+        transfers
+            .spawn(
+                "big.iso".into(),
+                true,
+                Partial::Remote("other:22".into(), "/srv/big.iso".into()),
+                |_| async { Ok(0) },
+            )
+            .unwrap();
         release.send(Ok(())).unwrap();
         wait_for(|| transfers.snapshot()[0].finished);
         let s = &transfers.snapshot()[0];
@@ -355,7 +368,7 @@ mod tests {
             .spawn(
                 "x".into(),
                 true,
-                Partial::Remote("/srv/x".into()),
+                Partial::Remote("h:22".into(), "/srv/x".into()),
                 |_| async move {
                     let _ = rx.await;
                     Ok(0)
