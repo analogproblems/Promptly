@@ -279,7 +279,8 @@ pub fn sftp_params(store: &Store, host_id: &str) -> Result<(ConnectParams, Strin
             password_secret_id: None,
         }
         | Auth::Agent
-        | Auth::Interactive => {
+        | Auth::Interactive
+        | Auth::None => {
             return Err(format!(
                 "Sync needs a stored login: edit {} and save a password or pick a key.",
                 host.label

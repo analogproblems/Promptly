@@ -357,6 +357,7 @@ class _HostRow extends StatelessWidget {
       AuthKind.password => host.auth.passwordSecretId != null ? 'password saved' : 'password',
       AuthKind.agent => 'agent',
       AuthKind.interactive => 'ask',
+      AuthKind.none => 'no login',
     };
     final r = reach;
     final reachLabel = !reachOn

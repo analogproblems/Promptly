@@ -9,7 +9,7 @@ import 'host_colors.dart';
 import 'models.dart';
 import 'repositories.dart';
 
-enum _AuthChoice { password, key, agent, ask }
+enum _AuthChoice { password, key, agent, ask, none }
 
 /// Add or edit a host. Saves to the engine's store; passwords go to the
 /// secret store under an id the host record points at.
@@ -75,6 +75,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
       AuthKind.identity => _AuthChoice.key,
       AuthKind.password => _AuthChoice.password,
       AuthKind.agent => _AuthChoice.agent,
+      AuthKind.none => _AuthChoice.none,
       _ => _AuthChoice.ask,
     };
     _rememberPassword = _original.auth.passwordSecretId != null;
@@ -128,6 +129,8 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
         auth = const HostAuth(kind: AuthKind.agent);
       case _AuthChoice.ask:
         auth = const HostAuth(kind: AuthKind.interactive);
+      case _AuthChoice.none:
+        auth = const HostAuth(kind: AuthKind.none);
     }
 
     final host = _original.copyWith(
@@ -324,6 +327,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                         ButtonSegment(value: _AuthChoice.key, label: Text('Key')),
                         ButtonSegment(value: _AuthChoice.agent, label: Text('Agent')),
                         ButtonSegment(value: _AuthChoice.ask, label: Text('Ask each time')),
+                        ButtonSegment(value: _AuthChoice.none, label: Text('None')),
                       ],
                       selected: {_auth},
                       onSelectionChanged: (s) => setState(() => _auth = s.first),
@@ -365,7 +369,13 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                             ),
                     if (_auth == _AuthChoice.ask)
                       Text(
-                        'The server decides: a password prompt, a two-factor code, or both.',
+                        'The server decides: a password prompt, a two-factor code, or both. '
+                        'If it needs nothing, you go straight in.',
+                        style: TextStyle(color: t.muted, fontSize: 13),
+                      ),
+                    if (_auth == _AuthChoice.none)
+                      Text(
+                        'For servers that check who you are another way, like Tailscale SSH.',
                         style: TextStyle(color: t.muted, fontSize: 13),
                       ),
                   ],
