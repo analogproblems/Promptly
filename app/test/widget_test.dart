@@ -310,8 +310,22 @@ class FakeEngine implements Engine {
         error: null,
       );
 
+  /// When set, SSH attempts stop after their first step until [finishHeld].
+  bool holdConnects = false;
+  final Map<int, StreamController<SshEvent>> _held = {};
+
+  void finishHeld(int attemptId) => _held.remove(attemptId)!
+    ..add(_connected(connectedSessionId!))
+    ..close();
+
   @override
   Stream<SshEvent> sshConnectEvents(int attemptId) {
+    if (holdConnects) {
+      final events = StreamController<SshEvent>();
+      _held[attemptId] = events;
+      events.add(const SshEvent(kind: SshEventKind.progress, step: SshStep.connecting, secretForKey: false));
+      return events.stream;
+    }
     if (failWith case final fail?) {
       return Stream.fromIterable([
         const SshEvent(kind: SshEventKind.progress, step: SshStep.connecting, secretForKey: false),
@@ -1360,6 +1374,29 @@ void main() {
       expect(find.text('deploy@web-1: ~'), findsOneWidget);
     });
 
+    testWidgets('a try already under way on coming back is left to finish', (tester) async {
+      touchPlatformOverride = true;
+      addTearDown(() => touchPlatformOverride = null);
+      final engine = await connected(tester);
+      away(tester);
+      engine.holdConnects = true;
+      engine.laterFrames.add(dropped);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(engine.requests, hasLength(2), reason: 'the first try started while away');
+
+      back(tester);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(engine.requests, hasLength(2), reason: 'no second try on top of it');
+      expect(engine.cancelledAttempts, isEmpty);
+      engine.finishHeld(2);
+      await tester.pumpAndSettle();
+      expect(find.text('Connection dropped'), findsNothing);
+      expect(find.text('deploy@web-1: ~'), findsOneWidget);
+    });
+
     testWidgets('one whose tries ran out while away tries again on coming back', (tester) async {
       touchPlatformOverride = true;
       addTearDown(() => touchPlatformOverride = null);
@@ -1446,6 +1483,41 @@ void main() {
       engine.laterFrames.add(dropped);
       await tester.pumpAndSettle();
       expect(told, [1, 2, 1, 0]);
+    });
+
+    testWidgets('on Android the service stays up while an SSH session reconnects', (tester) async {
+      androidOverride = true;
+      touchPlatformOverride = true;
+      addTearDown(() {
+        androidOverride = null;
+        touchPlatformOverride = null;
+      });
+      final told = <Object?>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SessionsInBackground.channel, (call) async {
+        if (call.method == 'keepAlive') told.add(call.arguments);
+        return null;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SessionsInBackground.channel, null),
+      );
+      final engine = await connected(tester);
+      expect(told, [1]);
+      // In case Android would not start it from the background, it is told
+      // again on coming back, though the count is the same.
+      away(tester);
+      back(tester);
+      await tester.pump();
+      expect(told, [1, 1]);
+
+      engine.laterFrames.add(dropped);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('Connection dropped'), findsOneWidget);
+      expect(told, [1, 1], reason: 'no stop between the drop and the first try');
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(find.text('deploy@web-1: ~'), findsOneWidget);
+      expect(told, [1, 1]);
     });
 
     testWidgets('on a phone two fingers switch sessions and pinch the text size', (tester) async {

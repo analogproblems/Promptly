@@ -46,8 +46,8 @@ class MainActivity : FlutterFragmentActivity() {
         try {
             startForegroundService(service.putExtra(SessionService.EXTRA_OPEN, open))
         } catch (e: IllegalStateException) {
-            // Android refuses to start one from the background; the next
-            // change made with the app in front starts it.
+            // Android refuses to start one from the background; the app
+            // asks again when it comes back to the front.
         }
     }
 

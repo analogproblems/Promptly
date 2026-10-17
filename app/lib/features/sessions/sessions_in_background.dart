@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,8 +29,9 @@ class _SessionsInBackgroundState extends ConsumerState<SessionsInBackground> {
   late final AppLifecycleListener _lifecycle;
   List<SessionEntry> _watched = const [];
 
-  /// The count the service was last given.
-  int _told = 0;
+  /// The count the service was last given; null when it needs telling again.
+  int? _told = 0;
+  bool _countDue = false;
 
   @override
   void initState() {
@@ -57,6 +60,12 @@ class _SessionsInBackgroundState extends ConsumerState<SessionsInBackground> {
         sessions.appPaused();
       case AppLifecycleState.resumed:
         sessions.appResumed();
+        if (isAndroid) {
+          // Android does not let the service start from the background, so
+          // one that should have started then starts now.
+          _told = null;
+          _count();
+        }
       case AppLifecycleState.inactive:
       case AppLifecycleState.detached:
         break;
@@ -79,7 +88,19 @@ class _SessionsInBackgroundState extends ConsumerState<SessionsInBackground> {
   /// Connecting, live or reconnecting: worth keeping the app running for.
   static bool _open(SessionEntry e) => e.isConnecting || e.reconnecting || e.controller?.exited == false;
 
+  /// Count once the current change has settled: a dropped session ends
+  /// and then starts reconnecting, and the service should never see the
+  /// passing 0 in between.
   void _count() {
+    if (_countDue) return;
+    _countDue = true;
+    scheduleMicrotask(() {
+      _countDue = false;
+      _tell();
+    });
+  }
+
+  void _tell() {
     final open = _watched.where(_open).length;
     if (open == _told) return;
     _told = open;

@@ -483,6 +483,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final sessionId = flow.sessionId;
     if (sessionId != null) {
       _givenUp.remove(entry.id);
+      _droppedAway.remove(entry.id);
       final existing = entry.controller;
       if (existing == null) {
         _attach(entry, engine, sessionId);
@@ -605,6 +606,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final entry = byId(id);
     if (entry == null) return;
     _givenUp.add(id);
+    _droppedAway.remove(id);
     _retryTimers.remove(id)?.cancel();
     entry.flow?.cancel();
     entry.clearReconnect();
@@ -628,6 +630,8 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     for (final entry in state) {
       final c = entry.controller;
       if (entry.isLocal || c == null || !c.exited || c.exitCode != null) continue;
+      final underWay = entry.reconnecting && entry.reconnectAt == null;
+      if (underWay) continue;
       final waiting = entry.reconnecting && entry.reconnectAt != null;
       if (waiting || dropped.contains(entry.id)) reconnectNow(entry.id);
     }
