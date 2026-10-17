@@ -25,13 +25,17 @@ Future<void> main() async {
   } catch (_) {
     // The engine falls back to a per-platform default.
   }
-  final deviceKey = await loadDeviceKey();
-  if (deviceKey != null) {
-    try {
-      rust_store.setDeviceKey(key: deviceKey);
-    } catch (_) {
-      // Secrets stay plain files, as on a device with no secure storage.
+  try {
+    switch (await loadDeviceKey()) {
+      case DeviceKeyReady(:final bytes):
+        rust_store.setDeviceKey(key: bytes);
+      case DeviceKeyRefused():
+        rust_store.setDeviceKeyUnavailable();
+      case DeviceKeyNoStorage():
+      // Secrets stay owner-only plain files, and Settings says so.
     }
+  } catch (_) {
+    // The engine opened its secret store already; nothing to change.
   }
   runApp(const ProviderScope(child: PromptlyApp()));
 }

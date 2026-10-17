@@ -125,7 +125,12 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
       case _AuthChoice.password:
         final secretId = _original.auth.passwordSecretId ?? newRecordId();
         if (_rememberPassword && _password.text.isNotEmpty) {
-          engine.secretPut(secretId, 'password', _password.text);
+          try {
+            engine.secretPut(secretId, 'password', _password.text);
+          } catch (e) {
+            setState(() => _error = 'Could not save the password: $e');
+            return;
+          }
           auth = HostAuth(kind: AuthKind.password, passwordSecretId: secretId);
         } else if (_rememberPassword && _original.auth.passwordSecretId != null) {
           auth = HostAuth(kind: AuthKind.password, passwordSecretId: secretId);

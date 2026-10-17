@@ -765,7 +765,7 @@ Promptly is open source, so anyone can check what it does. To report a security 
 
 **The key is rejected.** Make sure the public key is in `~/.ssh/authorized_keys` on the server, for the user you log in as, and that the host is set to use that key. On the server, `~/.ssh` should be readable only by you (`chmod 700 ~/.ssh` and `chmod 600 ~/.ssh/authorized_keys`).
 
-**Your Mac asks whether Promptly may use your keychain.** Promptly keeps the key that encrypts your saved passwords and keys in your login keychain. If macOS asks, for example after an update, enter your Mac password and choose **Always Allow**. If you deny it, Promptly can't read what it saved until you allow it.
+**Your Mac asks whether Promptly may use your keychain.** Promptly keeps the key that encrypts your saved passwords and keys in your login keychain. If macOS asks, for example after an update, enter your Mac password and choose **Always Allow**. If you deny it, or your keychain is locked, **Settings** says your saved passwords and keys are locked: Promptly won't use or save any until it can get its key, and never saves them unencrypted instead. Restart Promptly and allow it.
 
 **Saved passwords and keys stopped working after a system reset.** The key that encrypts them lives in your system's secure storage. If that was cleared (a reset keychain or keyring, or a phone restored without it), Promptly can't read them any more. Type the passwords again and re-import your keys; if you use sync, remove the device from another one and join the vault again.
 

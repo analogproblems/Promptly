@@ -26,8 +26,8 @@ import 'package:promptly/features/updates/updates.dart';
 class FakeEngine implements Engine {
   final Map<String, Map<String, String>> records = {};
 
-  /// Whether saved secrets are encrypted, as when the system has a keyring.
-  bool encrypted = true;
+  /// How saved secrets are kept; encrypted, as when the system has a keyring.
+  SecretsState secretsKept = SecretsState.encrypted;
   final Map<String, String> secrets = {};
   final Map<String, String> settings = {};
   int generated = 0;
@@ -50,7 +50,7 @@ class FakeEngine implements Engine {
   @override
   String ping(String name) => 'pong: $name';
   @override
-  bool secretsEncrypted() => encrypted;
+  SecretsState secretsState() => secretsKept;
 
   @override
   EndpointParse parseEndpoint(String input) {
@@ -2004,22 +2004,26 @@ void main() {
     expect(updates.checks, 2);
   });
 
-  testWidgets('Settings warns only when saved secrets cannot be encrypted', (tester) async {
+  testWidgets('Settings says when saved secrets are not encrypted, or locked', (tester) async {
     final engine = FakeEngine();
     await tester.pumpWidget(appWith(engine));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
     await scrollTo(tester, find.byKey(const Key('settings-about')));
-    expect(find.byKey(const Key('secrets-plain'), skipOffstage: false), findsNothing);
+    expect(find.byKey(const Key('secrets-state'), skipOffstage: false), findsNothing);
 
-    final plain = FakeEngine()..encrypted = false;
-    await tester.pumpWidget(appWith(plain));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Settings').first);
-    await tester.pumpAndSettle();
-    await scrollTo(tester, find.byKey(const Key('secrets-plain')));
-    expect(find.text('Saved passwords and keys are not encrypted'), findsOneWidget);
+    for (final (state, text) in [
+      (SecretsState.plain, 'Saved passwords and keys are not encrypted'),
+      (SecretsState.locked, 'Saved passwords and keys are locked'),
+    ]) {
+      await tester.pumpWidget(appWith(FakeEngine()..secretsKept = state));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Settings').first);
+      await tester.pumpAndSettle();
+      await scrollTo(tester, find.byKey(const Key('secrets-state')));
+      expect(find.text(text), findsOneWidget);
+    }
   });
 
   testWidgets('every main screen lays out at double text size without overflowing', (tester) async {

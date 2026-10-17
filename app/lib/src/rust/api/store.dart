@@ -7,7 +7,8 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collection`, `secret_store`, `secrets`, `store`, `validate`
+// These functions are ignored because they are not marked as `pub`: `collection`, `secret_store`, `secrets`, `set_key`, `store`, `validate`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `DeviceKey`
 
 /// Hand the engine the device key from the platform's secure storage, so
 /// saved secrets are encrypted on disk. Call once at startup, before
@@ -15,10 +16,13 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 void setDeviceKey({required List<int> key}) =>
     RustLib.instance.api.crateApiStoreSetDeviceKey(key: key);
 
-/// Whether saved passwords, keys and the vault key are encrypted on this
-/// device. False only when the platform has no secure storage to hold the
-/// device key.
-bool secretsEncrypted() => RustLib.instance.api.crateApiStoreSecretsEncrypted();
+/// Tell the engine the platform's secure storage exists but would not give
+/// up the device key (denied, locked or damaged). Saved secrets are then
+/// neither read nor written until the app restarts with the key.
+void setDeviceKeyUnavailable() =>
+    RustLib.instance.api.crateApiStoreSetDeviceKeyUnavailable();
+
+SecretsState secretsState() => RustLib.instance.api.crateApiStoreSecretsState();
 
 List<StoreRecord> recordsList({required String collectionName}) => RustLib
     .instance
@@ -73,6 +77,18 @@ String? secretGet({required String id}) =>
 
 void secretDelete({required String id}) =>
     RustLib.instance.api.crateApiStoreSecretDelete(id: id);
+
+/// How saved passwords, keys and the vault key are kept on this device.
+enum SecretsState {
+  /// Encrypted with the device key.
+  encrypted,
+
+  /// Plain owner-only files: the system has no secure storage.
+  plain,
+
+  /// Neither read nor written: the secure storage refused the key.
+  locked,
+}
 
 class StoreRecord {
   final String id;

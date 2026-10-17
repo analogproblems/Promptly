@@ -33,7 +33,12 @@ pub(crate) fn store() -> Result<Arc<Store>, String> {
     Ok(s)
 }
 
-static DEVICE_KEY: Mutex<Option<Dek>> = Mutex::new(None);
+static DEVICE_KEY: Mutex<Option<DeviceKey>> = Mutex::new(None);
+
+enum DeviceKey {
+    Key(Dek),
+    Unavailable,
+}
 
 /// Hand the engine the device key from the platform's secure storage, so
 /// saved secrets are encrypted on disk. Call once at startup, before
@@ -41,6 +46,18 @@ static DEVICE_KEY: Mutex<Option<Dek>> = Mutex::new(None);
 #[frb(sync)]
 pub fn set_device_key(key: Vec<u8>) -> Result<(), String> {
     let key = Dek::from_slice(&key).ok_or("the device key must be 32 bytes")?;
+    set_key(DeviceKey::Key(key))
+}
+
+/// Tell the engine the platform's secure storage exists but would not give
+/// up the device key (denied, locked or damaged). Saved secrets are then
+/// neither read nor written until the app restarts with the key.
+#[frb(sync)]
+pub fn set_device_key_unavailable() -> Result<(), String> {
+    set_key(DeviceKey::Unavailable)
+}
+
+fn set_key(key: DeviceKey) -> Result<(), String> {
     if SECRETS.lock().unwrap().is_some() {
         return Err("the secret store is already open".into());
     }
@@ -48,12 +65,26 @@ pub fn set_device_key(key: Vec<u8>) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether saved passwords, keys and the vault key are encrypted on this
-/// device. False only when the platform has no secure storage to hold the
-/// device key.
+/// How saved passwords, keys and the vault key are kept on this device.
+pub enum SecretsState {
+    /// Encrypted with the device key.
+    Encrypted,
+    /// Plain owner-only files: the system has no secure storage.
+    Plain,
+    /// Neither read nor written: the secure storage refused the key.
+    Locked,
+}
+
 #[frb(sync)]
-pub fn secrets_encrypted() -> bool {
-    secret_store().is_encrypted()
+pub fn secrets_state() -> SecretsState {
+    let s = secret_store();
+    if s.is_locked() {
+        SecretsState::Locked
+    } else if s.is_encrypted() {
+        SecretsState::Encrypted
+    } else {
+        SecretsState::Plain
+    }
 }
 
 fn secret_store() -> Arc<FileSecretStore> {
@@ -62,8 +93,9 @@ fn secret_store() -> Arc<FileSecretStore> {
         return s.clone();
     }
     let dir = data_dir().join("secrets");
-    let s = Arc::new(match DEVICE_KEY.lock().unwrap().clone() {
-        Some(key) => FileSecretStore::encrypted(dir, key),
+    let s = Arc::new(match &*DEVICE_KEY.lock().unwrap() {
+        Some(DeviceKey::Key(key)) => FileSecretStore::encrypted(dir, key.clone()),
+        Some(DeviceKey::Unavailable) => FileSecretStore::locked(dir),
         None => FileSecretStore::new(dir),
     });
     *guard = Some(s.clone());

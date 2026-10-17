@@ -20,7 +20,7 @@ class RecordingEngine implements Engine {
   @override
   String ping(String name) => name;
   @override
-  bool secretsEncrypted() => true;
+  SecretsState secretsState() => SecretsState.encrypted;
   @override
   EndpointParse parseEndpoint(String input) => const EndpointError('n/a');
   @override
