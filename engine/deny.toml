@@ -1,0 +1,34 @@
+# cargo deny settings, checked in CI alongside cargo audit (DESIGN.md 8.4).
+# Security advisories are left to cargo audit and .cargo/audit.toml.
+
+[graph]
+all-features = true
+
+[licenses]
+# Licences that are fine to ship inside an MIT app.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Several crates are pulled in at two versions while the ecosystem moves;
+# report it but don't fail the build over it.
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+# Only crates.io: no git dependencies or other registries.
+unknown-registry = "deny"
+unknown-git = "deny"

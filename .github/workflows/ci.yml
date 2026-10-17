@@ -41,6 +41,13 @@ jobs:
       - name: Audit dependencies
         # Runs in engine/, so engine/.cargo/audit.toml (documented ignores) applies.
         run: cargo audit
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: Check dependency licences and sources
+        # engine/deny.toml: allowed licences, crates.io only, no wildcards.
+        run: cargo deny check licenses bans sources
 
   app-linux:
     name: Flutter app (Linux)

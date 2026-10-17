@@ -129,10 +129,7 @@ impl ConnectParams {
         let mut new_session = format!("exec tmux new-session -s {}", q(name));
         let mut fallback = String::new();
         if let Some(cmd) = startup.map(str::trim).filter(|c| !c.is_empty()) {
-            new_session.push_str(&format!(
-                " \\; send-keys -l {} \\; send-keys Enter",
-                q(cmd)
-            ));
+            new_session.push_str(&format!(" \\; send-keys -l {} \\; send-keys Enter", q(cmd)));
             fallback = format!("{cmd}\n");
         }
         let script = format!(
