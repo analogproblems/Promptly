@@ -11,6 +11,14 @@ import 'repositories.dart';
 
 enum _AuthChoice { password, key, agent, ask, none }
 
+const _authLabels = {
+  _AuthChoice.password: 'Password',
+  _AuthChoice.key: 'Key',
+  _AuthChoice.agent: 'Agent',
+  _AuthChoice.ask: 'Ask each time',
+  _AuthChoice.none: 'None',
+};
+
 /// Add or edit a host. Saves to the engine's store; passwords go to the
 /// secret store under an id the host record points at.
 class HostEditorScreen extends ConsumerStatefulWidget {
@@ -320,20 +328,28 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                 _Section(
                   title: 'Authentication',
                   children: [
-                    SegmentedButton<_AuthChoice>(
-                      showSelectedIcon: false,
-                      // Tighter than the default so "Password" fits on one
-                      // line in a phone-width segment.
-                      style: SegmentedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
-                      segments: const [
-                        ButtonSegment(value: _AuthChoice.password, label: Text('Password')),
-                        ButtonSegment(value: _AuthChoice.key, label: Text('Key')),
-                        ButtonSegment(value: _AuthChoice.agent, label: Text('Agent')),
-                        ButtonSegment(value: _AuthChoice.ask, label: Text('Ask each time')),
-                        ButtonSegment(value: _AuthChoice.none, label: Text('None')),
-                      ],
-                      selected: {_auth},
-                      onSelectionChanged: (s) => setState(() => _auth = s.first),
+                    // Five choices don't fit side by side on a phone without
+                    // breaking words, so narrow screens get a dropdown.
+                    LayoutBuilder(
+                      builder: (context, constraints) => constraints.maxWidth < 520
+                          ? DropdownButtonFormField<_AuthChoice>(
+                              initialValue: _auth,
+                              decoration: const InputDecoration(labelText: 'Sign in with'),
+                              items: [
+                                for (final c in _AuthChoice.values)
+                                  DropdownMenuItem(value: c, child: Text(_authLabels[c]!)),
+                              ],
+                              onChanged: (c) => setState(() => _auth = c ?? _auth),
+                            )
+                          : SegmentedButton<_AuthChoice>(
+                              showSelectedIcon: false,
+                              segments: [
+                                for (final c in _AuthChoice.values)
+                                  ButtonSegment(value: c, label: Text(_authLabels[c]!)),
+                              ],
+                              selected: {_auth},
+                              onSelectionChanged: (s) => setState(() => _auth = s.first),
+                            ),
                     ),
                     const SizedBox(height: 12),
                     if (_auth == _AuthChoice.password) ...[
