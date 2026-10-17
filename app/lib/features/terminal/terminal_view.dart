@@ -187,6 +187,23 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     c.write(c.encodeTyped(text));
   }
 
+  /// Text from the soft keyboard. Enter on its own is Enter; anything else
+  /// with a line break in it came from the keyboard's paste (or a dictated
+  /// paragraph) and goes through the same check and clean-up as any paste.
+  /// Control characters a keyboard should never produce are dropped.
+  void _imeText(String text) {
+    if (text == '\n' || text == '\r') {
+      _writeText('\r');
+    } else if (text.contains('\n') || text.contains('\r')) {
+      _pasteText(text);
+    } else {
+      final clean = text.replaceAll(_controlChars, '');
+      if (clean.isNotEmpty) _writeText(clean);
+    }
+  }
+
+  static final _controlChars = RegExp('[\x00-\x08\x0b-\x1f\x7f-\x9f]');
+
   @override
   TextEditingValue? get currentTextEditingValue => _imeValue;
 
@@ -198,12 +215,12 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     for (final d in deltas) {
       switch (d) {
         case TextEditingDeltaInsertion(:final textInserted):
-          _writeText(textInserted.replaceAll('\n', '\r'));
+          _imeText(textInserted);
         case TextEditingDeltaDeletion(:final oldText, :final deletedRange):
           _erase(_characters(oldText, deletedRange));
         case TextEditingDeltaReplacement(:final oldText, :final replacedRange, :final replacementText):
           _erase(_characters(oldText, replacedRange));
-          _writeText(replacementText.replaceAll('\n', '\r'));
+          _imeText(replacementText);
         case TextEditingDeltaNonTextUpdate():
           break;
       }
@@ -230,7 +247,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     if (common > 0 && (before.codeUnitAt(common - 1) & 0xFC00) == 0xD800) common--;
     _erase(before.substring(common).runes.length);
     final typed = after.substring(common);
-    if (typed.isNotEmpty) _writeText(typed.replaceAll('\n', '\r'));
+    if (typed.isNotEmpty) _imeText(typed);
     _imeValue = value;
     _trimImeBuffer();
   }
@@ -370,8 +387,15 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
 
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
-    var text = data?.text;
-    if (text == null || text.isEmpty) return;
+    final text = data?.text;
+    if (text == null || text.isEmpty || !mounted) return;
+    await _pasteText(text);
+  }
+
+  /// Paste [text]: shown first when the hook says so, then sent as a paste
+  /// (bracketed for programs that ask, control characters removed).
+  Future<void> _pasteText(String original) async {
+    String? text = original;
     final confirm = widget.confirmPaste;
     if (confirm != null) {
       text = await confirm(text);

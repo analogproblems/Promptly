@@ -44,4 +44,50 @@ void main() {
   testWidgets('pasting as it is keeps every newline', (tester) async {
     expect(await pasteThrough(tester, 'a\nb\n', tap: 'paste-confirm'), 'a\nb\n');
   });
+
+  testWidgets('cancel pastes nothing, and with the warning off nothing is asked', (tester) async {
+    expect(await pasteThrough(tester, 'a\nb', tap: null), 'untouched', reason: 'still waiting');
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+    String? off = 'unset';
+    await tester.pumpWidget(MaterialApp(
+      home: Builder(
+        builder: (context) => TextButton(
+          onPressed: () async => off = await confirmPaste(context, 'a\nb', warn: false),
+          child: const Text('off'),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('off'));
+    await tester.pumpAndSettle();
+    expect(off, 'a\nb');
+  });
+
+  testWidgets('the sheet fits at double text size on a phone', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    String? result = 'x';
+    await tester.pumpWidget(MaterialApp(
+      theme: buildPromptlyTheme(Brightness.dark),
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(textScaler: const TextScaler.linear(2)),
+        child: child!,
+      ),
+      home: Builder(
+        builder: (context) => TextButton(
+          onPressed: () async => result = await confirmPaste(context, 'one\ntwo\n', warn: true),
+          child: const Text('go'),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('go'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(result, isNull);
+  });
 }

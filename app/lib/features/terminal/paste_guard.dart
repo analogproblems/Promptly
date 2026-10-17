@@ -48,10 +48,10 @@ class PasteSheet extends StatelessWidget {
     final info = describePaste(text);
     final lineWord = info.lines == 1 ? 'line' : 'lines';
     final summary = info.endsWithNewline
-        ? '${info.lines} $lineWord. Each line runs as you paste it, the last one too.'
-        : '${info.lines} $lineWord. Every line but the last runs as you paste it.';
+        ? '${info.lines} $lineWord. Each line can run as a command as you paste it, the last one too.'
+        : '${info.lines} $lineWord. Every line but the last can run as a command as you paste it.';
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
         child: Column(
           mainAxisSize: MainAxisSize.min,

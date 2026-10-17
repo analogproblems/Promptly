@@ -36,8 +36,12 @@ class RecordingEngine implements Engine {
     written.add(data);
   }
 
+  final List<String> pasted = [];
   @override
-  void terminalPaste(int id, String text) => calls.add('paste');
+  void terminalPaste(int id, String text) {
+    calls.add('paste');
+    pasted.add(text);
+  }
 
   /// Whether the "program" takes mouse events.
   bool takesMouse = false;
@@ -404,6 +408,68 @@ void main() {
     expect(moves, hasLength(2), reason: 'one per cell: $moves');
     expect(moves.first, 'mouse move null 0,0');
     await pointer.removePointer();
+    controller.dispose();
+  });
+
+
+  testWidgets('a paste through the soft keyboard is checked first and sent as a paste', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    final asked = <String>[];
+    String? answer;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(
+          body: TerminalView(
+            controller: controller,
+            imeInput: true,
+            confirmPaste: (text) async {
+              asked.add(text);
+              return answer;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+    void insert(String text) => client.updateEditingValueWithDeltas([
+          TextEditingDeltaInsertion(
+            oldText: ' ',
+            textInserted: text,
+            insertionOffset: 1,
+            selection: TextSelection.collapsed(offset: 1 + text.length),
+            composing: TextRange.empty,
+          ),
+        ]);
+
+    // Cancelled: nothing at all reaches the program.
+    final writes = engine.written.length;
+    insert('echo one\necho two\n');
+    await tester.pump();
+    expect(asked, ['echo one\necho two\n']);
+    expect(engine.written.length, writes);
+    expect(engine.pasted, isEmpty);
+
+    // Confirmed: sent as a paste, where the engine cleans and brackets it.
+    answer = 'echo one\necho two';
+    insert('echo one\necho two\n');
+    await tester.pump();
+    expect(engine.pasted, ['echo one\necho two']);
+    expect(engine.written.length, writes);
+
+    // The whole-value fallback goes the same way.
+    client.updateEditingValue(const TextEditingValue(text: ' a\nb'));
+    await tester.pump();
+    expect(asked.last, 'a\nb');
+
+    // Enter on its own is still Return, and stray control characters
+    // from a keyboard are dropped.
+    insert('\n');
+    expect(engine.written.last, [13]);
+    insert('x\x1b[201~y');
+    expect(engine.written.last, 'x[201~y'.codeUnits);
     controller.dispose();
   });
 
