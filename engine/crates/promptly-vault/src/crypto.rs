@@ -57,10 +57,10 @@ pub fn seal(dek: &Dek, aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoEr
     let compressed = zstd::encode_all(plaintext, 3)?;
     let mut nonce = [0u8; NONCE_LEN];
     rand::rng().fill_bytes(&mut nonce);
-    let cipher = XChaCha20Poly1305::new(Key::from_slice(&dek.0));
+    let cipher = XChaCha20Poly1305::new(&Key::from(dek.0));
     let ciphertext = cipher
         .encrypt(
-            XNonce::from_slice(&nonce),
+            &XNonce::from(nonce),
             Payload {
                 msg: &compressed,
                 aad,
@@ -83,11 +83,11 @@ pub fn open(dek: &Dek, aad: &[u8], bytes: &[u8]) -> Result<Vec<u8>, CryptoError>
     if bytes[4] != ENVELOPE_VERSION {
         return Err(CryptoError::NewerEnvelope(bytes[4]));
     }
-    let nonce = XNonce::from_slice(&bytes[5..HEADER_LEN]);
-    let cipher = XChaCha20Poly1305::new(Key::from_slice(&dek.0));
+    let nonce = XNonce::try_from(&bytes[5..HEADER_LEN]).map_err(|_| CryptoError::NotAVaultFile)?;
+    let cipher = XChaCha20Poly1305::new(&Key::from(dek.0));
     let compressed = cipher
         .decrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: &bytes[HEADER_LEN..],
                 aad,
@@ -102,10 +102,10 @@ pub fn open(dek: &Dek, aad: &[u8], bytes: &[u8]) -> Result<Vec<u8>, CryptoError>
 pub(crate) fn wrap(key: &[u8; 32], aad: &[u8], plaintext: &[u8]) -> ([u8; NONCE_LEN], Vec<u8>) {
     let mut nonce = [0u8; NONCE_LEN];
     rand::rng().fill_bytes(&mut nonce);
-    let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
+    let cipher = XChaCha20Poly1305::new(&Key::from(*key));
     let ct = cipher
         .encrypt(
-            XNonce::from_slice(&nonce),
+            &XNonce::from(nonce),
             Payload {
                 msg: plaintext,
                 aad,
@@ -124,10 +124,10 @@ pub(crate) fn unwrap(
     if nonce.len() != NONCE_LEN {
         return Err(CryptoError::Authentication);
     }
-    let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
+    let cipher = XChaCha20Poly1305::new(&Key::from(*key));
     cipher
         .decrypt(
-            XNonce::from_slice(nonce),
+            &XNonce::try_from(nonce).map_err(|_| CryptoError::Authentication)?,
             Payload {
                 msg: ciphertext,
                 aad,
@@ -194,5 +194,31 @@ mod tests {
             open(&dek, &aad1, &future),
             Err(CryptoError::NewerEnvelope(9))
         ));
+    }
+
+    fn hex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// Files and wrapped keys written by Promptly 1.0.1 must still open, so
+    /// a crypto library update can never lock anyone out of their vault.
+    #[test]
+    fn opens_files_written_by_1_0_1() {
+        let file = hex("50564c54015a2d1f94dd238754e22d6ae84ccddc4768fca61d3b08ff844702f7fc4fa49b8ee0fcf8aa1f356aadafc8159b67e0ac3167aa7511f9a2a7175a4c815ce306bd54fc");
+        let aad = aad("vault", &dev(), "000001.seg");
+        assert_eq!(
+            open(&Dek([7u8; 32]), &aad, &file).unwrap(),
+            b"hello from 1.0.1"
+        );
+
+        let nonce = hex("94609502705e6ae050b377b11f33c40994286ad0988d5850");
+        let wrapped = hex("78c4ca7f61fa6a73b5fa36a2eaf72790107f6e4c76168116b5ad517194dbac36373ae3f6d0ab035ebf4942e9ace03da8");
+        assert_eq!(
+            unwrap(&[9u8; 32], b"wrap", &nonce, &wrapped).unwrap(),
+            [7u8; 32]
+        );
     }
 }
