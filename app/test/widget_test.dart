@@ -24,6 +24,7 @@ import 'package:promptly/features/workspace/workspace.dart';
 import 'package:promptly/features/workspace/workspace_screen.dart';
 import 'package:promptly/features/updates/updates.dart';
 import 'package:promptly/features/lock/app_lock.dart';
+import 'package:promptly/features/sync/sync_screen.dart' show SyncScreen;
 
 /// A device with nothing to check who is there with.
 class NoChecks implements Authenticator {
@@ -645,6 +646,10 @@ class FakeEngine implements Engine {
   final StreamController<SyncStatus> syncStream = StreamController<SyncStatus>.broadcast();
   final List<String> syncCalls = [];
 
+  /// When set, the recreated vault's result waits for this, as a slow
+  /// folder would; the vault is back (and its warning gone) before then.
+  Completer<void>? recreateDone;
+
   /// Folders that already hold a vault, for the join path.
   final Set<String> foldersWithVaults = {};
 
@@ -770,6 +775,7 @@ class FakeEngine implements Engine {
   Future<SyncSetupResult> syncRecreateVault(String passphrase) async {
     syncCalls.add('recreate $passphrase');
     _configured('/shared/vault', 'test-box (Linux)');
+    await recreateDone?.future;
     return const SyncSetupResult(vaultId: 'vault-1', recoveryCode: 'NEWC-ODE0-0000-0000-0000-0000-0000-0001');
   }
 
@@ -1327,6 +1333,33 @@ void main() {
     await tester.tap(find.byKey(const Key('sync-recreate-confirm-button')));
     await tester.pumpAndSettle();
     expect(engine.syncCalls, ['recreate a long passphrase']);
+    expect(find.text('Write this down'), findsOneWidget);
+    expect(find.text('NEWC-ODE0-0000-0000-0000-0000-0000-0001'), findsOneWidget);
+  });
+
+  testWidgets('the new recovery code still shows when it comes after the warning has gone', (tester) async {
+    final engine = FakeEngine()
+      ..needsAttention(SyncAttention.vaultMissing, 'The vault folder is gone.')
+      ..recreateDone = Completer<void>();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await openSync(tester);
+    await tapVisible(tester, find.byKey(const Key('sync-recreate')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('sync-recreate-passphrase')), 'a long passphrase');
+    await tester.enterText(find.byKey(const Key('sync-recreate-confirm')), 'a long passphrase');
+    await tester.tap(find.byKey(const Key('sync-recreate-confirm-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('sync-attention')), findsNothing, reason: 'the vault is back before the code arrives');
+
+    // Leave the sync screen, then the result comes.
+    Navigator.of(tester.element(find.byType(SyncScreen))).pop();
+    await tester.pumpAndSettle();
+    expect(find.byType(SyncScreen), findsNothing);
+    engine.recreateDone!.complete();
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.text('Open'));
+    await tester.pumpAndSettle();
     expect(find.text('Write this down'), findsOneWidget);
     expect(find.text('NEWC-ODE0-0000-0000-0000-0000-0000-0001'), findsOneWidget);
   });

@@ -177,15 +177,18 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
       _busy = true;
       _error = null;
     });
+    // Held before waiting: this wizard can be gone by the time the result
+    // comes, and the recovery code must still reach the screen.
+    final engine = ref.read(engineProvider);
+    final pending = ref.read(pendingRecoveryProvider.notifier);
     try {
-      final engine = ref.read(engineProvider);
       final result = _place == _Place.sftp
           ? await engine.syncCreateSftp(_hostId!, _remote.text.trim(), _pass.text, _name.text.trim())
           : await engine.syncCreateLocalFolder(_path.text.trim(), _pass.text, _name.text.trim());
       // Shown by the screen above, so it survives the status flipping to configured.
-      ref.read(pendingRecoveryProvider.notifier).set(result);
+      pending.set(result);
     } catch (e) {
-      setState(() => _error = e is String ? e : e.toString());
+      if (mounted) setState(() => _error = e is String ? e : e.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -896,17 +899,21 @@ class _AttentionCardState extends ConsumerState<AttentionCard> {
               passphrase: _useCode ? null : _pass.text,
               recoveryCode: _useCode ? _code.text : null,
             );
+        if (!mounted) return;
         _pass.clear();
         _code.clear();
       });
 
   Future<void> _recreate() async {
     final passphrase = await showDialog<String>(context: context, builder: (_) => const _NewPassphraseDialog());
-    if (passphrase == null) return;
+    if (passphrase == null || !mounted) return;
+    // Held before waiting: this card goes as soon as the vault is back, and
+    // the person may leave the screen, but the new code must still be shown.
+    final engine = ref.read(engineProvider);
+    final pending = ref.read(pendingRecoveryProvider.notifier);
     await _run(() async {
-      final result = await ref.read(engineProvider).syncRecreateVault(passphrase);
       // The new recovery code, shown by the screen above like a fresh setup.
-      ref.read(pendingRecoveryProvider.notifier).set(result);
+      pending.set(await engine.syncRecreateVault(passphrase));
     });
   }
 

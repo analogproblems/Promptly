@@ -782,14 +782,17 @@ pub fn recreate(passphrase: &str, params: promptly_vault::KdfParams) -> Result<S
                     }
                     other => other.to_string(),
                 })?;
-        store.push(&vault).map_err(|e| e.to_string())?;
-        store.compact(&vault, true).map_err(|e| e.to_string())?;
+        // The new manifest is written, so from here on the code must reach
+        // the person: what follows is best effort, and anything that fails
+        // shows up in the next sync's status instead of losing the code.
+        let _ = store.push(&vault);
+        let _ = store.compact(&vault, true);
         (manifest, code)
     };
     config.manifest_keys = Some(manifest.keys_fingerprint());
     config.recovery_hint = Some(code.hint());
-    save_config(&store, &config)?;
-    sync_now()?;
+    let _ = save_config(&store, &config);
+    let _ = sync_now();
     Ok(code.as_str().to_string())
 }
 

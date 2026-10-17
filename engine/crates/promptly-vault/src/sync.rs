@@ -398,6 +398,7 @@ impl<'a> Vault<'a> {
     pub fn push(&self, sync: &mut SyncState, ops: &[Op]) -> Result<u64, SyncError> {
         self.resume_numbering(sync)?;
         let mut seq = sync.my_seq + 1;
+        let mut rewritten = false;
         loop {
             let segment = Segment::new(self.device.clone(), seq, ops.to_vec());
             match self.write_file(&seg_name(seq), &segment) {
@@ -406,11 +407,19 @@ impl<'a> Vault<'a> {
                     // A previous push wrote this file but we never heard. If it
                     // holds these same operations we are done; if not (more were
                     // queued since), it stands as it is and these go in the next.
-                    let existing = self.read_file::<Segment>(&self.device, &seg_name(seq))?;
-                    if existing.ops == ops {
-                        break;
+                    match self.read_file::<Segment>(&self.device, &seg_name(seq)) {
+                        Ok(existing) if existing.ops == ops => break,
+                        Ok(_) => seq += 1,
+                        // Cut short by a crash where files are written in place
+                        // (no hard links): only this device writes here and no
+                        // one could read it, so it is written again whole.
+                        Err(SyncError::Crypto(_) | SyncError::Corrupt(..)) if !rewritten => {
+                            rewritten = true;
+                            let dir = Self::device_dir(&self.device);
+                            self.backend.delete(&format!("{dir}/{}", seg_name(seq)))?;
+                        }
+                        Err(e) => return Err(e),
                     }
-                    seq += 1;
                 }
                 Err(e) => return Err(e),
             }
@@ -739,6 +748,34 @@ mod tests {
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         assert_eq!(b.hosts().len(), 4);
         assert_eq!(b.sync.markers[&a.id].seq, 4);
+    }
+
+    #[test]
+    fn a_segment_cut_short_by_a_crash_is_written_again() {
+        let backend = MemoryBackend::default();
+        let mut a = Device::new();
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        for i in 1..=2 {
+            a.put(Collection::Hosts, &format!("h{i}"), json!({"label": i}));
+            a.sync(&va);
+        }
+        assert_eq!(a.sync.my_seq, 2);
+        // The app died while writing the next segment in place.
+        let dir = format!("devices/{}", a.id);
+        let some = backend.get(&format!("{dir}/000002.seg")).unwrap();
+        backend
+            .put_new(&format!("{dir}/000003.seg"), &some[..some.len() / 2])
+            .unwrap();
+
+        a.put(Collection::Hosts, "h3", json!({"label": 3}));
+        a.sync(&va);
+        assert_eq!(a.sync.my_seq, 3, "the same number, written whole");
+
+        let mut b = Device::new();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        let report = b.sync(&vb);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(b.hosts().len(), 3);
     }
 
     #[test]
