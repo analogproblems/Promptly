@@ -500,8 +500,8 @@ class FakeEngine implements Engine {
   }
 
   @override
-  int filesUpload(int id, String local, String remote) {
-    fileCalls.add('upload $local $remote');
+  int filesUpload(int id, String local, String remote, {required bool replace}) {
+    fileCalls.add('upload $local $remote${replace ? ' (replace)' : ''}');
     return _transfer(remote, upload: true, size: 10).id;
   }
 
@@ -2311,7 +2311,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Upload to the server'));
     await tester.pumpAndSettle();
-    expect(engine.fileCalls.last, 'upload /home/me/local.txt /home/ops/local.txt');
+    expect(engine.fileCalls.last, 'upload /home/me/local.txt /home/ops/local.txt (replace)');
   });
 
   testWidgets('reachability dots appear once the setting is on', (tester) async {

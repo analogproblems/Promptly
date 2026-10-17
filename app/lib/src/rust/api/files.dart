@@ -79,15 +79,18 @@ int filesDownload({
   local: local,
 );
 
-/// Start copying a local file to a remote path, replacing what is there.
+/// Start copying a local file to a remote path. A file already there is
+/// replaced only with `replace`; otherwise the upload fails and leaves it.
 int filesUpload({
   required int id,
   required String local,
   required String remote,
+  required bool replace,
 }) => RustLib.instance.api.crateApiFilesFilesUpload(
   id: id,
   local: local,
   remote: remote,
+  replace: replace,
 );
 
 /// Stop a running upload or download, and remove the half-written copy it

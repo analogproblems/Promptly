@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/features/files/device_files.dart';
+import 'package:promptly/src/rust/api/files.dart';
 
 import 'widget_test.dart';
 
@@ -90,10 +91,64 @@ void main() {
     await tester.pumpAndSettle();
     expect(engine.fileCalls.where((c) => c.startsWith('upload')), [
       'upload /picked/report.pdf /home/ops/report.pdf',
-      'upload /picked/notes.txt /home/ops/notes.txt',
+      'upload /picked/notes.txt /home/ops/notes.txt (replace)',
     ]);
     expect(find.text('Transfers'), findsOneWidget);
     expect(find.text('Done · 10 B'), findsNWidgets(2));
+  });
+
+  testWidgets('a file that reached the server after the list was shown is not replaced unasked', (tester) async {
+    phone(tester);
+    final engine = FakeEngine();
+    final device = FakeDeviceFiles()
+      ..picks = const [
+        (path: '/picked/report.pdf', name: 'report.pdf'),
+        (path: '/elsewhere/report.pdf', name: 'report.pdf'),
+      ];
+    await openFiles(tester, engine, device);
+    expect(find.text('report.pdf'), findsNothing, reason: 'not there when listed');
+    engine.remoteFiles['/home/ops'] = [
+      ...engine.remoteFiles['/home/ops']!,
+      FileEntry(
+        name: 'report.pdf',
+        isDir: false,
+        isSymlink: false,
+        size: BigInt.from(9),
+        modified: BigInt.zero,
+        permissions: 0x1A4,
+        owner: 'ops',
+        group: 'ops',
+      ),
+    ];
+
+    await tester.tap(find.byKey(const Key('remote-upload')));
+    await tester.pumpAndSettle();
+    expect(find.text('Replace report.pdf?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.where((c) => c.startsWith('upload')), isEmpty);
+
+    await tester.tap(find.byKey(const Key('remote-upload')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('files-replace-ok')));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.where((c) => c.startsWith('upload')), [
+      'upload /picked/report.pdf /home/ops/report.pdf (replace)',
+    ], reason: 'one upload per name');
+    expect(find.textContaining('share a name'), findsOneWidget);
+  });
+
+  test('names from the server stay inside the download folder', () {
+    expect(localFileName('report.pdf'), 'report.pdf');
+    expect(localFileName(r'..\..\target.txt'), 'target.txt');
+    expect(localFileName('../../target.txt'), 'target.txt');
+    expect(localFileName('..'), 'download');
+    expect(localFileName(r'folder\'), 'download');
+    expect(localFileName('a:b?.txt'), 'a_b_.txt');
+    expect(localFileName('notes. '), 'notes');
+    expect(localFileName('CON'), 'download-CON');
+    expect(localFileName('lpt1.txt'), 'download-lpt1.txt');
+    expect(localFileName('console.log'), 'console.log');
   });
 
   testWidgets('an upload in progress shows how far it has got and can be cancelled', (tester) async {
@@ -176,7 +231,10 @@ void main() {
     final engine = FakeEngine()..finishTransfers = false;
     final device = FakeDeviceFiles()
       ..picks = const [
-        (path: '/picked/a-rather-long-file-name-for-a-phone.tar.gz', name: 'a-rather-long-file-name-for-a-phone.tar.gz'),
+        (
+          path: '/picked/a-rather-long-file-name-for-a-phone.tar.gz',
+          name: 'a-rather-long-file-name-for-a-phone.tar.gz',
+        ),
       ];
     await openFiles(tester, engine, device);
     // Large text from here, on this screen only.

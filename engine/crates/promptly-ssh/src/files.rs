@@ -1,6 +1,7 @@
 //! A remote file system for the file browser: SFTP over a connection that
 //! is already open, so browsing a host's files costs no second login.
 
+use std::io;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -145,6 +146,14 @@ impl RemoteFs {
         Ok(self.sftp.remove_dir(dir).await?)
     }
 
+    /// Remove one file, never a folder. One already gone is not an error.
+    pub async fn remove_file(&self, path: &str) -> Result<(), SftpError> {
+        match self.sftp.remove_file(path).await {
+            Err(e) if is_status(&e, StatusCode::NoSuchFile) => Ok(()),
+            r => Ok(r?),
+        }
+    }
+
     /// A text file's contents, for editing in place. Refuses files over
     /// `max` bytes, files with NUL bytes, and text that is not UTF-8.
     pub async fn read_text(&self, path: &str, max: u64) -> Result<String, SftpError> {
@@ -213,24 +222,38 @@ impl RemoteFs {
         Ok(done)
     }
 
-    /// Copy a local file to a remote path, replacing what was there.
+    /// Copy a local file to a remote path. What is already there is
+    /// replaced only when `replace` says so; otherwise the upload is
+    /// refused and the server's file left alone.
     pub async fn upload(
         &self,
         local: &Path,
         remote: &str,
+        replace: bool,
         progress: impl Fn(u64, u64),
     ) -> Result<u64, SftpError> {
         let mut src = tokio::fs::File::open(local).await.map_err(|e| {
             SftpError::NoSubsystem(format!("could not read {}: {e}", local.display()))
         })?;
         let total = src.metadata().await.map(|m| m.len()).unwrap_or(0);
-        let mut dst = self
-            .sftp
-            .open_with_flags(
-                remote,
-                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
-            )
-            .await?;
+        let flags = OpenFlags::CREATE
+            | OpenFlags::WRITE
+            | if replace {
+                OpenFlags::TRUNCATE
+            } else {
+                OpenFlags::EXCLUDE
+            };
+        let mut dst = match self.sftp.open_with_flags(remote, flags).await {
+            Ok(dst) => dst,
+            Err(_) if !replace && self.sftp.metadata(remote).await.is_ok() => {
+                let name = remote.rsplit('/').next().unwrap_or(remote);
+                return Err(SftpError::Io(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("{name} is already on the server, so it was left alone. Upload it again to replace it."),
+                )));
+            }
+            Err(e) => return Err(e.into()),
+        };
         let mut buf = vec![0u8; CHUNK];
         let mut done = 0u64;
         progress(0, total);
@@ -322,7 +345,7 @@ mod tests {
             std::fs::write(&local, &body).unwrap();
             let seen = Mutex::new(Vec::new());
             let n = fs
-                .upload(&local, &join(&base, "hello.txt"), |done, total| {
+                .upload(&local, &join(&base, "hello.txt"), false, |done, total| {
                     seen.lock().unwrap().push((done, total))
                 })
                 .await
@@ -331,6 +354,20 @@ mod tests {
             let calls = seen.lock().unwrap().clone();
             assert!(calls.len() >= 2, "{calls:?}");
             assert_eq!(calls.last().unwrap(), &(200_000, 200_000));
+
+            // A file already there is only replaced when asked to be.
+            let other = dir.join("other.txt");
+            std::fs::write(&other, b"other").unwrap();
+            let err = fs
+                .upload(&other, &join(&base, "hello.txt"), false, |_, _| {})
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("already on the server"), "{err}");
+            fs.upload(&local, &join(&base, "hello.txt"), true, |_, _| {})
+                .await
+                .unwrap();
+            let gone = join(&base, "never-there.txt");
+            fs.remove_file(&gone).await.unwrap();
 
             let entries = fs.list(&base).await.unwrap();
             let names: Vec<(&str, bool, u64)> = entries

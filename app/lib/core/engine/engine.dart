@@ -158,7 +158,9 @@ abstract class Engine {
 
   /// Start a copy; returns the transfer id. `filesTransfers` follows it.
   int filesDownload(int id, String remote, String local);
-  int filesUpload(int id, String local, String remote);
+
+  /// A file already at `remote` is replaced only with `replace`.
+  int filesUpload(int id, String local, String remote, {required bool replace});
 
   /// Stop a running copy; what it half wrote is removed.
   void filesCancelTransfer(int id, int transfer);
@@ -445,7 +447,8 @@ class RustEngine implements Engine {
   int filesDownload(int id, String remote, String local) =>
       rust_files.filesDownload(id: id, remote: remote, local: local);
   @override
-  int filesUpload(int id, String local, String remote) => rust_files.filesUpload(id: id, local: local, remote: remote);
+  int filesUpload(int id, String local, String remote, {required bool replace}) =>
+      rust_files.filesUpload(id: id, local: local, remote: remote, replace: replace);
   @override
   void filesCancelTransfer(int id, int transfer) => rust_files.filesCancelTransfer(id: id, transfer: transfer);
   @override

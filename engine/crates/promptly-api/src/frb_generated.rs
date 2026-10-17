@@ -622,9 +622,11 @@ fn wire__crate__api__files__files_upload_impl(
             let api_id = <u32>::sse_decode(&mut deserializer);
             let api_local = <String>::sse_decode(&mut deserializer);
             let api_remote = <String>::sse_decode(&mut deserializer);
+            let api_replace = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::files::files_upload(api_id, api_local, api_remote)?;
+                let output_ok =
+                    crate::api::files::files_upload(api_id, api_local, api_remote, api_replace)?;
                 std::result::Result::Ok(output_ok)
             })())
         },

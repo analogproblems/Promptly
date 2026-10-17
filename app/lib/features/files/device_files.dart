@@ -39,6 +39,23 @@ abstract class DeviceFiles {
   Future<void> open(String path, {Rect? origin});
 }
 
+/// A server's name for a file, made safe to use for a file on this device:
+/// only its last part (a server may put `\` in a name, which Windows reads
+/// as a folder), without characters Windows refuses, and never empty, `..`
+/// or one of Windows' reserved device names. So a download always lands in
+/// the folder it is meant for.
+String localFileName(String name) {
+  final last = name.split(RegExp(r'[/\\]')).last;
+  final clean = last
+      .replaceAll(RegExp(r'[<>:"|?*\x00-\x1f]'), '_')
+      .trim()
+      // Windows drops trailing dots and spaces, so `..` would become nothing.
+      .replaceAll(RegExp(r'[. ]+$'), '');
+  if (clean.isEmpty) return 'download';
+  final reserved = RegExp(r'^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\.|$)', caseSensitive: false);
+  return reserved.hasMatch(clean) ? 'download-$clean' : clean;
+}
+
 /// Phones: the share sheet stands in for both a save dialog and "Open with".
 bool get _phone => !kIsWeb && (io.Platform.isAndroid || io.Platform.isIOS);
 
@@ -74,7 +91,7 @@ class PlatformDeviceFiles extends DeviceFiles {
     }
     final dir = io.Directory('${base.path}/${DateTime.now().microsecondsSinceEpoch}');
     await dir.create(recursive: true);
-    return '${dir.path}/$name';
+    return '${dir.path}/${localFileName(name)}';
   }
 
   @override

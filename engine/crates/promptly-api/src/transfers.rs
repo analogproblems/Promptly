@@ -21,7 +21,7 @@ pub(crate) enum Partial {
 
 /// A copy still going: how to stop it, and what to tidy up if it is.
 struct Running {
-    abort: tokio::task::AbortHandle,
+    task: tokio::task::JoinHandle<()>,
     partial: Partial,
     /// Raised once both ends are open, so the destination has been touched.
     started: Arc<AtomicBool>,
@@ -92,7 +92,7 @@ impl Transfers {
         running.insert(
             tid,
             Running {
-                abort: handle.abort_handle(),
+                task: handle,
                 partial,
                 started,
                 transfer,
@@ -101,16 +101,38 @@ impl Transfers {
         tid
     }
 
-    /// Stop a running copy and mark it cancelled. Returns what it may have
-    /// half written, or None when it had already finished or had not yet
-    /// touched the destination.
-    pub(crate) fn cancel(&self, tid: u32) -> Option<Partial> {
-        let run = self.running.lock().unwrap().remove(&tid)?;
-        run.abort.abort();
-        let mut t = run.transfer.lock().unwrap();
-        t.finished = true;
-        t.cancelled = true;
-        run.started.load(Ordering::Relaxed).then_some(run.partial)
+    /// Stop a running copy. Once it has really stopped, `tidy` removes what
+    /// it half wrote (if it got as far as writing), and only then does the
+    /// transfer show as cancelled, so a retry it makes way for cannot be
+    /// caught by the tidying. False when it had already finished.
+    pub(crate) fn cancel<F>(
+        &self,
+        tid: u32,
+        tidy: impl FnOnce(Partial) -> F + Send + 'static,
+    ) -> bool
+    where
+        F: Future<Output = Result<(), String>> + Send + 'static,
+    {
+        let Some(run) = self.running.lock().unwrap().remove(&tid) else {
+            return false;
+        };
+        run.task.abort();
+        promptly_ssh::runtime().spawn(async move {
+            // Aborting only asks; the copy may be mid-write until this returns.
+            let _ = run.task.await;
+            let error = if run.started.load(Ordering::Relaxed) {
+                tidy(run.partial).await.err().map(|e| {
+                    format!("Cancelled, but the part-copied file could not be removed: {e}")
+                })
+            } else {
+                None
+            };
+            let mut t = run.transfer.lock().unwrap();
+            t.finished = true;
+            t.cancelled = true;
+            t.error = error;
+        });
+        true
     }
 
     /// Every transfer, oldest first.
@@ -175,7 +197,11 @@ mod tests {
         let s = &transfers.snapshot()[0];
         assert_eq!((s.id, s.done, s.total, s.cancelled), (tid, 5, 5, false));
         assert!(s.error.is_none());
-        assert_eq!(transfers.cancel(tid), None, "too late to cancel");
+        let (_, never) = tokio::sync::oneshot::channel();
+        assert!(
+            !transfers.cancel(tid, tidy_recorder(Default::default(), never)),
+            "too late to cancel"
+        );
         assert!(!transfers.snapshot()[0].cancelled);
         transfers.clear_finished();
         assert!(transfers.snapshot().is_empty());
@@ -193,8 +219,22 @@ mod tests {
         assert!(!s.cancelled);
     }
 
+    /// A tidy step that records what it was handed and waits to be let go.
+    fn tidy_recorder(
+        log: Arc<Mutex<Vec<Partial>>>,
+        go: tokio::sync::oneshot::Receiver<Result<(), String>>,
+    ) -> impl FnOnce(Partial) -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+    {
+        move |partial| {
+            Box::pin(async move {
+                log.lock().unwrap().push(partial);
+                go.await.unwrap_or(Ok(()))
+            })
+        }
+    }
+
     #[test]
-    fn cancelling_stops_the_copy_and_names_what_it_left() {
+    fn cancelling_stops_the_copy_then_tidies_then_says_so() {
         let transfers = Arc::new(Transfers::default());
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         let tid = transfers.spawn(
@@ -210,19 +250,54 @@ mod tests {
             },
         );
         wait_for(|| transfers.snapshot()[0].total == 100);
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (release, go) = tokio::sync::oneshot::channel();
+        assert!(transfers.cancel(tid, tidy_recorder(log.clone(), go)));
+        wait_for(|| !log.lock().unwrap().is_empty());
+        // The job is gone before the tidying starts: its receiver went with it.
+        assert!(tx.is_closed());
         assert_eq!(
-            transfers.cancel(tid),
-            Some(Partial::Remote("/srv/big.iso".into()))
+            *log.lock().unwrap(),
+            [Partial::Remote("/srv/big.iso".into())]
         );
-        // The job is gone: its receiver is dropped with it.
-        wait_for(|| tx.is_closed());
+        // Still tidying, so not yet shown as cancelled.
+        assert!(!transfers.snapshot()[0].finished);
+        release.send(Ok(())).unwrap();
+        wait_for(|| transfers.snapshot()[0].finished);
         let s = &transfers.snapshot()[0];
-        assert!(s.finished && s.cancelled);
+        assert!(s.cancelled);
         assert_eq!(s.done, 0);
         assert!(s.error.is_none());
-        assert_eq!(transfers.cancel(tid), None, "only once");
+        let (_, never) = tokio::sync::oneshot::channel();
+        assert!(
+            !transfers.cancel(tid, tidy_recorder(log.clone(), never)),
+            "only once"
+        );
         transfers.clear_finished();
         assert!(transfers.snapshot().is_empty());
+    }
+
+    #[test]
+    fn a_failed_tidy_is_reported() {
+        let transfers = Arc::new(Transfers::default());
+        let tid = transfers.spawn(
+            "x".into(),
+            false,
+            Partial::Local("/tmp/x".into()),
+            |progress| async move {
+                progress(1, 10);
+                std::future::pending::<()>().await;
+                Ok(10)
+            },
+        );
+        wait_for(|| transfers.snapshot()[0].total == 10);
+        let (release, go) = tokio::sync::oneshot::channel();
+        release.send(Err("Permission denied".into())).unwrap();
+        transfers.cancel(tid, tidy_recorder(Default::default(), go));
+        wait_for(|| transfers.snapshot()[0].finished);
+        let s = &transfers.snapshot()[0];
+        assert!(s.cancelled);
+        assert!(s.error.as_deref().unwrap().ends_with("Permission denied"));
     }
 
     #[test]
@@ -238,8 +313,12 @@ mod tests {
                 Ok(0)
             },
         );
-        // The server's own file was never opened, so it must not be removed.
-        assert_eq!(transfers.cancel(tid), None);
+        // The server's own file was never written, so it must not be removed.
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (_release, go) = tokio::sync::oneshot::channel();
+        assert!(transfers.cancel(tid, tidy_recorder(log.clone(), go)));
+        wait_for(|| transfers.snapshot()[0].finished);
         assert!(transfers.snapshot()[0].cancelled);
+        assert!(log.lock().unwrap().is_empty());
     }
 }

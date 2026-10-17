@@ -147,7 +147,7 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
       } else {
         final dir = _remotePane.currentState?.path;
         if (dir == null) return;
-        engine.filesUpload(id, entry.path, _remote!.join(dir, entry.name));
+        engine.filesUpload(id, entry.path, _remote!.join(dir, entry.name), replace: true);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is String ? e : e.toString())));
@@ -195,11 +195,34 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
       return;
     }
     if (picked.isEmpty || !mounted) return;
-    final there = {for (final e in pane!._entries) e.name};
-    final clash = [for (final f in picked) if (there.contains(f.name)) f.name];
-    if (clash.isNotEmpty && !await _confirmReplace(clash)) return;
+    // Two picked files with one name would land on each other.
+    final unique = <String, PickedFile>{};
     for (final f in picked) {
-      _start((engine, id) => engine.filesUpload(id, f.path, _remote!.join(dir, f.name)));
+      unique.putIfAbsent(f.name, () => f);
+    }
+    // Looked up now rather than taken from the list on show, which may be
+    // out of date. Anything that appears after this is refused by the
+    // engine rather than replaced.
+    final Set<String> there;
+    try {
+      there = {for (final e in await pane!.widget.fs.list(dir)) e.name};
+    } catch (e) {
+      _say(e);
+      return;
+    }
+    if (!mounted) return;
+    final clash = [
+      for (final name in unique.keys)
+        if (there.contains(name)) name,
+    ];
+    if (clash.isNotEmpty && !await _confirmReplace(clash)) return;
+    if (unique.length < picked.length) {
+      _say('Some of those files share a name, so only the first of each was uploaded.');
+    }
+    for (final f in unique.values) {
+      _start(
+        (engine, id) => engine.filesUpload(id, f.path, _remote!.join(dir, f.name), replace: there.contains(f.name)),
+      );
     }
   }
 

@@ -200,16 +200,17 @@ pub fn files_download(id: u32, remote: String, local: String) -> Result<u32, Str
         }))
 }
 
-/// Start copying a local file to a remote path, replacing what is there.
+/// Start copying a local file to a remote path. A file already there is
+/// replaced only with `replace`; otherwise the upload fails and leaves it.
 #[frb(sync)]
-pub fn files_upload(id: u32, local: String, remote: String) -> Result<u32, String> {
+pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Result<u32, String> {
     let b = browser(id)?;
     let name = remote.rsplit('/').next().unwrap_or(&remote).to_string();
     let fs = b.fs.clone();
     let partial = Partial::Remote(remote.clone());
     Ok(b.transfers
         .spawn(name, true, partial, move |progress| async move {
-            fs.upload(&PathBuf::from(local), &remote, progress)
+            fs.upload(&PathBuf::from(local), &remote, replace, progress)
                 .await
                 .map_err(friendly)
         }))
@@ -220,18 +221,16 @@ pub fn files_upload(id: u32, local: String, remote: String) -> Result<u32, Strin
 #[frb(sync)]
 pub fn files_cancel_transfer(id: u32, transfer: u32) -> Result<(), String> {
     let b = browser(id)?;
-    match b.transfers.cancel(transfer) {
-        Some(Partial::Local(path)) => {
-            let _ = std::fs::remove_file(path);
+    let fs = b.fs.clone();
+    b.transfers.cancel(transfer, move |partial| async move {
+        match partial {
+            Partial::Local(path) => match tokio::fs::remove_file(&path).await {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                _ => Ok(()),
+            },
+            Partial::Remote(path) => fs.remove_file(&path).await.map_err(friendly),
         }
-        Some(Partial::Remote(path)) => {
-            let fs = b.fs.clone();
-            promptly_ssh::runtime().spawn(async move {
-                let _ = fs.delete(&path).await;
-            });
-        }
-        None => {}
-    }
+    });
     Ok(())
 }
 
