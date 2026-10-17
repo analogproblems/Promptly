@@ -78,10 +78,10 @@ pub trait FolderPath {
 
 /// Where this tool keeps its own device state. One store per vault,
 /// encrypted with a key derived from the vault key, so it opens only for
-/// someone who could unlock the vault anyway. A key change made here
-/// re-encrypts it; one made on another device leaves it unreadable, so it
-/// is set aside and this tool joins again as a new device, getting back
-/// everything but what it kept on this device only.
+/// someone who could unlock the vault anyway. Beside it is a copy of the
+/// vault settings that key came from: when the key is changed on another
+/// device, that copy and the passphrase from before open the store, which
+/// is then locked with the new key. Nothing is set aside or started again.
 fn cli_store(folder: &Path, unlocked: &Unlocked) -> Result<Store> {
     let base = std::env::var_os("PROMPTLY_CLI_DATA_DIR")
         .map(PathBuf::from)
@@ -94,8 +94,68 @@ fn cli_store(folder: &Path, unlocked: &Unlocked) -> Result<Store> {
                 .map(|d| d.join("promptly-cli"))
         })
         .unwrap_or_else(|| folder.join(".promptly-cli"));
-    let path = base.join(format!("{}.db", unlocked.manifest.vault_id));
-    Ok(Store::open(&path, Some(&DbKey::derive(&unlocked.dek)))?)
+    let id = &unlocked.manifest.vault_id;
+    let path = base.join(format!("{id}.db"));
+    let saved = base.join(format!("{id}.manifest.json"));
+    let key = DbKey::derive(&unlocked.dek);
+    if !Store::key_fits(&path, &key)? {
+        bring_over(&path, &saved, &key)?;
+    }
+    let store = Store::open(&path, Some(&key))?;
+    let json = unlocked.manifest.to_json();
+    if std::fs::read_to_string(&saved).ok().as_deref() != Some(json.as_str()) {
+        let tmp = base.join(format!("{id}.manifest.json.new"));
+        std::fs::write(&tmp, &json)?;
+        std::fs::rename(&tmp, &saved)?;
+    }
+    Ok(store)
+}
+
+/// The store at `path` is locked with a key the vault no longer has: open
+/// it with the key from the settings saved beside it, unlocked with the
+/// passphrase from before, and lock it with `key`. Stops with a way out
+/// rather than lose anything.
+fn bring_over(path: &Path, saved: &Path, key: &DbKey) -> Result<()> {
+    let start_afresh = format!(
+        "To start afresh instead, delete {}: everything but what this tool kept on this device only comes back from the vault.",
+        path.display()
+    );
+    let manifest = std::fs::read(saved)
+        .ok()
+        .and_then(|json| Manifest::from_json(&json).ok())
+        .ok_or_else(|| {
+            anyhow!(
+                "this tool's records are locked with a key the vault no longer has. {start_afresh}"
+            )
+        })?;
+    let passphrase = previous_passphrase().ok_or_else(|| {
+        anyhow!(
+            "the vault's key was changed on another device. To bring this tool's records over, give the passphrase from before the change in PROMPTLY_PREVIOUS_PASSPHRASE, or run it in a terminal to be asked. {start_afresh}"
+        )
+    })?;
+    let old = DbKey::derive(
+        &manifest
+            .unlock(&passphrase)
+            .map_err(|_| anyhow!("that is not the passphrase from before the key change"))?,
+    );
+    anyhow::ensure!(
+        Store::key_fits(path, &old)?,
+        "this tool's records are locked with a key older than the one saved beside them. {start_afresh}"
+    );
+    Store::open(path, Some(&old))?.rekey(key)?;
+    Ok(())
+}
+
+fn previous_passphrase() -> Option<zeroize::Zeroizing<String>> {
+    if let Ok(p) = std::env::var("PROMPTLY_PREVIOUS_PASSPHRASE") {
+        return Some(zeroize::Zeroizing::new(p));
+    }
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return rpassword::prompt_password("Vault passphrase from before the key change: ")
+            .ok()
+            .map(zeroize::Zeroizing::new);
+    }
+    None
 }
 
 /// The records kept on this tool's device last time (see
@@ -581,6 +641,12 @@ pub fn rotate_dek(folder: &Path, unlocked: &Unlocked, new_passphrase: &str) -> R
         iterations: k.iterations,
         parallelism: k.parallelism,
     };
+    // Kept before the vault changes, so a run that stops at any point after
+    // leaves the next one what it needs to finish: the old key to lock the
+    // secrets again with, and a snapshot owed. Should the key not change
+    // after all, both cost only a snapshot.
+    store.meta_set(META_RESEAL_FROM, &json!(unlocked.dek.0).to_string())?;
+    store.meta_set(META_SNAPSHOT_DUE, "true")?;
     let (vault, _manifest, code) = vault
         .rotate(&known, new_passphrase, params)
         .map_err(|e| anyhow!("{e}"))?;
@@ -589,17 +655,14 @@ pub fn rotate_dek(folder: &Path, unlocked: &Unlocked, new_passphrase: &str) -> R
     // with the new passphrase finishes it.
     let mut trouble = Vec::new();
     // This tool's own records are locked with a key made from the vault's.
+    // Left under the old one, the next run brings them over (see
+    // [`cli_store`]).
     if let Err(e) = store.rekey(&DbKey::derive(vault.dek())) {
         trouble.push(format!(
-            "this tool's records could not be locked with the new key: {e}"
+            "this tool's records could not be locked with the new key ({e}); the next run asks for the passphrase from before to do it"
         ));
     }
-    let finished = (|| -> Result<()> {
-        store.meta_set(META_RESEAL_FROM, &json!(unlocked.dek.0).to_string())?;
-        store.meta_set(META_SNAPSHOT_DUE, "true")?;
-        push_all(&store, vault)?;
-        Ok(())
-    })();
+    let finished = push_all(&store, vault).map(|_| ());
     if let Err(e) = finished {
         trouble.push(format!(
             "the vault has the new key, but writing under it stopped ({e}); the next sync finishes it"
@@ -1029,6 +1092,64 @@ mod tests {
             .meta_get(META_RESEAL_FROM)
             .unwrap()
             .is_none());
+
+        // A change made here and not yet written, then a new key made on
+        // the laptop: this tool's records are brought over with the
+        // passphrase from before, not set aside.
+        let pending = cli_store(&vault_dir, &renewed).unwrap();
+        let snippet = "0192f3a0-0000-7000-8000-00000000000a";
+        pending
+            .put(
+                Collection::Snippets,
+                snippet,
+                &json!({"id": snippet, "label": "ls", "command": "ls"}).to_string(),
+            )
+            .unwrap();
+        let waiting = pending.pending_count().unwrap();
+        assert!(waiting > 0);
+        drop(pending);
+        let laptop_vault = Vault::open(&backend, laptop.device_id().clone(), "new pass").unwrap();
+        laptop.pull(&laptop_vault).unwrap();
+        let known = laptop_vault.check_manifest(None).unwrap();
+        laptop_vault
+            .rotate(&known, "third pass", KdfParams::fast_for_tests())
+            .unwrap();
+        let creds = Creds {
+            folder: &vault_dir,
+            pass: "third pass",
+        };
+        let third = unlock(&creds).unwrap().unwrap();
+        let data_dir = PathBuf::from(std::env::var_os("PROMPTLY_CLI_DATA_DIR").unwrap());
+        let set_aside = || {
+            std::fs::read_dir(&data_dir)
+                .unwrap()
+                .filter(|e| {
+                    e.as_ref()
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .contains("unreadable")
+                })
+                .count()
+        };
+        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+            let err = cli_store(&vault_dir, &third).err().unwrap().to_string();
+            assert!(err.contains("PROMPTLY_PREVIOUS_PASSPHRASE"), "{err}");
+        }
+        std::env::set_var("PROMPTLY_PREVIOUS_PASSPHRASE", "not it");
+        let err = cli_store(&vault_dir, &third).err().unwrap().to_string();
+        assert!(err.contains("not the passphrase"), "{err}");
+        assert_eq!(set_aside(), 0, "nothing set aside while asking");
+        std::env::set_var("PROMPTLY_PREVIOUS_PASSPHRASE", "new pass");
+        let moved = cli_store(&vault_dir, &third);
+        std::env::remove_var("PROMPTLY_PREVIOUS_PASSPHRASE");
+        let moved = moved.unwrap();
+        assert_eq!(moved.device_id(), &me);
+        assert!(moved.get(Collection::Hosts, local).unwrap().is_some());
+        assert_eq!(moved.pending_count().unwrap(), waiting);
+        assert_eq!(set_aside(), 0);
+        drop(moved);
+        assert_eq!(cli_store(&vault_dir, &third).unwrap().device_id(), &me);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

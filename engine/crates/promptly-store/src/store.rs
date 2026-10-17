@@ -745,6 +745,20 @@ impl Store {
         })
     }
 
+    /// Whether the database at `path` opens with `key` as it is, so that
+    /// [`Store::open`] sets nothing aside: true with no file yet, or a
+    /// plain one, which the key encrypts.
+    pub fn key_fits(path: &Path, key: &DbKey) -> Result<bool, StoreError> {
+        Ok(match file_kind(path)? {
+            FileKind::Missing | FileKind::Plain => true,
+            FileKind::Encrypted => match connect(path, Some(key)) {
+                Ok(_) => true,
+                Err(e) if e.sqlite_error_code() == Some(ErrorCode::NotADatabase) => false,
+                Err(e) => return Err(e.into()),
+            },
+        })
+    }
+
     /// Encrypt the database under `key` from now on, for when the key it
     /// is derived from changes. Only for a store opened with a key.
     pub fn rekey(&self, key: &DbKey) -> Result<(), StoreError> {
@@ -1124,7 +1138,8 @@ mod tests {
             s.rekey(&new).unwrap();
             s.put(Collection::Hosts, "h2", HOST).unwrap();
         }
-        assert!(connect(&path, Some(&old)).is_err());
+        assert!(!Store::key_fits(&path, &old).unwrap());
+        assert!(Store::key_fits(&path, &new).unwrap());
         let again = Store::open(&path, Some(&new)).unwrap();
         assert_eq!(again.device_id(), &device, "the same database");
         assert_eq!(again.list(Collection::Hosts).unwrap().len(), 2);

@@ -927,6 +927,11 @@ pub fn unlock_again(
         let _guard = ENGINE.run.lock().unwrap();
         let dek = vault.dek().clone();
         let (vault, plan) = keep_on_device(&store, &dek, vault)?;
+        // A key change here that stopped after keeping the new key: lock
+        // the secrets again before the snapshot.
+        if config.snapshot_due {
+            reseal_secrets(&store, None, &dek)?;
+        }
         store.push(&vault).map_err(|e| e.to_string())?;
         store.compact(&vault, true).map_err(|e| e.to_string())?;
         save_kept(&store, &plan.kept)?;
@@ -1043,6 +1048,12 @@ pub fn rotate_key(passphrase: &str, params: promptly_vault::KdfParams) -> Result
         .manifest_keys
         .clone()
         .ok_or("Sync once before changing the key.")?;
+    // Saved before the vault changes, so a run that stops at any point
+    // after leaves the next sync, or unlock, to lock the secrets again and
+    // write the snapshot. Should the key not change after all, it costs
+    // only a snapshot.
+    config.snapshot_due = true;
+    save_config(&store, &config)?;
     let (vault, manifest, code) = old
         .rotate(&known, passphrase, params)
         .map_err(|e| match e {
@@ -1064,7 +1075,6 @@ pub fn rotate_key(passphrase: &str, params: promptly_vault::KdfParams) -> Result
     } else {
         config.manifest_keys = Some(manifest.keys_fingerprint());
         config.recovery_hint = Some(code.hint());
-        config.snapshot_due = true;
         if let Err(e) = save_config(&store, &config) {
             note(e);
         }
@@ -1645,6 +1655,37 @@ mod tests {
         assert_eq!(&dek().unwrap(), laptop_vault.dek());
         assert!(only_snapshots(&vault_device(&store)));
         assert_eq!(fresh(&laptop_vault), ["p1", "s1", "s2", "s3", "s4"]);
+
+        // A key change here that stopped after keeping the new key, before
+        // its settings were saved: unlocking with the new passphrase locks
+        // the secrets again and writes the snapshot.
+        let before = config().unwrap().unwrap();
+        let mut owed = before.clone();
+        owed.snapshot_due = true;
+        save_config(&store, &owed).unwrap();
+        let current = Vault::with_dek(
+            &backend,
+            vault_device(&store),
+            before.vault_id.clone(),
+            dek().unwrap(),
+        );
+        let (newer, _, _) = current
+            .rotate(
+                before.manifest_keys.as_deref().unwrap(),
+                "sixth passphrase",
+                KdfParams::fast_for_tests(),
+            )
+            .unwrap();
+        secrets()
+            .put(DEK_SECRET_ID, B64.encode(newer.dek().0).as_bytes())
+            .unwrap();
+        assert!(sync_once().is_err());
+        assert_eq!(attention(), Some(SyncAttention::PassphraseChanged));
+        sync_unlock(Some("sixth passphrase".into()), None).unwrap();
+        assert_eq!(attention(), None);
+        let reader = Vault::open(&backend, DeviceId::generate(), "sixth passphrase").unwrap();
+        assert_eq!(secret_in(&reader, pw).as_deref(), Some(&b"hunter2"[..]));
+        assert!(!config().unwrap().unwrap().snapshot_due);
 
         let _ = std::fs::remove_dir_all(&root);
     }

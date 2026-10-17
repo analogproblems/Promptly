@@ -272,6 +272,8 @@ A shared vault is just a second vault in a folder that several people can access
 - `devices remove <id or name>`, with `--rekey` to run `rotate-dek` straight after: mark a device removed, as in section 11.
 - `ssh-config`: emit an OpenSSH `config` file from the vault, so the same hosts work in a plain terminal.
 
+Its own records are encrypted with a key made from the `dek`. When another device gives the vault a new `dek`, its next run asks for the passphrase from before the change (or reads it from `PROMPTLY_PREVIOUS_PASSPHRASE`), opens its records with the copy of the manifest it keeps beside them, and encrypts them again under the new key, so nothing it kept to itself is lost.
+
 The JSON export format is the natural one: the data model from DESIGN.md section 6, one array per collection. It is also how Promptly imports from other apps.
 
 ## 14. Failure modes considered
@@ -284,7 +286,7 @@ The JSON export format is the natural one: the data model from DESIGN.md section
 | Device clock wrong | Irrelevant; ordering uses logical clocks. |
 | Same record edited on two offline devices | Field-by-field last-writer-wins on reconnect. |
 | Backend credentials expire | Sync pauses with a notice; everything else works. |
-| Manifest rewritten by two devices at once (a passphrase change race) | The second writer notices the manifest changed under it, aborts, and asks the user to retry. |
+| Manifest rewritten by two devices at once (a passphrase change race) | A writer that finds the manifest changed since it last read it aborts and asks the user to retry. A plain folder cannot tell two writes at the same moment apart, so then the last one stands, and the other device finds the keys changed on its next sync and asks for the passphrase, as below. |
 | Passphrase changed on another device | Every other device notices the rewrapped keys on its next sync, pauses, and asks for the new passphrase. The same `dek` comes out, so it carries on where it was. |
 | New `dek` made on another device | Every other device notices the changed keys and asks for the passphrase, as above. A different `dek` for the same vault comes out: the device keeps what it has read, encrypts its secrets again, and writes a snapshot under the new key. |
 | A removed device keeps writing | Its files above its cut-off are ignored by every device; once it syncs it sees it was removed and stops. If it still has the old `dek` it can read what was written before a new `dek` was made, never after. |

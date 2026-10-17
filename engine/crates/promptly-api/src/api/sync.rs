@@ -328,7 +328,10 @@ pub fn sync_recreate_vault(passphrase: String) -> Result<SyncSetupResult, String
     }
     let code = sync_engine::recreate(&passphrase, kdf())?;
     Ok(SyncSetupResult {
-        vault_id: sync_engine::config()?
+        // Not a reason to lose the code, which the vault already needs.
+        vault_id: sync_engine::config()
+            .ok()
+            .flatten()
             .map(|c| c.vault_id)
             .unwrap_or_default(),
         recovery_code: code,
@@ -360,7 +363,10 @@ pub fn sync_rotate_key(passphrase: String) -> Result<SyncSetupResult, String> {
     }
     let code = sync_engine::rotate_key(&passphrase, kdf())?;
     Ok(SyncSetupResult {
-        vault_id: sync_engine::config()?
+        // Not a reason to lose the code, which the vault already needs.
+        vault_id: sync_engine::config()
+            .ok()
+            .flatten()
             .map(|c| c.vault_id)
             .unwrap_or_default(),
         recovery_code: code,
