@@ -67,6 +67,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   StoreRecord dco_decode_box_autoadd_store_record(dynamic raw);
 
   @protected
+  SyncAttention dco_decode_box_autoadd_sync_attention(dynamic raw);
+
+  @protected
   SyncBackendKind dco_decode_box_autoadd_sync_backend_kind(dynamic raw);
 
   @protected
@@ -187,6 +190,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   StoreRecord? dco_decode_opt_box_autoadd_store_record(dynamic raw);
 
   @protected
+  SyncAttention? dco_decode_opt_box_autoadd_sync_attention(dynamic raw);
+
+  @protected
   SyncBackendKind? dco_decode_opt_box_autoadd_sync_backend_kind(dynamic raw);
 
   @protected
@@ -276,6 +282,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   StoreRecord dco_decode_store_record(dynamic raw);
+
+  @protected
+  SyncAttention dco_decode_sync_attention(dynamic raw);
 
   @protected
   SyncBackendKind dco_decode_sync_backend_kind(dynamic raw);
@@ -377,6 +386,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   StoreRecord sse_decode_box_autoadd_store_record(SseDeserializer deserializer);
+
+  @protected
+  SyncAttention sse_decode_box_autoadd_sync_attention(
+    SseDeserializer deserializer,
+  );
 
   @protected
   SyncBackendKind sse_decode_box_autoadd_sync_backend_kind(
@@ -517,6 +531,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  SyncAttention? sse_decode_opt_box_autoadd_sync_attention(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   SyncBackendKind? sse_decode_opt_box_autoadd_sync_backend_kind(
     SseDeserializer deserializer,
   );
@@ -614,6 +633,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   StoreRecord sse_decode_store_record(SseDeserializer deserializer);
+
+  @protected
+  SyncAttention sse_decode_sync_attention(SseDeserializer deserializer);
 
   @protected
   SyncBackendKind sse_decode_sync_backend_kind(SseDeserializer deserializer);
@@ -738,6 +760,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_store_record(
     StoreRecord self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_sync_attention(
+    SyncAttention self,
     SseSerializer serializer,
   );
 
@@ -940,6 +968,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_sync_attention(
+    SyncAttention? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_sync_backend_kind(
     SyncBackendKind? self,
     SseSerializer serializer,
@@ -1055,6 +1089,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_store_record(StoreRecord self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_sync_attention(SyncAttention self, SseSerializer serializer);
 
   @protected
   void sse_encode_sync_backend_kind(

@@ -7,8 +7,8 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `kdf`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`
+// These functions are ignored because they are not marked as `pub`: `kdf`, `keys_of`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`
 
 SyncStatus syncStatus() => RustLib.instance.api.crateApiSyncSyncStatus();
 
@@ -89,8 +89,29 @@ Future<void> syncJoinSftp({
   deviceName: deviceName,
 );
 
-/// Pull, push and compact now. Returns the status afterwards.
+/// Pull, push and compact now, as the person asked (the Sync now button,
+/// pull to refresh): a failure before this no longer delays the next try.
+/// Returns the status afterwards.
 Future<SyncStatus> syncNow() => RustLib.instance.api.crateApiSyncSyncNow();
+
+/// Sync soon in the background, as when the app comes to the front. Does
+/// nothing when sync is not set up.
+void syncWake() => RustLib.instance.api.crateApiSyncSyncWake();
+
+/// Unlock the vault again after its passphrase was changed on another
+/// device, or join the vault that is in its folder now, with the
+/// passphrase or the recovery code (either one, whichever is given).
+Future<void> syncUnlock({String? passphrase, String? recoveryCode}) => RustLib
+    .instance
+    .api
+    .crateApiSyncSyncUnlock(passphrase: passphrase, recoveryCode: recoveryCode);
+
+/// Set the vault up again in its place after its folder was deleted, from
+/// everything on this device, keeping the same vault so the other devices
+/// carry on once they have the new passphrase. Returns the new recovery
+/// code, shown once; the old one stops working.
+Future<SyncSetupResult> syncRecreateVault({required String passphrase}) =>
+    RustLib.instance.api.crateApiSyncSyncRecreateVault(passphrase: passphrase);
 
 /// Forget the vault on this device. Everything stays usable locally.
 void syncDisconnect() => RustLib.instance.api.crateApiSyncSyncDisconnect();
@@ -105,6 +126,23 @@ Future<void> syncRemoveDevice({required String deviceRecordId}) => RustLib
 /// What a QR code for enrolling another device carries, as JSON, or
 /// `None` when sync is not set up. Whoever reads it can read the vault.
 String? syncQrPayload() => RustLib.instance.api.crateApiSyncSyncQrPayload();
+
+/// Something about the vault itself that another try will not fix: the
+/// person has to do something, and the sync screen says what.
+enum SyncAttention {
+  /// The vault was last changed by a newer Promptly: update this one.
+  updateNeeded,
+
+  /// The passphrase was changed on another device: type the new one.
+  passphraseChanged,
+
+  /// The vault folder, or its settings file, is gone: set it up again
+  /// here from this device's copy, or disconnect.
+  vaultMissing,
+
+  /// The folder now holds another vault: join it, or disconnect.
+  differentVault,
+}
 
 enum SyncBackendKind { localFolder, sftp }
 
@@ -179,6 +217,9 @@ class SyncStatus {
   final bool syncing;
   final String? lastSyncAt;
   final String? lastError;
+
+  /// Set alongside `last_error` when the person has to act.
+  final SyncAttention? attention;
   final List<String> warnings;
   final int pendingOps;
   final List<SyncDevice> devices;
@@ -198,6 +239,7 @@ class SyncStatus {
     required this.syncing,
     this.lastSyncAt,
     this.lastError,
+    this.attention,
     required this.warnings,
     required this.pendingOps,
     required this.devices,
@@ -217,6 +259,7 @@ class SyncStatus {
       syncing.hashCode ^
       lastSyncAt.hashCode ^
       lastError.hashCode ^
+      attention.hashCode ^
       warnings.hashCode ^
       pendingOps.hashCode ^
       devices.hashCode ^
@@ -238,6 +281,7 @@ class SyncStatus {
           syncing == other.syncing &&
           lastSyncAt == other.lastSyncAt &&
           lastError == other.lastError &&
+          attention == other.attention &&
           warnings == other.warnings &&
           pendingOps == other.pendingOps &&
           devices == other.devices &&

@@ -227,6 +227,12 @@ class RecordingEngine implements Engine {
   @override
   Future<SyncStatus> syncNow() => throw UnimplementedError();
   @override
+  void syncWake() {}
+  @override
+  Future<void> syncUnlock({String? passphrase, String? recoveryCode}) => throw UnimplementedError();
+  @override
+  Future<SyncSetupResult> syncRecreateVault(String passphrase) => throw UnimplementedError();
+  @override
   void syncDisconnect() {}
   @override
   Future<void> syncRemoveDevice(String deviceRecordId) async {}

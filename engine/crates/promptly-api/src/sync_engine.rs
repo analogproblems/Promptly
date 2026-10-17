@@ -16,11 +16,12 @@ use promptly_ssh::{
 use promptly_store::{Collection, SecretStore, Store};
 use promptly_term::TermSize;
 use promptly_vault::backend::LocalFolder;
+use promptly_vault::manifest::ManifestError;
 use promptly_vault::model::{Device, Host, KnownHost};
-use promptly_vault::{crypto, Backend, Dek, Vault};
+use promptly_vault::{crypto, Backend, Dek, SyncError, Vault};
 use serde::{Deserialize, Serialize};
 
-use crate::api::sync::{SyncBackendKind, SyncDevice, SyncStatus};
+use crate::api::sync::{SyncAttention, SyncBackendKind, SyncDevice, SyncStatus};
 use crate::frb_generated::StreamSink;
 
 pub const META_VAULT: &str = "vault";
@@ -175,6 +176,13 @@ pub struct VaultConfig {
     /// For SFTP: the saved host the vault lives on.
     #[serde(default)]
     pub host_id: Option<String>,
+    /// The manifest's [`Manifest::keys_fingerprint`] when this device last
+    /// unlocked it; a different one means the passphrase changed elsewhere.
+    /// Missing in setups from before this was kept: the first sync fills it.
+    ///
+    /// [`Manifest::keys_fingerprint`]: promptly_vault::Manifest::keys_fingerprint
+    #[serde(default)]
+    pub manifest_keys: Option<String>,
 }
 
 impl VaultConfig {
@@ -191,6 +199,8 @@ struct Status {
     syncing: bool,
     last_sync_at: Option<String>,
     last_error: Option<String>,
+    /// Set when the vault itself needs the person, not just another try.
+    attention: Option<SyncAttention>,
     warnings: Vec<String>,
     /// Operations applied from other devices since the app started; the
     /// UI reloads its lists when this moves.
@@ -200,6 +210,9 @@ struct Status {
 enum Wake {
     LocalChange,
     Now,
+    /// Work out when the next run is due again, without running now (a
+    /// sync the person started has just reset the backoff).
+    Reschedule,
 }
 
 pub struct SyncEngine {
@@ -208,6 +221,8 @@ pub struct SyncEngine {
     wake: Mutex<Option<Sender<Wake>>>,
     /// One sync at a time.
     run: Mutex<()>,
+    /// Failed runs in a row, for the backoff.
+    failures: Mutex<u32>,
 }
 
 pub static ENGINE: LazyLock<SyncEngine> = LazyLock::new(|| SyncEngine {
@@ -215,7 +230,62 @@ pub static ENGINE: LazyLock<SyncEngine> = LazyLock::new(|| SyncEngine {
     sink: Mutex::new(None),
     wake: Mutex::new(None),
     run: Mutex::new(()),
+    failures: Mutex::new(0),
 });
+
+/// How long the loop waits before its next run after `failures` failed
+/// runs in a row: the usual period when all is well, otherwise ten seconds
+/// doubling with each failure, up to an hour.
+pub fn retry_delay(failures: u32) -> Duration {
+    if failures == 0 {
+        return PERIOD;
+    }
+    let doublings = (failures - 1).min(16);
+    Duration::from_secs(10u64 << doublings).min(MAX_BACKOFF)
+}
+
+/// What a sync run that failed tells the person: the words, and whether it
+/// needs them to do something about the vault.
+struct Failure {
+    message: String,
+    attention: Option<SyncAttention>,
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            attention: None,
+        }
+    }
+}
+
+/// The manifest check's verdict in plain words, when it needs the person.
+fn manifest_failure(e: SyncError) -> Failure {
+    let (attention, message) = match e {
+        SyncError::NoVault => (
+            SyncAttention::VaultMissing,
+            "The vault folder is gone, or the settings file in it is. Nothing on this device is lost. Set the vault up again here, or disconnect this device.",
+        ),
+        SyncError::Manifest(ManifestError::NewerFormat(_)) => (
+            SyncAttention::UpdateNeeded,
+            "This vault was last changed by a newer version of Promptly. Update Promptly on this device to keep syncing. Everything here keeps working meanwhile.",
+        ),
+        SyncError::KeysChanged => (
+            SyncAttention::PassphraseChanged,
+            "The vault's passphrase was changed on another device. Type the new one to keep syncing.",
+        ),
+        SyncError::DifferentVault => (
+            SyncAttention::DifferentVault,
+            "The vault folder now holds a different vault. Type that vault's passphrase to join it, or disconnect this device.",
+        ),
+        other => return other.to_string().into(),
+    };
+    Failure {
+        message: message.into(),
+        attention: Some(attention),
+    }
+}
 
 fn store() -> Result<Arc<Store>, String> {
     crate::api::store::store()
@@ -232,6 +302,15 @@ pub fn config() -> Result<Option<VaultConfig>, String> {
             .map_err(|e| format!("the vault configuration is not valid: {e}")),
         None => Ok(None),
     }
+}
+
+fn save_config(store: &Store, config: &VaultConfig) -> Result<(), String> {
+    store
+        .meta_set(
+            META_VAULT,
+            &serde_json::to_string(config).expect("config serialises"),
+        )
+        .map_err(|e| e.to_string())
 }
 
 pub fn dek() -> Result<Dek, String> {
@@ -363,12 +442,7 @@ pub fn finish_setup(
     secrets()
         .put(DEK_SECRET_ID, B64.encode(dek.0).as_bytes())
         .map_err(|e| format!("could not keep the vault key: {e}"))?;
-    store
-        .meta_set(
-            META_VAULT,
-            &serde_json::to_string(&config).expect("config serialises"),
-        )
-        .map_err(|e| e.to_string())?;
+    save_config(&store, &config)?;
     store.reset_sync_state().map_err(|e| e.to_string())?;
     store
         .meta_delete(META_SECRET_MARKERS)
@@ -412,7 +486,9 @@ pub fn finish_setup(
         let mut st = ENGINE.status.lock().unwrap();
         st.last_sync_at = Some(promptly_vault::ops::now_rfc3339());
         st.last_error = None;
+        st.attention = None;
     }
+    *ENGINE.failures.lock().unwrap() = 0;
     ensure_loop();
     emit();
     Ok(())
@@ -567,12 +643,22 @@ pub fn sync_once() -> Result<(), String> {
             config.vault_id.clone(),
             dek.clone(),
         );
+        // The manifest first, every time: writing into a folder whose vault
+        // is gone, newer, or locked differently now would only do harm.
+        let keys = vault
+            .check_manifest(config.manifest_keys.as_deref())
+            .map_err(manifest_failure)?;
+        if config.manifest_keys.is_none() {
+            let mut config = config.clone();
+            config.manifest_keys = Some(keys);
+            save_config(&store, &config)?;
+        }
         let report = store.pull(&vault).map_err(|e| e.to_string())?;
         apply_pulled_secrets(&store, &dek)?;
         apply_pulled_known_hosts(&store)?;
         store.push(&vault).map_err(|e| e.to_string())?;
         store.compact(&vault, false).map_err(|e| e.to_string())?;
-        Ok::<(Vec<String>, usize), String>((report.warnings, report.ops_applied))
+        Ok::<(Vec<String>, usize), Failure>((report.warnings, report.ops_applied))
     })();
     let mut st = ENGINE.status.lock().unwrap();
     st.syncing = false;
@@ -580,28 +666,148 @@ pub fn sync_once() -> Result<(), String> {
         Ok((warnings, applied)) => {
             st.last_sync_at = Some(promptly_vault::ops::now_rfc3339());
             st.last_error = None;
+            st.attention = None;
             st.warnings.extend(warnings.iter().cloned());
             st.changes = st.changes.wrapping_add(*applied as u32);
+            *ENGINE.failures.lock().unwrap() = 0;
         }
         Err(e) => {
-            st.last_error = Some(e.clone());
+            st.last_error = Some(e.message.clone());
+            st.attention = e.attention;
+            let mut failures = ENGINE.failures.lock().unwrap();
+            *failures = failures.saturating_add(1);
             forget_sftp();
         }
     }
     drop(st);
     emit();
-    result.map(|_| ())
+    result.map(|_| ()).map_err(|e| e.message)
+}
+
+/// A sync the person asked for: it starts the backoff over, whatever
+/// happened before, and the loop takes its timing from the result.
+pub fn sync_now() -> Result<(), String> {
+    *ENGINE.failures.lock().unwrap() = 0;
+    let result = sync_once();
+    wake(Wake::Reschedule);
+    result
+}
+
+/// Ask the loop for a run soon, as when the app comes to the front.
+pub fn sync_soon() {
+    wake(Wake::Now);
+}
+
+fn wake(w: Wake) {
+    if let Some(tx) = ENGINE.wake.lock().unwrap().as_ref() {
+        let _ = tx.send(w);
+    }
+}
+
+/// The vault this device is set up for, opened with the key it holds.
+fn current_vault<'a>(
+    store: &Store,
+    config: &VaultConfig,
+    backend: &'a dyn Backend,
+) -> Result<Vault<'a>, String> {
+    Ok(Vault::with_dek(
+        backend,
+        store.device_id().clone(),
+        config.vault_id.clone(),
+        dek()?,
+    ))
+}
+
+/// After the passphrase changed elsewhere, or the folder took a different
+/// vault: unlock what is there now with its passphrase or recovery code.
+/// Same vault and key: this device carries on where it was, and writes a
+/// full snapshot in case its folder was lost along the way. Otherwise this
+/// is joining afresh, as setup would.
+pub fn unlock_again(
+    passphrase: Option<String>,
+    recovery_code: Option<String>,
+) -> Result<(), String> {
+    let Some(mut config) = config()? else {
+        return Err("sync is not set up".into());
+    };
+    let store = store()?;
+    let backend = backend_for(&config)?;
+    let device = store.device_id().clone();
+    let manifest = Vault::read_manifest(&*backend).map_err(|e| e.to_string())?;
+    let vault = match (passphrase, recovery_code) {
+        (Some(p), _) => Vault::open(&*backend, device, &p).map_err(|e| e.to_string())?,
+        (None, Some(code)) => {
+            let code = promptly_vault::RecoveryCode::parse(&code).ok_or(
+                "That is not a recovery code: expect eight groups of four letters and digits.",
+            )?;
+            Vault::open_with_recovery(&*backend, device, &code).map_err(|e| e.to_string())?
+        }
+        (None, None) => return Err("A passphrase or a recovery code is needed.".into()),
+    };
+    config.manifest_keys = Some(manifest.keys_fingerprint());
+    config.recovery_hint = manifest.recovery_hint().map(str::to_string);
+    let same = vault.vault_id() == config.vault_id && dek().ok().as_ref() == Some(vault.dek());
+    if !same {
+        config.vault_id = vault.vault_id().to_string();
+        return finish_setup(config, vault.dek(), &vault, true);
+    }
+    save_config(&store, &config)?;
+    {
+        let _guard = ENGINE.run.lock().unwrap();
+        store.push(&vault).map_err(|e| e.to_string())?;
+        store.compact(&vault, true).map_err(|e| e.to_string())?;
+    }
+    sync_now()
+}
+
+/// The vault folder, or its manifest, is gone: write a new manifest for the
+/// same vault from the key this device holds, under `passphrase`, and a
+/// full snapshot beside it, so every device can carry on. Returns the new
+/// recovery code; the old one no longer opens the vault.
+pub fn recreate(passphrase: &str, params: promptly_vault::KdfParams) -> Result<String, String> {
+    let Some(mut config) = config()? else {
+        return Err("sync is not set up".into());
+    };
+    let store = store()?;
+    let backend = backend_for(&config)?;
+    let vault = current_vault(&store, &config, &*backend)?;
+    let (manifest, code) = {
+        let _guard = ENGINE.run.lock().unwrap();
+        let (manifest, code) =
+            vault
+                .recreate_manifest(passphrase, params)
+                .map_err(|e| match e {
+                    SyncError::VaultExists => {
+                        "The vault is back in its folder. Sync again instead.".to_string()
+                    }
+                    other => other.to_string(),
+                })?;
+        // The new manifest is written, so from here on the code must reach
+        // the person: what follows is best effort. The snapshot that brings
+        // the records back stays owed until it is written, so a failure
+        // here is retried, and reported, by the next sync.
+        let _ = store.push(&vault);
+        let _ = store.compact(&vault, true);
+        (manifest, code)
+    };
+    config.manifest_keys = Some(manifest.keys_fingerprint());
+    config.recovery_hint = Some(code.hint());
+    let _ = save_config(&store, &config);
+    let _ = sync_now();
+    Ok(code.as_str().to_string())
 }
 
 /// Called after any local change to a record or secret.
 pub fn notify_change() {
-    if let Some(tx) = ENGINE.wake.lock().unwrap().as_ref() {
-        let _ = tx.send(Wake::LocalChange);
-    }
+    wake(Wake::LocalChange);
 }
 
 /// Start the background loop if sync is set up and it is not running.
 pub fn ensure_loop() {
+    // Tests drive every run themselves.
+    if cfg!(test) {
+        return;
+    }
     let mut wake = ENGINE.wake.lock().unwrap();
     if wake.is_some() {
         return;
@@ -614,7 +820,6 @@ pub fn ensure_loop() {
     std::thread::Builder::new()
         .name("promptly-sync".into())
         .spawn(move || {
-            let mut backoff = Duration::from_secs(10);
             let mut next = Instant::now() + Duration::from_secs(1);
             loop {
                 let timeout = next.saturating_duration_since(Instant::now());
@@ -631,6 +836,10 @@ pub fn ensure_loop() {
                         }
                     }
                     Ok(Wake::Now) => {}
+                    Ok(Wake::Reschedule) => {
+                        next = Instant::now() + retry_delay(*ENGINE.failures.lock().unwrap());
+                        continue;
+                    }
                     Err(RecvTimeoutError::Timeout) => {}
                     Err(RecvTimeoutError::Disconnected) => return,
                 }
@@ -639,16 +848,9 @@ pub fn ensure_loop() {
                     *ENGINE.wake.lock().unwrap() = None;
                     return;
                 }
-                match sync_once() {
-                    Ok(()) => {
-                        backoff = Duration::from_secs(10);
-                        next = Instant::now() + PERIOD;
-                    }
-                    Err(_) => {
-                        next = Instant::now() + backoff.min(PERIOD);
-                        backoff = (backoff * 2).min(MAX_BACKOFF);
-                    }
-                }
+                // Success or failure, the count of failures in a row decides.
+                let _ = sync_once();
+                next = Instant::now() + retry_delay(*ENGINE.failures.lock().unwrap());
             }
         })
         .expect("spawn sync thread");
@@ -668,10 +870,9 @@ pub fn disconnect() -> Result<(), String> {
     secrets().delete(DEK_SECRET_ID).map_err(|e| e.to_string())?;
     forget_sftp();
     // The loop notices the missing config on its next wake.
-    if let Some(tx) = ENGINE.wake.lock().unwrap().as_ref() {
-        let _ = tx.send(Wake::Now);
-    }
+    wake(Wake::Now);
     *ENGINE.status.lock().unwrap() = Status::default();
+    *ENGINE.failures.lock().unwrap() = 0;
     emit();
     Ok(())
 }
@@ -752,6 +953,7 @@ pub fn status() -> Result<SyncStatus, String> {
         syncing: st.syncing,
         last_sync_at: st.last_sync_at,
         last_error: st.last_error,
+        attention: st.attention,
         warnings: st.warnings,
         pending_ops: store.pending_count().map_err(|e| e.to_string())? as u32,
         devices,
@@ -764,6 +966,126 @@ pub fn status() -> Result<SyncStatus, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::sync::{
+        sync_create_local_folder, sync_recreate_vault, sync_unlock, SyncAttention,
+    };
+    use promptly_vault::{Clock, DeviceId, KdfParams, Manifest, RecoveryCode, State, SyncState};
+
+    #[test]
+    fn retries_back_off_from_ten_seconds_to_an_hour() {
+        assert_eq!(retry_delay(0), PERIOD);
+        assert_eq!(retry_delay(1), Duration::from_secs(10));
+        assert_eq!(retry_delay(2), Duration::from_secs(20));
+        assert_eq!(retry_delay(6), Duration::from_secs(320));
+        assert_eq!(retry_delay(9), Duration::from_secs(2560));
+        assert_eq!(retry_delay(10), MAX_BACKOFF);
+        assert_eq!(retry_delay(u32::MAX), MAX_BACKOFF);
+    }
+
+    /// The one test here that uses the app's store, which lives for the
+    /// whole process (in a folder of the tests' own): it walks through
+    /// every problem in turn.
+    #[test]
+    fn every_sync_checks_the_manifest_and_each_problem_has_a_way_out() {
+        // No secure storage in tests: the database opens without a key.
+        let _ = crate::api::store::set_no_device_key();
+        let root = std::env::temp_dir().join(format!("promptly-api-sync-{}", uuid::Uuid::new_v4()));
+        std::env::set_var("PROMPTLY_FAST_KDF", "1");
+        let folder = root.join("vault");
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.to_string_lossy().into_owned();
+        let setup =
+            sync_create_local_folder(path, "first passphrase".into(), "Test box".into()).unwrap();
+        let store = store().unwrap();
+        let attention = || status().unwrap().attention;
+        let failures = || *ENGINE.failures.lock().unwrap();
+        let snippet = |id: &str| {
+            let json = format!(r#"{{"id":"{id}","label":"{id}","command":"ls"}}"#);
+            store.put(Collection::Snippets, id, &json).unwrap();
+        };
+        sync_once().unwrap();
+        assert_eq!(attention(), None);
+        assert!(config().unwrap().unwrap().manifest_keys.is_some());
+        let backend = LocalFolder::new(&folder);
+        let write_manifest = |json: &str| std::fs::write(folder.join("vault.json"), json).unwrap();
+
+        // Another device changes the passphrase: nothing is written until
+        // this one has the new passphrase.
+        let mut manifest: Manifest = Vault::read_manifest(&backend).unwrap();
+        manifest.change_passphrase(&dek().unwrap(), "second passphrase");
+        write_manifest(&manifest.to_json());
+        snippet("s1");
+        assert!(sync_once().is_err());
+        assert_eq!(attention(), Some(SyncAttention::PassphraseChanged));
+        assert!(store.pending_count().unwrap() > 0, "held back");
+        assert!(sync_once().is_err());
+        assert_eq!(failures(), 2, "each failed run counts towards the backoff");
+        let wrong = sync_unlock(Some("first passphrase".into()), None).unwrap_err();
+        assert!(wrong.contains("wrong"), "{wrong}");
+        sync_unlock(Some("second passphrase".into()), None).unwrap();
+        assert_eq!(attention(), None);
+        assert_eq!(store.pending_count().unwrap(), 0);
+        assert_eq!(failures(), 0);
+        assert_eq!(config().unwrap().unwrap().vault_id, setup.vault_id);
+
+        // A newer Promptly changed the format.
+        write_manifest(
+            &manifest
+                .to_json()
+                .replace(r#""format": 1"#, r#""format": 2"#),
+        );
+        assert!(sync_once().is_err());
+        assert_eq!(attention(), Some(SyncAttention::UpdateNeeded));
+        write_manifest(&manifest.to_json());
+        sync_now().unwrap();
+        assert_eq!(attention(), None);
+
+        // The whole vault folder is deleted. It is not quietly made again
+        // without its settings file; setting it up again keeps everything.
+        std::fs::remove_dir_all(&folder).unwrap();
+        snippet("s2");
+        assert!(sync_once().is_err());
+        assert_eq!(attention(), Some(SyncAttention::VaultMissing));
+        assert!(!folder.exists());
+        assert!(sync_recreate_vault("short".into()).is_err());
+        let again = sync_recreate_vault("third passphrase".into()).unwrap();
+        assert_eq!(again.vault_id, setup.vault_id, "the same vault");
+        assert_eq!(attention(), None);
+        let fresh = |vault: &Vault| {
+            let (mut sync, mut state) = (SyncState::default(), State::new());
+            let mut clock = Clock::new(DeviceId::generate());
+            vault.pull(&mut sync, &mut state, &mut clock).unwrap();
+            state
+                .list(Collection::Snippets)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+        let code = RecoveryCode::parse(&again.recovery_code).unwrap();
+        let joiner = Vault::open_with_recovery(&backend, DeviceId::generate(), &code).unwrap();
+        assert_eq!(fresh(&joiner), ["s1", "s2"], "a new device gets everything");
+        let old = RecoveryCode::parse(&setup.recovery_code).unwrap();
+        assert!(Vault::open_with_recovery(&backend, DeviceId::generate(), &old).is_err());
+
+        // Someone makes a different vault in its place.
+        std::fs::remove_dir_all(&folder).unwrap();
+        Vault::create(
+            &backend,
+            DeviceId::generate(),
+            "other passphrase",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        assert!(sync_once().is_err());
+        assert_eq!(attention(), Some(SyncAttention::DifferentVault));
+        sync_unlock(Some("other passphrase".into()), None).unwrap();
+        assert_eq!(attention(), None);
+        assert_ne!(config().unwrap().unwrap().vault_id, setup.vault_id);
+        let other = Vault::open(&backend, DeviceId::generate(), "other passphrase").unwrap();
+        assert_eq!(fresh(&other), ["s1", "s2"], "this device's records went in");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn the_vault_store_passes_on_the_kinds_of_key_it_trusts() {

@@ -199,6 +199,20 @@ fn derive(secret: &[u8], kdf: &Kdf) -> Result<WrapKey, ManifestError> {
 impl Manifest {
     /// A new vault: fresh id, salt, data key and recovery code.
     pub fn create(passphrase: &str, params: KdfParams) -> (Self, Dek, RecoveryCode) {
+        let dek = Dek::generate();
+        let (m, recovery) =
+            Self::create_for(uuid::Uuid::new_v4().to_string(), &dek, passphrase, params);
+        (m, dek, recovery)
+    }
+
+    /// A manifest for a vault that already exists, from its id and data
+    /// key: fresh salt and recovery code.
+    pub fn create_for(
+        vault_id: String,
+        dek: &Dek,
+        passphrase: &str,
+        params: KdfParams,
+    ) -> (Self, RecoveryCode) {
         let mut salt = [0u8; 16];
         rand::rng().fill_bytes(&mut salt);
         let kdf = Kdf {
@@ -208,24 +222,36 @@ impl Manifest {
             iterations: params.iterations,
             parallelism: params.parallelism,
         };
-        let dek = Dek::generate();
         let recovery = RecoveryCode::generate();
         let mut m = Self {
             format: FORMAT,
-            vault_id: uuid::Uuid::new_v4().to_string(),
+            vault_id,
             created_at: crate::ops::now_rfc3339(),
             kdf,
             keys: Vec::new(),
         };
         m.keys
-            .push(m.wrap_entry("passphrase", passphrase.as_bytes(), &dek, None));
+            .push(m.wrap_entry("passphrase", passphrase.as_bytes(), dek, None));
         m.keys.push(m.wrap_entry(
             "recovery",
             &recovery.secret_bytes(),
-            &dek,
+            dek,
             Some(recovery.hint()),
         ));
-        (m, dek, recovery)
+        (m, recovery)
+    }
+
+    /// Changes whenever the data key is wrapped again (a new passphrase, a
+    /// new recovery code, a new data key), and only then: every wrap has a
+    /// fresh random nonce. A device keeps the one it saw to notice that.
+    pub fn keys_fingerprint(&self) -> String {
+        let mut keys: Vec<String> = self
+            .keys
+            .iter()
+            .map(|k| format!("{}={}", k.kind, k.nonce))
+            .collect();
+        keys.sort();
+        format!("{};{}", self.kdf.salt, keys.join(","))
     }
 
     fn wrap_entry(&self, kind: &str, secret: &[u8], dek: &Dek, hint: Option<String>) -> WrappedKey {
@@ -324,7 +350,14 @@ mod tests {
             Err(ManifestError::WrongRecoveryCode)
         ));
 
+        let before = m.keys_fingerprint();
+        assert_eq!(
+            back.keys_fingerprint(),
+            before,
+            "reading it back is no change"
+        );
         m.change_passphrase(&dek, "battery staple");
+        assert_ne!(m.keys_fingerprint(), before);
         assert_eq!(m.keys.len(), 2);
         assert_eq!(m.unlock("battery staple").unwrap(), dek);
         assert!(m.unlock("correct horse").is_err());

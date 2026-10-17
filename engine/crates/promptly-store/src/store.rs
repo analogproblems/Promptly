@@ -788,21 +788,25 @@ impl Store {
         Ok(Some(seq))
     }
 
-    /// Write a snapshot now (`force`), or only once this device's folder
-    /// has grown past the limits.
+    /// Write a snapshot now (`force`), or only once one is owed or this
+    /// device's folder has grown past the limits.
     pub fn compact(&self, vault: &Vault, force: bool) -> Result<bool, StoreError> {
         let inner = self.inner.lock().unwrap();
         let mut sync = match meta_get(&inner.conn, "sync_state")? {
             Some(s) => serde_json::from_str(&s).map_err(|e| StoreError::Corrupt(e.to_string()))?,
             None => SyncState::default(),
         };
+        if force && !sync.snapshot_due {
+            // Owed until it is written, so a failure now is made up later.
+            sync.snapshot_due = true;
+            meta_set(
+                &inner.conn,
+                "sync_state",
+                &serde_json::to_string(&sync).expect("sync state serialises"),
+            )?;
+        }
         let Inner { state, clock, .. } = &*inner;
-        let did = if force {
-            vault.write_snapshot(&mut sync, state, clock)?;
-            true
-        } else {
-            vault.maybe_compact(&mut sync, state, clock)?
-        };
+        let did = vault.maybe_compact(&mut sync, state, clock)?;
         if did {
             meta_set(
                 &inner.conn,
@@ -818,7 +822,7 @@ impl Store {
 mod tests {
     use super::*;
     use promptly_vault::backend::MemoryBackend;
-    use promptly_vault::KdfParams;
+    use promptly_vault::{Backend, BackendError, KdfParams};
 
     #[test]
     fn records_round_trip_and_only_changes_become_operations() {
@@ -981,6 +985,74 @@ mod tests {
         assert_eq!(a.list(Collection::Hosts).unwrap()[0].json, want);
         assert_eq!(b.list(Collection::Hosts).unwrap()[0].json, want);
         assert!(b.clock_counter() >= a.clock_counter() - 1);
+    }
+
+    /// Refuses to write snapshots while `fail` is set, as a full disk or
+    /// a dropped connection would.
+    #[derive(Default)]
+    struct NoSnapshots {
+        inner: MemoryBackend,
+        fail: std::sync::atomic::AtomicBool,
+    }
+
+    impl Backend for NoSnapshots {
+        fn list(&self, dir: &str) -> Result<Vec<promptly_vault::Entry>, BackendError> {
+            self.inner.list(dir)
+        }
+        fn get(&self, path: &str) -> Result<Vec<u8>, BackendError> {
+            self.inner.get(path)
+        }
+        fn put_new(&self, path: &str, bytes: &[u8]) -> Result<(), BackendError> {
+            if path.ends_with(".snap") && self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(BackendError::Io(
+                    path.into(),
+                    std::io::Error::other("no room"),
+                ));
+            }
+            self.inner.put_new(path, bytes)
+        }
+        fn delete(&self, path: &str) -> Result<(), BackendError> {
+            self.inner.delete(path)
+        }
+    }
+
+    #[test]
+    fn a_snapshot_that_failed_is_written_on_a_later_sync() {
+        let backend = NoSnapshots::default();
+        let a = Store::open_in_memory().unwrap();
+        a.put(Collection::Hosts, "h", HOST).unwrap();
+        let (va, _) = Vault::create(
+            &backend,
+            a.device_id().clone(),
+            "pw",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        a.push(&va).unwrap();
+        // The folder is emptied, as when a vault is set up again: only a
+        // snapshot can bring the records back, and the first one fails.
+        backend
+            .inner
+            .delete(&format!("devices/{}/000001.seg", a.device_id()))
+            .unwrap();
+        backend
+            .fail
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(a.compact(&va, true).is_err());
+        assert!(a.sync_state().unwrap().snapshot_due);
+
+        // A later ordinary sync, with nothing to push, writes it.
+        backend
+            .fail
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(a.push(&va).unwrap(), None);
+        assert!(a.compact(&va, false).unwrap());
+        assert!(!a.sync_state().unwrap().snapshot_due);
+
+        let b = Store::open_in_memory().unwrap();
+        let vb = Vault::open(&backend, b.device_id().clone(), "pw").unwrap();
+        b.pull(&vb).unwrap();
+        assert_eq!(b.list(Collection::Hosts).unwrap().len(), 1);
     }
 
     fn temp_dir(name: &str) -> PathBuf {

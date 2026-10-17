@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `data_dir`
+// These functions are ignored because they are not marked as `pub`: `data_dir`, `platform_data_dir`
 
 /// Tell the engine where to keep its files. Call once at startup.
 void setDataDir({required String path}) =>

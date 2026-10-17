@@ -16,7 +16,7 @@ export '../../src/rust/api/hosts.dart' show ReachTarget, Reachability;
 export '../../src/rust/api/import.dart' show CsvHost, ImportReport, SshConfigHost;
 export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
 export '../../src/rust/api/store.dart' show SecretsState, StoreRecord;
-export '../../src/rust/api/sync.dart' show SyncBackendKind, SyncDevice, SyncSetupResult, SyncStatus;
+export '../../src/rust/api/sync.dart' show SyncAttention, SyncBackendKind, SyncDevice, SyncSetupResult, SyncStatus;
 export '../../src/rust/api/themes.dart' show ThemeInfo;
 export '../../src/rust/api/ssh.dart'
     show
@@ -208,6 +208,16 @@ abstract class Engine {
     required String deviceName,
   });
   Future<rust_sync.SyncStatus> syncNow();
+
+  /// Sync soon in the background, as when the app comes to the front.
+  void syncWake();
+
+  /// Unlock the vault again after its passphrase changed elsewhere, or join
+  /// the vault that is in its folder now.
+  Future<void> syncUnlock({String? passphrase, String? recoveryCode});
+
+  /// Set the vault up again in its place after its folder was deleted.
+  Future<rust_sync.SyncSetupResult> syncRecreateVault(String passphrase);
   void syncDisconnect();
   Future<void> syncRemoveDevice(String deviceRecordId);
   String? syncQrPayload();
@@ -525,6 +535,17 @@ class RustEngine implements Engine {
 
   @override
   Future<rust_sync.SyncStatus> syncNow() => rust_sync.syncNow();
+
+  @override
+  void syncWake() => rust_sync.syncWake();
+
+  @override
+  Future<void> syncUnlock({String? passphrase, String? recoveryCode}) =>
+      rust_sync.syncUnlock(passphrase: passphrase, recoveryCode: recoveryCode);
+
+  @override
+  Future<rust_sync.SyncSetupResult> syncRecreateVault(String passphrase) =>
+      rust_sync.syncRecreateVault(passphrase: passphrase);
 
   @override
   void syncDisconnect() => rust_sync.syncDisconnect();
