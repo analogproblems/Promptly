@@ -1023,16 +1023,45 @@ struct PasswordFill<'a> {
     where_: &'a str,
 }
 
-/// One hidden question that names a password: the server's own password
-/// prompt ("Password:", "Passwort:", "user@host's password:"). Anything
-/// else, such as "Response:" or "Enter PIN", goes to the person, since
-/// only the words say what a hidden question wants.
+/// One hidden question in the ordinary shape of a password prompt:
+/// "Password:", "Passwort:", "user@host's password:", "Password for
+/// user@host:", "Enter your password:". Anything else, such as
+/// "Response:", "Enter PIN" or "One time password:", goes to the person,
+/// since only the words say what a hidden question wants.
 fn asks_for_password(prompts: &[russh::client::Prompt]) -> bool {
     let [only] = prompts else {
         return false;
     };
-    let prompt = only.prompt.to_lowercase();
-    let names_password = [
+    if only.echo {
+        return false;
+    }
+    let lower = only.prompt.to_lowercase();
+    let mut rest = lower.trim().trim_end_matches([':', '\u{ff1a}', ' ']);
+    // "(user@host) Password:", as newer servers add.
+    if rest.starts_with('(') {
+        if let Some(end) = rest.find(") ") {
+            rest = &rest[end + 2..];
+        }
+    }
+    for lead in ["enter your ", "enter ", "your "] {
+        if let Some(after) = rest.strip_prefix(lead) {
+            rest = after;
+            break;
+        }
+    }
+    // "user@host's password".
+    if let Some(at) = rest.rfind("'s ") {
+        if !rest[..at].contains(' ') {
+            rest = &rest[at + 3..];
+        }
+    }
+    // "password for user@host".
+    if let Some(at) = rest.find(" for ") {
+        if !rest[at + 5..].contains(' ') {
+            rest = &rest[..at];
+        }
+    }
+    [
         "password",
         "passwort",
         "passwd",
@@ -1045,12 +1074,7 @@ fn asks_for_password(prompts: &[russh::client::Prompt]) -> bool {
         "密码",
         "密碼",
     ]
-    .iter()
-    .any(|w| prompt.contains(w));
-    let code_like = ["code", "token", "otp", "one-time", "verification"]
-        .iter()
-        .any(|w| prompt.contains(w));
-    !only.echo && names_password && !code_like
+    .contains(&rest)
 }
 
 async fn keyboard_interactive(
@@ -1758,10 +1782,10 @@ mod tests {
         /// Keyboard-interactive with two questions: "pw", then the code
         /// "123456".
         PamTwoQuestions,
-        /// Keyboard-interactive in two rounds: first a hidden "Response: "
-        /// whose meaning is only in the instructions, wanting "123456",
-        /// then "Password: " wanting "pw".
-        PamChallengeThenPassword,
+        /// Keyboard-interactive in two rounds: first the hidden challenge
+        /// given (instructions, question), wanting "123456", then
+        /// "Password: " wanting "pw".
+        PamChallengeThenPassword(&'static str, &'static str),
     }
 
     /// A server on a loopback port that checks logins the given way.
@@ -1790,7 +1814,7 @@ mod tests {
                     ServerAuth::Password => &[MethodKind::Password],
                     ServerAuth::PamPassword
                     | ServerAuth::PamTwoQuestions
-                    | ServerAuth::PamChallengeThenPassword => {
+                    | ServerAuth::PamChallengeThenPassword(..) => {
                         &[MethodKind::PublicKey, MethodKind::KeyboardInteractive]
                     }
                 };
@@ -1812,7 +1836,7 @@ mod tests {
                 _submethods: &str,
                 response: Option<Response<'a>>,
             ) -> Result<Auth, Self::Error> {
-                if matches!(self.mode, ServerAuth::PamChallengeThenPassword) {
+                if let ServerAuth::PamChallengeThenPassword(instructions, prompt) = self.mode {
                     let answers: Option<Vec<String>> = response.map(|r| {
                         r.map(|b| String::from_utf8_lossy(&b).into_owned())
                             .collect()
@@ -1823,7 +1847,7 @@ mod tests {
                         prompts: Cow::Owned(vec![(Cow::Borrowed(prompt), false)]),
                     };
                     return Ok(match answers.as_deref() {
-                        None => ask("Enter the code shown on your token.", "Response: "),
+                        None => ask(instructions, prompt),
                         Some([code]) if code == "123456" => {
                             self.challenged = true;
                             ask("", "Password: ")
@@ -2096,9 +2120,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_hidden_challenge_that_is_not_a_password_goes_to_the_person() {
-        let port = auth_only_server(ServerAuth::PamChallengeThenPassword);
+    /// Logs in against a challenge round then a password round, with "pw"
+    /// saved, and returns what the person was asked.
+    fn challenge_then_password(instructions: &'static str, question: &'static str) -> Vec<String> {
+        let port = auth_only_server(ServerAuth::PamChallengeThenPassword(instructions, question));
         let asked = Arc::new(Mutex::new(Vec::new()));
         let prompter = Arc::new(Answering {
             asked: asked.clone(),
@@ -2108,16 +2133,32 @@ mod tests {
             password: Some("pw".into()),
         };
         let result = auth_with(port, saved, prompter);
-        assert!(result.is_ok(), "{:?}", result.err());
-        // The person sees the challenge with its instructions, and the
-        // saved password answers the password round that follows.
+        assert!(result.is_ok(), "{question}: {:?}", result.err());
+        let asked = asked.lock().unwrap().clone();
+        asked
+    }
+
+    #[test]
+    fn a_hidden_challenge_that_is_not_a_password_goes_to_the_person() {
+        // The person sees the challenge as the server wrote it, and the
+        // saved password answers only the password round that follows.
         assert_eq!(
-            *asked.lock().unwrap(),
+            challenge_then_password("Enter the code shown on your token.", "Response: "),
             vec![
                 "Enter the code shown on your token.".to_string(),
                 "Response: ".to_string()
             ]
         );
+        for question in [
+            "One time password: ",
+            "One-time password: ",
+            "OTP password: ",
+        ] {
+            assert_eq!(
+                challenge_then_password("", question),
+                vec![question.to_string()]
+            );
+        }
     }
 
     #[test]
@@ -2162,7 +2203,18 @@ mod tests {
         assert!(asks_for_password(&[prompt("Passwort: ", false)]));
         assert!(asks_for_password(&[prompt("me@web-1's password: ", false)]));
         assert!(!asks_for_password(&[prompt("Verification code: ", false)]));
+        assert!(asks_for_password(&[prompt(
+            "Password for me@web-1: ",
+            false
+        )]));
+        assert!(asks_for_password(&[prompt("(me@web-1) Password: ", false)]));
+        assert!(asks_for_password(&[prompt("Enter your password:", false)]));
+        assert!(asks_for_password(&[prompt("Mot de passe : ", false)]));
         assert!(!asks_for_password(&[prompt("One-time password: ", false)]));
+        assert!(!asks_for_password(&[prompt("One time password: ", false)]));
+        assert!(!asks_for_password(&[prompt("OTP password: ", false)]));
+        assert!(!asks_for_password(&[prompt("Password + token: ", false)]));
+        assert!(!asks_for_password(&[prompt("Einmalpasswort: ", false)]));
         assert!(!asks_for_password(&[prompt("Response: ", false)]));
         assert!(!asks_for_password(&[prompt("Enter PIN ", false)]));
         assert!(!asks_for_password(&[prompt("Username: ", true)]));
