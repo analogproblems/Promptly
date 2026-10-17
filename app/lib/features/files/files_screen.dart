@@ -1060,9 +1060,12 @@ class _TransferRow extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 3),
-                if (tr.error != null && !tr.cancelled)
+                // A cancelled copy can still have an error: its part-copied
+                // file could not be removed, which the person needs to know.
+                if (tr.error != null)
                   Text(
                     tr.error!,
+                    maxLines: 3,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(fontSize: 12, color: t.danger),
                   )

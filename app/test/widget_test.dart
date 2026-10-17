@@ -476,6 +476,9 @@ class FakeEngine implements Engine {
 
   /// Copies finish at once unless a test wants to watch one run.
   bool finishTransfers = true;
+
+  /// What a cancelled copy reports, as when its part-copied file stays.
+  String? cancelError;
   int _nextTransfer = 1;
 
   FileTransfer _transfer(String remote, {required bool upload, required int size}) {
@@ -513,7 +516,7 @@ class FakeEngine implements Engine {
     total: t.total,
     finished: true,
     cancelled: cancelled,
-    error: null,
+    error: cancelled ? cancelError : null,
   );
 
   @override

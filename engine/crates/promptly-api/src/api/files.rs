@@ -192,12 +192,12 @@ pub fn files_download(id: u32, remote: String, local: String) -> Result<u32, Str
     let fs = b.fs.clone();
     let local = PathBuf::from(local);
     let partial = Partial::Local(local.clone());
-    Ok(b.transfers
+    b.transfers
         .spawn(name, false, partial, move |progress| async move {
             fs.download(&remote, &local, progress)
                 .await
                 .map_err(friendly)
-        }))
+        })
 }
 
 /// Start copying a local file to a remote path. A file already there is
@@ -208,12 +208,12 @@ pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Re
     let name = remote.rsplit('/').next().unwrap_or(&remote).to_string();
     let fs = b.fs.clone();
     let partial = Partial::Remote(remote.clone());
-    Ok(b.transfers
+    b.transfers
         .spawn(name, true, partial, move |progress| async move {
             fs.upload(&PathBuf::from(local), &remote, replace, progress)
                 .await
                 .map_err(friendly)
-        }))
+        })
 }
 
 /// Stop a running upload or download, and remove the half-written copy it

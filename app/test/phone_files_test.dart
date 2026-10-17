@@ -172,6 +172,22 @@ void main() {
     expect(find.text('Transfers'), findsNothing);
   });
 
+  testWidgets('a cancelled copy that could not be tidied up says so', (tester) async {
+    phone(tester);
+    final engine = FakeEngine()
+      ..finishTransfers = false
+      ..cancelError = 'Cancelled, but the part-copied file could not be removed: The server would not allow that.';
+    final device = FakeDeviceFiles()..picks = const [(path: '/picked/big.iso', name: 'big.iso')];
+    await openFiles(tester, engine, device);
+    await tester.tap(find.byKey(const Key('remote-upload')));
+    await tester.pump();
+    await tester.pump();
+    await tester.tap(find.byTooltip('Cancel upload of big.iso'));
+    await tester.pump();
+    expect(find.text('Cancelled'), findsOneWidget);
+    expect(find.textContaining('could not be removed'), findsOneWidget);
+  });
+
   testWidgets('on a phone a download is fetched, then offered to save or send', (tester) async {
     phone(tester);
     final engine = FakeEngine()..finishTransfers = false;
