@@ -634,7 +634,12 @@ Your hosts, keys and snippets arrive shortly after.
 
 ### Removing a device
 
-If you stop using a device, or lose one, remove it from another device: in **Settings › Sync**, tap the delete button beside it. Its part of the vault is deleted, after everything it contributed has been kept. If the device was lost or stolen, also change the vault's passphrase with the command-line tool (see [chapter 18](#18-the-promptly-command-line-tool)).
+If you stop using a device, or lose one, remove it from another device: in **Settings › Sync**, tap the delete button beside it. Its part of the vault is deleted, after everything it contributed has been kept. Removing a device stops it appearing in the list, but it doesn't lock that device out. A device that has joined the vault keeps the key that unlocks it, so changing the passphrase doesn't stop it either.
+
+> **Important** If a device was lost or stolen, treat everything in Promptly on it as exposed:
+>
+> - Cut off its access to where the vault lives: sign it out of your sync service (Dropbox, iCloud and so on), or, for a vault on your own server, remove the login it used.
+> - Change the passwords it had saved, and remove its keys from your servers' `~/.ssh/authorized_keys` files, replacing them with new keys.
 
 ### Stopping sync on this device
 
@@ -730,12 +735,12 @@ Every vault command takes the vault folder, and asks for the passphrase (or read
 | `promptly import VAULT FILE` | Merges a JSON file (in the export format) into the vault. Use `-` to read from standard input. |
 | `promptly sync VAULT` | Brings the tool's copy and the vault up to date with each other. |
 | `promptly ssh-config VAULT` | Writes an OpenSSH config for the vault's hosts. Add `--keys-dir DIR` to also write the private keys there. |
-| `promptly change-passphrase VAULT` | Sets a new vault passphrase. Your data is unchanged; other devices will need the new passphrase. |
+| `promptly change-passphrase VAULT` | Sets a new vault passphrase, which new devices need to join. Your data, and the devices already in the vault, are unaffected. |
 
 ## 19. Privacy and security
 
 - **Promptly collects nothing about you.** There are no analytics, no crash reporting and no accounts. Nothing leaves your device unless you set up sync, and then only encrypted data goes to the storage you chose. See the [privacy policy](PRIVACY.md).
-- **Your secrets stay encrypted.** Saved passwords and private keys are kept in your system's protected storage (such as the Keychain on a Mac or the Keystore on Android), and go into the vault only in encrypted form. Your passphrase never leaves your device.
+- **Your secrets are encrypted before they're synced.** On your device, saved passwords and private keys are kept in Promptly's own data folder, protected by your system's file permissions rather than encryption, so protect your device and its backups as you would your `~/.ssh` folder. They go into the vault only in encrypted form, and your passphrase never leaves your device.
 - **Host keys are always checked.** Promptly warns you before connecting to a server it hasn't seen before, and stops you if a known server's key changes.
 - **You choose what programs can do.** Remote programs can only set your clipboard if you allow it, and agent forwarding is off unless you turn it on for a host.
 - **Reachability checks are local.** With **Show which hosts are up** on, your device knocks on each host's SSH port directly; nothing goes anywhere else.
