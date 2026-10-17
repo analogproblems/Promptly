@@ -2,155 +2,106 @@
 
 **Your terminal, everywhere. Your data, yours.**
 
-Promptly is a terminal emulator and SSH client for phone, tablet and desktop. It aims to feel as polished as the best commercial apps, with one big difference: it will never ask you to rent a server to sync a few hundred kilobytes of hosts, keys and snippets.
+Promptly is a fast, good-looking terminal and SSH client for your computer, tablet and phone. Your hosts, keys and snippets sync between all your devices through storage you already have, encrypted before they leave your hands. No account, no servers, no subscription. Free and open source.
 
-Everything you set up in Promptly lives in an encrypted **vault**: a small folder of files that Promptly keeps wherever you already keep files. iCloud Drive, Google Drive, Dropbox, OneDrive, a WebDAV share, an S3 bucket, or an SSH server you already own. Promptly runs no servers, needs no account, and has nothing to charge you for every month.
+<p align="center">
+  <img src="docs/screenshots/m3-desktop-panes.png" alt="Promptly on the desktop: a tab split into two SSH sessions, with the hosts panel on the left" width="820">
+</p>
 
-**New to Promptly?** The [user guide](docs/GUIDE.md) covers installing it, connecting to your first server, and everything after.
+<p align="center">
+  <a href="https://github.com/analogproblems/Promptly/releases/latest"><b>Download</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://analogproblems.github.io/Promptly/guide/"><b>User guide</b></a>
+  &nbsp;·&nbsp;
+  <a href="CHANGELOG.md">What's new</a>
+</p>
 
-## Keyboard shortcuts on desktop
+## Why Promptly
 
-| Keys | What |
+Most SSH apps that sync your setup between devices want a monthly subscription and a copy of your keys on their servers. Promptly keeps everything in an encrypted **vault**: a small folder of files that lives wherever you already keep files, such as a folder synced by Dropbox, iCloud Drive, Google Drive, OneDrive or Syncthing, or a server you own. Promptly encrypts it on your device first, so nobody along the way can read it.
+
+| | Typical subscription SSH app | Promptly |
+|---|---|---|
+| Sync hosts and keys across devices | Paid plan, around $10 a month | Free, using storage you already have |
+| Where your data lives | The company's servers | Your own folder or server |
+| Who can read it | Encrypted in their format | Encrypted on your device, in an open, documented format |
+| Leaving | Limited export | Full export and a command-line tool, any time |
+
+## What it does
+
+**A terminal that feels right.** Smooth scrolling, true colour, full-screen programs like vim, tmux and htop (mouse included), and fifteen themes with a live preview. Bring your own themes from iTerm2, Windows Terminal, Alacritty or base16. Search the scrollback, and Ctrl+click links to open them.
+
+**Connecting made easy.** Save your servers once and connect with a tap. Sign in with a password, a key, a two-factor code, or nothing at all for servers like Tailscale SSH. Promptly checks each server's identity and warns you clearly if it changes. If the connection drops, it reconnects by itself with your screen still there.
+
+**Built for real work.** Go through jump hosts, keep sessions alive in tmux across disconnects, forward ports with a switch for each one, and forward your SSH agent. Snippets save the commands you type all the time, with blanks Promptly asks you to fill in, and can run on a dozen servers at once.
+
+**Files without a second app.** Browse a server's files over the connection you already have. Copy, rename, delete, change permissions, drag files between your computer and the server, and edit text files in place.
+
+**A proper desktop workspace.** Tabs, split panes, a hosts panel you can drag servers from, a menu bar, and a command palette (Ctrl+Shift+P) that finds any host, snippet, theme or action from a few letters.
+
+**At home on a phone.** The phone keyboard types exactly what you mean, with a bar above it for Esc, Tab, Ctrl, Alt, the arrows and the symbols a shell needs.
+
+**Easy to move in.** Import your hosts and keys from `~/.ssh/config`, PuTTY keys, or a CSV such as the one Termius exports, groups and tags included.
+
+**Private by design.** Promptly [collects nothing about you](docs/PRIVACY.md). It can check for new versions if you ask it to, and that's off by default.
+
+## A closer look
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/m3-command-palette.png" alt="The command palette filtering to a terminal theme"><br><sub>The command palette: hosts, snippets, themes and actions in a few keystrokes.</sub></td>
+    <td width="50%"><img src="docs/screenshots/m3-files-dual-pane.png" alt="The file browser with this computer's files beside the server's"><br><sub>Your files beside the server's. Drag to copy.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/m3-snippet-run-on-hosts.png" alt="A snippet run on two hosts, showing what each one printed"><br><sub>Run a snippet on several servers and read what each one printed.</sub></td>
+    <td><img src="docs/screenshots/m3-search-matches.png" alt="Searching the scrollback with every match highlighted"><br><sub>Search the screen and scrollback.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/m2-sync-devices.png" alt="The sync status page with two devices in the vault"><br><sub>One vault, every device. You choose where it lives.</sub></td>
+    <td><img src="docs/screenshots/m1-themes-gallery.png" alt="The theme gallery with Dracula selected"><br><sub>Themes with a live preview, or import your own.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/m3-jump-host.png" alt="Connecting through a jump host and trusting its key"><br><sub>Jump hosts, with every server's identity checked on the way.</sub></td>
+    <td><img src="docs/screenshots/m3-port-forwards.png" alt="A live session's port forwards, each with a switch"><br><sub>Port forwards you can switch on and off while connected.</sub></td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/screenshots/m4-phone-shell.png" alt="A shell on a phone with the keyboard bar" width="260">
+  &nbsp;
+  <img src="docs/screenshots/m4-phone-hosts.png" alt="The hosts list on a phone" width="260">
+</p>
+
+## Get Promptly
+
+Download the latest version for your system from [GitHub Releases](https://github.com/analogproblems/Promptly/releases/latest).
+
+| System | What to download |
 |---|---|
-| Ctrl+Shift+P | Command palette: hosts, snippets, themes, every action |
-| Ctrl+Shift+T / Ctrl+Shift+W | New tab / close pane (the tab closes with its last pane) |
-| Ctrl+Tab / Ctrl+Shift+Tab, Alt+1…9 | Next, previous, or a particular tab |
-| Ctrl+Shift+D / Ctrl+Shift+E | Split the pane right / down |
-| Alt+Arrows | Move between panes |
-| Ctrl+Shift+B | Hosts panel, for dragging hosts onto panes |
-| Ctrl+Shift+F | Find in the session; Enter walks up, Shift+Enter down |
-| Ctrl+Shift+C / Ctrl+Shift+V | Copy / paste |
-| Ctrl+= / Ctrl+- / Ctrl+0 | Bigger, smaller, normal text |
-| Ctrl+click | Open a link in the output |
+| Windows | The installer (`setup.exe`), which can also update itself. A zip is there too. |
+| Mac | The `.dmg`, for Apple silicon and Intel Macs. |
+| Linux | The `.deb` for Debian and Ubuntu, or the tarball for anything else. |
+| Android | The `.apk`. Google Play is on the way. |
 
-Plain Ctrl+D, Ctrl+W, Ctrl+T, Ctrl+B and Ctrl+K go to the program in the terminal, as they should.
+The Windows and Mac builds aren't signed with a paid certificate yet, so the first launch shows a warning you need to click past once. The [installing chapter](https://analogproblems.github.io/Promptly/guide/#2-installing-promptly) of the guide walks you through it. An iPhone version needs the App Store and comes later; [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) explains the plan.
 
-## Get it
+## Learn more
 
-Builds for Linux, Windows and Android go on [GitHub Releases](https://github.com/analogproblems/Promptly/releases) as a tarball and `.deb`, a zip, and an APK, with `SHA256SUMS`. The Windows build is not signed with a bought certificate yet, so the first run shows SmartScreen's "Windows protected your PC": *More info*, then *Run anyway*. Android is also coming to Google Play through a closed test first. The plan for each channel, and why the paid stores wait, is in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md). Promptly [collects nothing about you](docs/PRIVACY.md).
+The [user guide](https://analogproblems.github.io/Promptly/guide/) covers everything step by step: your first connection, keys, the desktop workspace, snippets, files, sync, every [keyboard shortcut](https://analogproblems.github.io/Promptly/guide/#17-keyboard-shortcuts) and [fixes for common problems](https://analogproblems.github.io/Promptly/guide/#20-troubleshooting).
 
-## Status
+Found a bug or have an idea? [Open an issue](https://github.com/analogproblems/Promptly/issues). For security problems, see [SECURITY.md](SECURITY.md).
 
-**Milestone 4 built: ship.** The first run is a three-screen welcome tour, skippable, with help and an about page behind Settings. There is an app icon on every platform. Themes import from iTerm2, Windows Terminal, Alacritty and base16 files and sync like everything else; PuTTY keys import and are kept in OpenSSH form; a CSV such as the one Termius exports brings hosts in with their groups, tags and passwords. Text files on a server open in an editor from the file browser and save back in place. On a phone the terminal takes the system keyboard's text exactly as typed, with a bar above it for Esc, Tab, sticky Ctrl and Alt, arrows and the shell's punctuation. Screen readers get labels and the terminal's text; large text and reduced motion are honoured. CI builds Linux, Windows and Android on every push, a tag opens a draft release with every package, and the docs you are reading become a small site. The paid stores wait, as the release plan says.
+## For developers
 
-**Milestone 3 built: power.** The Hosts tab shows favourites and the hosts you used lately above the full list, and, with one setting on, a dot per host that says whether it is up right now. Files on a host open from the session itself, over the connection it already has: browse, make folders, rename, delete, set permissions, and copy files with progress; on a desktop window your own files sit beside the server's and drag across. On a desktop-sized window the Sessions tab becomes a workspace: tabs across the top, panes split right or down, a hosts panel to drag hosts from, a menu bar, and a command palette on Ctrl+Shift+P that connects to a host, runs a snippet or switches the theme from a few typed letters. Search the screen and scrollback with Ctrl+Shift+F: every match lights up, Enter walks through them, and the one you are on is selected and ready to copy. Links in the output, whether a program marked them or just printed a URL, are underlined; Ctrl+click opens one, right-click copies it. Snippets save the commands you type all the time; write `{{name}}` for the parts that change and Promptly asks for them when it runs. Run one in the session you are in, from the drawer in the session bar, or on a dozen hosts at once and read what each printed. Hosts can connect through a jump host (or a chain of them), each with its own login. Port forwards are saved on the host: local ones open a port on your device, remote ones a port on the server, and a SOCKS proxy lets any program pick its destination through the server. They start with the session when you say so and switch on and off from the session bar. A persistent session attaches to tmux on the server, so the work survives a dropped connection or a phone going to sleep. Agent forwarding, a startup command and environment variables are per host too, and the `~/.ssh/config` import brings all of that in.
-
-**Milestone 2 built: the vault.** Set up sync from Settings: pick a folder (one that Syncthing, Dropbox, iCloud Drive or any sync client mirrors), choose a passphrase, write down the recovery code. Every other device joins with the passphrase and gets the same hosts, keys and snippets, encrypted end to end, with nothing but files on storage you already own. A host added on one machine shows up on the other within half a minute. Or keep the vault on a server you already have: pick a saved host and a folder, and Promptly syncs over SFTP with that host's stored login. The `promptly` command-line tool reads the same vault: inspect, export to JSON, import, sync, and write an OpenSSH config. Going the other way, Settings imports the hosts in your `~/.ssh/config` along with the keys they name, and a host can log in with the keys in your SSH agent. A server trusted on one device is trusted on all of them.
-
-**Milestone 1 built, now in daily use on Linux.** Save hosts, generate or import keys, and connect with one tap into a full terminal: colour, styles, scrollback, full-screen programs, host key checking and password, key or two-factor login. Pick from fifteen terminal themes with a live preview. Select text with the mouse and copy it with Ctrl+Shift+C or the right-click menu. The Sessions tab shows a live thumbnail of every open session. A dropped connection comes back by itself, with the screen intact. The milestone is done when it has replaced the old terminal for a week; the touch gestures wait for the Android build. Linux comes first, then Windows, Android, macOS and iOS.
-
-<p>
-  <img src="docs/screenshots/m4-welcome.png" alt="The welcome tour on first run" width="640">
-  <img src="docs/screenshots/m4-help.png" alt="In-app help with the keyboard shortcuts" width="640">
-  <img src="docs/screenshots/m4-csv-import.png" alt="Importing hosts from a CSV file" width="640">
-  <img src="docs/screenshots/m4-your-themes.png" alt="Imported themes under Your themes" width="640">
-  <img src="docs/screenshots/m4-editor.png" alt="Editing a file on the server in place" width="640">
-  <img src="docs/screenshots/m4-phone-shell.png" alt="A shell on the phone layout with the keyboard bar" width="300">
-  <img src="docs/screenshots/m4-phone-hosts.png" alt="The hosts list on a phone" width="300">
-</p>
-<p>
-  <img src="docs/screenshots/m3-hosts-dots.png" alt="The Hosts tab with a Favourites section and a reachability dot on each host" width="640">
-  <img src="docs/screenshots/m3-files-dual-pane.png" alt="The file browser: this device's files beside the server's, a file just dragged across" width="640">
-  <img src="docs/screenshots/m3-files-permissions.png" alt="Setting a file's permissions" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m3-desktop-panes.png" alt="The desktop workspace: a tab with two panes and the hosts panel" width="640">
-  <img src="docs/screenshots/m3-desktop-drag.png" alt="Dragging a host from the panel onto an empty pane" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m3-command-palette.png" alt="The command palette filtering to a terminal theme" width="640">
-  <img src="docs/screenshots/m3-menu-bar.png" alt="The File menu with its shortcuts" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m3-search-matches.png" alt="Searching the scrollback: every match highlighted, the current one selected" width="640">
-  <img src="docs/screenshots/m3-link-menu.png" alt="Right-clicking a link in the output: open it or copy it" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m3-snippet-variables.png" alt="Running a snippet in a session: its variable is asked for with a default" width="640">
-  <img src="docs/screenshots/m3-snippet-run-on-hosts.png" alt="A snippet run on two hosts, with what each one printed" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m3-jump-host.png" alt="Connecting through a jump host, trusting its key on the way" width="640">
-  <img src="docs/screenshots/m3-tmux-session.png" alt="A persistent session inside tmux, reached through the jump host" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m3-port-forwards.png" alt="The port forwards of a live session, each with a switch" width="640">
-  <img src="docs/screenshots/m3-host-connection.png" alt="The host editor's connection section: jump host, persistent session, agent forwarding, startup command" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m2-sync-place.png" alt="Choosing where the vault lives" width="640">
-  <img src="docs/screenshots/m2-sync-recovery.png" alt="The recovery code shown once after creating a vault" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m2-sync-devices.png" alt="The sync status with two enrolled devices" width="640">
-  <img src="docs/screenshots/m2-sync-hosts-arrived.png" alt="The second machine showing hosts added on the first" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m2-sync-sftp-server.png" alt="Picking a saved host to keep the vault on over SFTP" width="640">
-  <img src="docs/screenshots/m2-sync-sftp-status.png" alt="The sync status for a vault kept on a server" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m2-import-ssh-config.png" alt="Importing hosts and keys from ~/.ssh/config" width="640">
-  <img src="docs/screenshots/m2-import-key-login.png" alt="Logged in to an imported host with its imported key" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m1-hosts-list.png" alt="The saved hosts list on Linux, dark theme" width="640">
-  <img src="docs/screenshots/m1-host-editor.png" alt="The host editor with password auth and a remembered password" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m1-ssh-shell.png" alt="An SSH session connected and running commands on Linux, dark theme" width="640">
-  <img src="docs/screenshots/m1-ssh-host-key.png" alt="The first-time host key prompt with fingerprint and randomart" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m1-sessions-thumbnails.png" alt="The Sessions tab with live thumbnails of an SSH session and a local shell" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m1-reconnect-dropped.png" alt="An SSH session whose connection just dropped, reconnecting by itself" width="640">
-  <img src="docs/screenshots/m1-reconnect-back.png" alt="The same session after reconnecting, with the earlier output still on screen" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m1-themes-gallery.png" alt="The terminal theme gallery with Dracula selected" width="640">
-  <img src="docs/screenshots/m1-theme-dracula.png" alt="A local shell recoloured to Dracula" width="640">
-</p>
-<p>
-  <img src="docs/screenshots/m1-terminal-top.png" alt="Promptly running top in a local shell on Linux" width="640">
-  <img src="docs/screenshots/m1-terminal-styles.png" alt="Text styles and colour modes in the terminal" width="640">
-</p>
-
-Read the design in this order:
+Promptly is a Flutter app on top of a Rust engine that does the terminal emulation (`alacritty_terminal`), SSH (`russh`), the vault and its encryption. On Ubuntu, `tools/setup.sh` then `make run` gets you going.
 
 | Document | What it covers |
 |---|---|
-| [docs/DESIGN.md](docs/DESIGN.md) | Vision, principles, features, architecture, look and feel, security |
-| [docs/VAULT.md](docs/VAULT.md) | The sync design: vault format, encryption, conflict handling, storage backends |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones from empty repo to app store |
-| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | How to build, run and change it |
-
-## The pitch in one table
-
-| | Termius | Promptly |
-|---|---|---|
-| Sync hosts and keys across devices | Pro plan, about $10 a month | Free, uses storage you already have |
-| Where your data lives | Their servers | Your iCloud, Drive, Dropbox or server |
-| Who can read it | Encrypted in their format | Encrypted on your device, open documented format |
-| Export | Limited | Full export and a command-line tool, any time |
-| Desktop app | Electron | Flutter UI on a Rust engine |
-
-## Principles
-
-1. **No servers, no accounts, no subscription.** Sync uses your storage. Nobody can read your data in transit or at rest because it never reaches anyone but you.
-2. **Feel first.** Smooth scrolling at the display's refresh rate, instant connect, a keyboard that works on a phone, themes that look right.
-3. **Open format.** The vault is documented; the CLI can decrypt and export everything. You can leave at any time.
-4. **Secure by default.** Client-side encryption, hardware-backed keys where available, host key verification you cannot miss.
-
-## Build it
-
-On Ubuntu: `tools/setup.sh`, then `make run`. Everything else is in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Building, running and changing Promptly |
+| [docs/DESIGN.md](docs/DESIGN.md) | Vision, principles, architecture and security |
+| [docs/VAULT.md](docs/VAULT.md) | The vault format, encryption and sync |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones, what's built and what's next |
 
 ## Licence
 
 MIT. Free, open source, no paid tier. See [LICENSE](LICENSE).
-
-## Stack
-
-Flutter for the user interface on iOS, Android, macOS, Windows and Linux. Rust for the engine: terminal emulation (`alacritty_terminal`), SSH (`russh`), the vault and its encryption. See [docs/DESIGN.md](docs/DESIGN.md) for the reasoning.
