@@ -367,6 +367,14 @@ impl Emulator {
         if !self.sync_deadline().is_some_and(|d| d <= now) {
             return None;
         }
+        self.end_sync()
+    }
+
+    /// Show what a synchronized update has drawn so far, due or not, for
+    /// when the program has ended and will never finish it. `None` when no
+    /// update was in progress.
+    pub fn end_sync(&mut self) -> Option<Vec<EmulatorEvent>> {
+        self.sync_deadline()?;
         self.parser.stop_sync(&mut self.term);
         Some(self.drain_events())
     }

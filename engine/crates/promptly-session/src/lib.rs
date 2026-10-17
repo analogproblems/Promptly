@@ -373,16 +373,25 @@ pub fn pump(
                 last = Instant::now();
             }
             // Locked through the announcement, so a reconnect lands wholly
-            // before (and this stays quiet) or wholly after.
-            let mut transport = session.transport.lock().unwrap();
+            // before (and this stays quiet) or wholly after, and the sync
+            // watcher finds nothing left to show once it is made.
+            let mut emu = session.emulator.lock().unwrap();
             if !current() {
                 // The session has a new connection; only the old one ended.
                 return;
             }
+            // An update the program left open will never be finished, so
+            // its last output is shown before the end is announced.
+            if let Some(events) = emu.end_sync() {
+                deliver(&session, events, &emit);
+                emit(SessionEvent::Frame(emu.frame()));
+            }
+            let mut transport = session.transport.lock().unwrap();
             let code = transport.exit_code();
             session.mark_exited(code);
             emit(SessionEvent::Exited { code });
             drop(transport);
+            drop(emu);
         })
         .expect("spawn session thread")
 }
@@ -593,6 +602,61 @@ mod tests {
         assert!(waited < Duration::from_secs(1), "but not for long");
         assert!(session.screen_text().starts_with("drawn"));
         drop(input);
+    }
+
+    /// A reader that hands over what it is given, then fails.
+    struct Failing(Option<Vec<u8>>);
+
+    impl Read for Failing {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let Some(bytes) = self.0.take() else {
+                return Err(io::Error::new(io::ErrorKind::ConnectionReset, "dropped"));
+            };
+            buf[..bytes.len()].copy_from_slice(&bytes);
+            Ok(bytes.len())
+        }
+    }
+
+    #[test]
+    fn a_program_that_ends_inside_a_synchronized_update_shows_its_last_output_first() {
+        // OSC 52 asks for "hi" on the clipboard.
+        let last = b"\x1b[?2026hfinal\x1b]52;c;aGk=\x07".to_vec();
+        let ends: [Box<dyn Read + Send>; 2] = [
+            Box::new(Feed({
+                let (input, output) = mpsc::channel();
+                input.send(last.clone()).unwrap();
+                output
+            })),
+            Box::new(Failing(Some(last))),
+        ];
+        for reader in ends {
+            let session = Arc::new(Session::with_scrollback(
+                SessionKind::Ssh { host: "t".into() },
+                TermSize::new(20, 3),
+                Palette::promptly_dark(),
+                Box::new(Nowhere),
+                100,
+            ));
+            let (tx, rx) = mpsc::channel();
+            let _h = pump(session.clone(), reader, move |e| {
+                let _ = tx.send(e);
+            });
+            let (mut shown, mut copied) = (false, false);
+            loop {
+                match rx.recv_timeout(Duration::from_secs(2)) {
+                    Ok(SessionEvent::Frame(f)) => {
+                        shown |= f.rows_changed.iter().any(|r| r.glyphs[0] == "f");
+                    }
+                    Ok(SessionEvent::Clipboard(text)) => copied = text == "hi",
+                    Ok(SessionEvent::Exited { .. }) => break,
+                    Err(_) => panic!("the end was never announced"),
+                }
+            }
+            assert!(shown, "the last output is on screen before the end");
+            assert!(copied, "and its clipboard write delivered");
+            // Past the update's timeout: nothing follows the end.
+            assert!(rx.recv_timeout(Duration::from_millis(500)).is_err());
+        }
     }
 
     /// A reader that ends when told to.
