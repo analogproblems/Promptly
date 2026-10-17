@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/app.dart';
 import 'package:promptly/core/theme/theme.dart';
+import 'package:promptly/core/theme/tokens.dart';
 import 'package:promptly/core/version.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/core/file_picker.dart';
@@ -17,6 +18,7 @@ import 'package:promptly/features/files/fs.dart';
 import 'package:promptly/features/terminal/keyboard_bar.dart';
 import 'package:promptly/features/sessions/session_body.dart';
 import 'package:promptly/features/sessions/session_thumbnail.dart';
+import 'package:promptly/features/sessions/status_dot.dart';
 import 'package:promptly/features/workspace/workspace.dart';
 import 'package:promptly/features/workspace/workspace_screen.dart';
 import 'package:promptly/features/updates/updates.dart';
@@ -249,8 +251,20 @@ class FakeEngine implements Engine {
     return requests.length;
   }
 
+  /// When set, SSH attempts fail with this event after one step.
+  SshEvent? failWith;
+
+  /// Attempts cancelled or hung up.
+  final List<int> cancelledAttempts = [];
+
   @override
   Stream<SshEvent> sshConnectEvents(int attemptId) {
+    if (failWith case final fail?) {
+      return Stream.fromIterable([
+        const SshEvent(kind: SshEventKind.progress, step: SshStep.connecting),
+        fail,
+      ]);
+    }
     final id = connectedSessionId;
     if (id == null) return const Stream.empty();
     return Stream.fromIterable([
@@ -286,7 +300,7 @@ class FakeEngine implements Engine {
   @override
   void sshAnswerKeyboardInteractive(int attemptId, List<String>? answers) {}
   @override
-  void sshCancel(int attemptId) {}
+  void sshCancel(int attemptId) => cancelledAttempts.add(attemptId);
 
   /// Canned results for snippets run on hosts, by hostname, and the calls made.
   final Map<String, SshExecResult> execResults = {};
@@ -809,13 +823,14 @@ String hostJson(
   String auth = '{"kind":"interactive"}',
   String? lastConnected,
   bool favourite = false,
+  String extra = '',
 }) =>
     '{"id":"$id","label":"$label","hostname":"$label.example","port":22,"username":"ops",'
     '"auth":$auth,"group_id":${group == null ? 'null' : '"$group"'},"tags":[],'
     '"color":${color == null ? 'null' : '"$color"'},'
     '"icon":null,"notes":"","jump_host_id":null,"keepalive_seconds":30,"startup_command":null,"env":{},'
     '"persistent_session":false,"port_forwards":[],'
-    '"last_connected_at":${lastConnected == null ? 'null' : '"$lastConnected"'},"favourite":$favourite,"sync":"vault"}';
+    '"last_connected_at":${lastConnected == null ? 'null' : '"$lastConnected"'},"favourite":$favourite,"sync":"vault"$extra}';
 
 /// A folder tree in memory, standing in for this device's disk.
 class MemoryFs extends Fs {
@@ -2293,5 +2308,315 @@ void main() {
     await tester.tap(find.byKey(const Key('kb-dash')));
     expect(engine.written.last, [0x1b, 0x2d], reason: 'Alt prefixes Escape');
     expect(find.byKey(const Key('kb-snippets')), findsOneWidget);
+  });
+
+  testWidgets('a failed connection says what happened and what to try, with the details behind a button', (
+    tester,
+  ) async {
+    final engine = FakeEngine()
+      ..failWith = const SshEvent(
+        kind: SshEventKind.failed,
+        error: 'could not reach web-1.example on port 22: nothing is listening there',
+        errorTitle: 'Nothing is answering on port 22',
+        errorHint: 'Check the port number, and that the SSH server is running on web-1.example.',
+      );
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    expect(find.text('Nothing is answering on port 22'), findsOneWidget);
+    expect(find.textContaining('SSH server is running'), findsOneWidget);
+    expect(find.textContaining('nothing is listening there'), findsNothing, reason: 'the detail waits behind Details');
+    await tester.tap(find.byKey(const Key('connect-error-details')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('nothing is listening there'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
+  });
+
+  testWidgets("a group's port and jump host are set in its editor and used by its hosts", (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.secrets['p1'] = 'hunter2';
+    engine.records['groups'] = {'g1': '{"id":"g1","label":"Production","parent_id":null,"color":null,"defaults":{}}'};
+    engine.records['hosts'] = {
+      'b1': hostJson('b1', 'bastion', auth: '{"kind":"password","password_secret_id":"p1"}'),
+      'h1': hostJson(
+        'h1',
+        'web-1',
+        group: 'g1',
+      ).replaceFirst('"keepalive_seconds":30', '"keepalive_seconds":0'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('group-edit-g1')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('group-port')), '2222');
+    await tester.ensureVisible(find.byKey(const Key('group-jump')));
+    await tester.tap(find.byKey(const Key('group-jump')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('bastion').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('group-save')));
+    await tester.pumpAndSettle();
+    final group = engine.records['groups']!['g1']!;
+    expect(group, contains('"port":2222'));
+    expect(group, contains('"jump_host_id":"b1"'));
+
+    expect(find.textContaining('ops@web-1.example:2222'), findsOneWidget, reason: 'the list shows the port in use');
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    final r = engine.requests.single;
+    expect(r.port, 2222, reason: 'a host left on 22 takes the group port');
+    expect(r.jumps.single.host, 'bastion.example');
+    expect(r.jumps.single.password, 'hunter2');
+    expect(r.keepaliveSeconds, 0, reason: 'zero is passed on, to turn keep-alives off');
+  });
+
+  testWidgets("the host editor shows what the group fills in: user, port, key and jump host", (tester) async {
+    final engine = FakeEngine();
+    engine.records['groups'] = {
+      'g1':
+          '{"id":"g1","label":"Production","parent_id":null,"color":null,'
+          '"defaults":{"username":"ops-default","identity_id":"k1","port":2222,"jump_host_id":"b1"}}',
+    };
+    engine.records['identities'] = {
+      'k1': '{"id":"k1","label":"laptop","key_type":"ed25519","public_key":"ssh-ed25519 AAAA","private_key_secret_id":"s1"}',
+    };
+    engine.records['hosts'] = {
+      'b1': hostJson('b1', 'bastion'),
+      'h1': hostJson('h1', 'web-1', group: 'g1').replaceFirst('"username":"ops"', '"username":""'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: find.byKey(const Key('host-row-h1')), matching: find.byTooltip('Host actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    expect(find.text("Blank uses the group's ops-default"), findsOneWidget);
+    expect(find.byKey(const Key('host-port-inherited')), findsOneWidget);
+    expect(find.text("Uses the group's key, laptop."), findsOneWidget, reason: 'the host asks each time');
+    await scrollTo(tester, find.byKey(const Key('host-jump')));
+    expect(find.text("The group's: bastion"), findsOneWidget);
+  });
+
+  testWidgets('tags are saved from the host editor, and search finds hosts by tag and by notes', (tester) async {
+    final engine = FakeEngine();
+    engine.records['hosts'] = {
+      'h1': hostJson('h1', 'web-1'),
+      'h2': hostJson('h2', 'nas').replaceFirst('"notes":""', '"notes":"The box under the stairs"'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Host actions').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await scrollTo(tester, find.byKey(const Key('host-tags')));
+    await tester.enterText(find.byKey(const Key('host-tags')), 'eu-west, frontend,  , Frontend');
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(Chip, 'eu-west'), findsOneWidget);
+    expect(find.widgetWithText(Chip, 'frontend'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('host-save')));
+    await tester.pumpAndSettle();
+    expect(engine.records['hosts']!['h1'], contains('"tags":["eu-west","frontend"]'));
+
+    final search = find.byType(TextField).first;
+    await tester.enterText(search, 'front');
+    await tester.pumpAndSettle();
+    expect(find.text('web-1'), findsOneWidget);
+    expect(find.text('nas'), findsNothing);
+    await tester.enterText(search, 'stairs');
+    await tester.pumpAndSettle();
+    expect(find.text('nas'), findsOneWidget);
+    expect(find.text('web-1'), findsNothing);
+  });
+
+  testWidgets('Test connection runs the real steps with the form as it stands, then hangs up', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 9;
+    engine.records['hosts'] = {
+      'h1': hostJson(
+        'h1',
+        'web-1',
+        auth: '{"kind":"password"}',
+      ).replaceFirst('"startup_command":null', '"startup_command":"htop"'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Host actions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('host-hostname')), 'web-2.example');
+    await tester.enterText(find.byType(TextFormField).at(4), 'typed-secret');
+    await scrollTap(tester, find.byKey(const Key('host-test')));
+    await tester.pumpAndSettle();
+    expect(find.text('Test connection'), findsWidgets);
+    expect(find.byKey(const Key('host-test-ok')), findsOneWidget);
+    expect(find.text('Connecting'), findsOneWidget, reason: 'the steps are shown');
+    final r = engine.requests.single;
+    expect(r.host, 'web-2.example', reason: 'the unsaved form is what gets tested');
+    expect(r.password, 'typed-secret');
+    expect(r.startupCommand, isNull, reason: 'a test runs nothing on the server');
+    expect(r.forwards, isEmpty);
+    expect(engine.cancelledAttempts, [1], reason: 'the test session is hung up');
+    await tester.tap(find.byKey(const Key('host-test-close')));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit host'), findsOneWidget);
+    expect(engine.records['hosts']!['h1'], contains('"hostname":"web-1.example"'), reason: 'nothing was saved');
+  });
+
+  testWidgets('a production host is marked in the editor, and its sessions and tabs carry a red bar with the label', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {'h1': hostJson('h1', 'db-1')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Host actions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('host-production')));
+    await tester.pumpAndSettle();
+    await scrollTo(tester, find.byKey(const Key('host-production-label')));
+    await tester.enterText(find.byKey(const Key('host-production-label')), 'Live payments');
+    await tester.tap(find.byKey(const Key('host-save')));
+    await tester.pumpAndSettle();
+    final saved = engine.records['hosts']!['h1']!;
+    expect(saved, contains('"production":true'));
+    expect(saved, contains('"production_label":"Live payments"'));
+
+    // On a desktop window, so the session opens in a tab.
+    desktopWindow(tester);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('production-bar')), findsOneWidget);
+    expect(find.text('LIVE PAYMENTS'), findsWidgets, reason: 'the bar and the tab say it in words');
+    expect(find.byKey(const Key('tab-production')), findsOneWidget);
+    expect(find.bySemanticsLabel('Production host: Live payments'), findsOneWidget);
+    expect(find.byKey(const Key('host-colour-bar')), findsNothing, reason: 'the red bar replaces the colour strip');
+    handle.dispose();
+  });
+
+  testWidgets('while reconnecting the status dot is amber, says so, and pulses unless motion is reduced', (
+    tester,
+  ) async {
+    Future<double> opacityAfter(Duration d) async {
+      await tester.pump(d);
+      final fade = tester.widget<FadeTransition>(
+        find.descendant(of: find.byType(SessionStatusDot), matching: find.byType(FadeTransition)).first,
+      );
+      return fade.opacity.value;
+    }
+
+    for (final reduced in [false, true]) {
+      if (reduced) {
+        tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(
+          disableAnimations: true,
+        );
+      }
+      final engine = FakeEngine()
+        ..connectedSessionId = 7
+        ..dropAfterFrame = true;
+      await tester.pumpWidget(app(engine));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'deploy@web-1');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Connect'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('Connection dropped'), findsOneWidget);
+      expect(find.byTooltip('Reconnecting…'), findsOneWidget);
+      final dot = tester.widget<Container>(
+        find.descendant(of: find.byType(SessionStatusDot), matching: find.byType(Container)).first,
+      );
+      final context = tester.element(find.byType(SessionStatusDot).first);
+      expect((dot.decoration! as BoxDecoration).color, context.tokens.warning);
+      final a = await opacityAfter(const Duration(milliseconds: 200));
+      final b = await opacityAfter(const Duration(milliseconds: 300));
+      if (reduced) {
+        expect([a, b], [1.0, 1.0], reason: 'steady with reduced motion');
+      } else {
+        expect(a, isNot(b), reason: 'it pulses');
+      }
+      // Let the reconnect finish so nothing is left running.
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Connected'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    }
+    tester.platformDispatcher.clearAccessibilityFeaturesTestValue();
+  });
+
+  testWidgets('the host and group editors fit a 360-wide phone at double text size', (tester) async {
+    tester.view.physicalSize = const Size(360, 780);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    final engine = FakeEngine();
+    engine.records['groups'] = {
+      'g1':
+          '{"id":"g1","label":"Production","parent_id":null,"color":null,'
+          '"defaults":{"username":"ops-default","identity_id":"k1","port":2222,"jump_host_id":"b1"}}',
+    };
+    engine.records['identities'] = {
+      'k1':
+          '{"id":"k1","label":"a key with a rather long name","key_type":"ed25519","public_key":"ssh-ed25519 AAAA","private_key_secret_id":"s1"}',
+    };
+    engine.records['hosts'] = {
+      'b1': hostJson('b1', 'bastion-with-a-long-name'),
+      'h1': hostJson(
+        'h1',
+        'web-1',
+        group: 'g1',
+        extra: ',"production":true,"production_label":"Production database"',
+      ).replaceFirst('"tags":[]', '"tags":["eu-west","frontend"]'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.descendant(of: find.byKey(const Key('host-row-h1')), matching: find.byTooltip('Host actions')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    for (final key in ['host-tags', 'host-production-label', 'host-jump']) {
+      await scrollTo(tester, find.byKey(Key(key)));
+    }
+    // The test dialog, with a failure in it.
+    engine
+      ..secrets['s1'] = 'PRIVATE KEY'
+      ..failWith = const SshEvent(
+        kind: SshEventKind.failed,
+        error: 'jump host bastion: could not find a server called bastion.example',
+        errorTitle: 'Couldn\'t connect to the jump host bastion.example',
+        errorHint: 'Check the hostname for typos, and that this device is online (or on the VPN the server needs).',
+      );
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('host-test')),
+      -150,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-test')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('connect-error-title')), findsOneWidget);
+    await tester.ensureVisible(find.byKey(const Key('connect-error-details')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('connect-error-details')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-test-close')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Back'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('group-edit-g1')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('group-jump')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('group-port')), findsOneWidget);
+    // An overflow anywhere above would have failed the test.
   });
 }

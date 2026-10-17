@@ -3662,6 +3662,8 @@ impl SseDecode for crate::api::ssh::SshEvent {
             <Option<Vec<crate::api::ssh::SshKbPrompt>>>::sse_decode(deserializer);
         let mut var_sessionId = <Option<u32>>::sse_decode(deserializer);
         let mut var_error = <Option<String>>::sse_decode(deserializer);
+        let mut var_errorTitle = <Option<String>>::sse_decode(deserializer);
+        let mut var_errorHint = <Option<String>>::sse_decode(deserializer);
         return crate::api::ssh::SshEvent {
             kind: var_kind,
             step: var_step,
@@ -3672,6 +3674,8 @@ impl SseDecode for crate::api::ssh::SshEvent {
             kb_prompts: var_kbPrompts,
             session_id: var_sessionId,
             error: var_error,
+            error_title: var_errorTitle,
+            error_hint: var_errorHint,
         };
     }
 }
@@ -4679,6 +4683,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::ssh::SshEvent {
             self.kb_prompts.into_into_dart().into_dart(),
             self.session_id.into_into_dart().into_dart(),
             self.error.into_into_dart().into_dart(),
+            self.error_title.into_into_dart().into_dart(),
+            self.error_hint.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -5892,6 +5898,8 @@ impl SseEncode for crate::api::ssh::SshEvent {
         <Option<Vec<crate::api::ssh::SshKbPrompt>>>::sse_encode(self.kb_prompts, serializer);
         <Option<u32>>::sse_encode(self.session_id, serializer);
         <Option<String>>::sse_encode(self.error, serializer);
+        <Option<String>>::sse_encode(self.error_title, serializer);
+        <Option<String>>::sse_encode(self.error_hint, serializer);
     }
 }
 

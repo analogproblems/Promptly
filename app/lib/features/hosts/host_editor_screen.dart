@@ -5,7 +5,12 @@ import 'package:go_router/go_router.dart';
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../sessions/connect_flow.dart';
+import '../sessions/connecting_view.dart';
+import '../sessions/session_manager.dart';
+import '../settings/settings_providers.dart';
 import 'host_colors.dart';
+import 'inheritance.dart';
 import 'models.dart';
 import 'repositories.dart';
 
@@ -39,6 +44,8 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
   late final TextEditingController _username;
   late final TextEditingController _password;
   late final TextEditingController _notes;
+  late final TextEditingController _tags;
+  late final TextEditingController _productionLabel;
   late final TextEditingController _keepalive;
   late final TextEditingController _startup;
   late final TextEditingController _env;
@@ -57,6 +64,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
   String? _groupId;
   String? _color;
   late bool _favourite;
+  late bool _production;
   String? _error;
 
   bool get _isNew => widget.hostId == null;
@@ -71,6 +79,9 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     _username = TextEditingController(text: _original.username);
     _password = TextEditingController();
     _notes = TextEditingController(text: _original.notes);
+    _tags = TextEditingController(text: _original.tags.join(', '));
+    _productionLabel = TextEditingController(text: _original.productionLabel);
+    _production = _original.production;
     _keepalive = TextEditingController(text: '${_original.keepaliveSeconds}');
     _startup = TextEditingController(text: _original.startupCommand ?? '');
     _env = TextEditingController(text: [for (final e in _original.env.entries) '${e.key}=${e.value}'].join('\n'));
@@ -95,22 +106,125 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
 
   @override
   void dispose() {
-    for (final c in [_label, _hostname, _port, _username, _password, _notes, _keepalive, _startup, _env]) {
+    for (final c in [
+      _label,
+      _hostname,
+      _port,
+      _username,
+      _password,
+      _notes,
+      _tags,
+      _productionLabel,
+      _keepalive,
+      _startup,
+      _env,
+    ]) {
       c.dispose();
     }
     super.dispose();
   }
 
+  /// What the selected group passes on to this host.
+  Inherited get _inherited => Inherited(_original.copyWith(groupId: _groupId), ref.read(groupsProvider));
+
   /// The selected group's default user, which a blank User field takes.
-  String? get _groupUser {
-    final user = ref.read(groupsProvider.notifier).byId(_groupId)?.defaults['username'] as String?;
-    return user == null || user.trim().isEmpty ? null : user.trim();
+  String? get _groupUser => _inherited.groupUser;
+
+  /// The port typed in; blank (allowed when the group sets one) is 22,
+  /// which takes the group's.
+  int get _portValue => int.tryParse(_port.text.trim()) ?? 22;
+
+  /// The host as the form now describes it, for saving or testing. Nothing
+  /// is written.
+  Host _formHost(HostAuth auth) => _original.copyWith(
+    label: _label.text.trim().isEmpty ? _hostname.text.trim() : _label.text.trim(),
+    hostname: _hostname.text.trim(),
+    port: _portValue,
+    username: _username.text.trim(),
+    auth: auth,
+    groupId: _groupId,
+    tags: parseTags(_tags.text),
+    color: _color,
+    notes: _notes.text,
+    keepaliveSeconds: int.tryParse(_keepalive.text.trim()) ?? 30,
+    favourite: _favourite,
+    production: _production,
+    productionLabel: _productionLabel.text.trim(),
+    jumpHostId: _jumpHostId,
+    persistentSession: _persistent,
+    agentForwarding: _agentForwarding,
+    startupCommand: _startup.text.trim().isEmpty ? null : _startup.text.trim(),
+    env: _parseEnv(_env.text),
+    portForwards: [for (final f in _forwards) if (f.bindPort > 0) f],
+  );
+
+  /// Connect with what the form says, without saving: the real steps, any
+  /// questions, then hang up.
+  Future<void> _test() async {
+    if (!(_form.currentState?.validate() ?? false)) return;
+    final HostAuth auth;
+    switch (_auth) {
+      case _AuthChoice.key:
+        if (_identityId == null) {
+          setState(() => _error = 'Pick a key, or generate one on the Keys tab.');
+          return;
+        }
+        auth = HostAuth(kind: AuthKind.identity, identityId: _identityId);
+      case _AuthChoice.password:
+        // A saved password is used unless a new one is typed.
+        auth = HostAuth(
+          kind: AuthKind.password,
+          passwordSecretId: _password.text.isEmpty && _rememberPassword ? _original.auth.passwordSecretId : null,
+        );
+      case _AuthChoice.agent:
+        auth = const HostAuth(kind: AuthKind.agent);
+      case _AuthChoice.ask:
+        auth = const HostAuth(kind: AuthKind.interactive);
+      case _AuthChoice.none:
+        auth = const HostAuth(kind: AuthKind.none);
+    }
+    setState(() => _error = null);
+    final plan = ref
+        .read(sessionManagerProvider.notifier)
+        .requestFor(_formHost(auth), theme: terminalThemeFor(ref, context));
+    final r = plan.request;
+    if (r == null) {
+      setState(() => _error = plan.problem);
+      return;
+    }
+    final typed = _auth == _AuthChoice.password && _password.text.isNotEmpty ? _password.text : null;
+    // Only the login is tested: no startup command, tmux or forwards.
+    final request = SshConnectRequest(
+      user: r.user,
+      host: r.host,
+      port: r.port,
+      auth: r.auth,
+      password: typed ?? r.password,
+      privateKey: r.privateKey,
+      passphrase: r.passphrase,
+      cols: r.cols,
+      rows: r.rows,
+      theme: r.theme,
+      label: r.label,
+      keepaliveSeconds: r.keepaliveSeconds,
+      reattachSessionId: null,
+      jumps: r.jumps,
+      persistent: false,
+      startupCommand: null,
+      env: const [],
+      agentForward: false,
+      forwards: const [],
+    );
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _TestConnectionDialog(engine: ref.read(engineProvider), request: request),
+    );
   }
 
   void _save() {
     if (!(_form.currentState?.validate() ?? false)) return;
     final engine = ref.read(engineProvider);
-    final label = _label.text.trim().isEmpty ? _hostname.text.trim() : _label.text.trim();
 
     HostAuth auth;
     // A password that is no longer remembered, forgotten once the host saves.
@@ -146,24 +260,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
         auth = const HostAuth(kind: AuthKind.none);
     }
 
-    final host = _original.copyWith(
-      label: label,
-      hostname: _hostname.text.trim(),
-      port: int.tryParse(_port.text.trim()) ?? 22,
-      username: _username.text.trim(),
-      auth: auth,
-      groupId: _groupId,
-      color: _color,
-      notes: _notes.text,
-      keepaliveSeconds: int.tryParse(_keepalive.text.trim()) ?? 30,
-      favourite: _favourite,
-      jumpHostId: _jumpHostId,
-      persistentSession: _persistent,
-      agentForwarding: _agentForwarding,
-      startupCommand: _startup.text.trim().isEmpty ? null : _startup.text.trim(),
-      env: _parseEnv(_env.text),
-      portForwards: [for (final f in _forwards) if (f.bindPort > 0) f],
-    );
+    final host = _formHost(auth);
     try {
       ref.read(hostsProvider.notifier).save(host);
     } catch (e) {
@@ -245,6 +342,11 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     final groups = ref.watch(groupsProvider);
     final otherHosts = [for (final h in ref.watch(hostsProvider)) if (h.id != _original.id) h];
     final brightness = Theme.of(context).brightness;
+    ref.watch(groupsProvider);
+    final inherited = _inherited;
+    final groupPort = inherited.groupPort;
+    final groupKey = ref.read(identitiesProvider.notifier).byId(inherited.groupIdentityId);
+    final groupJump = ref.read(hostsProvider.notifier).byId(inherited.groupJumpHostId ?? '');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -304,11 +406,13 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                         SizedBox(
                           width: 96,
                           child: TextFormField(
+                            key: const Key('host-port'),
                             controller: _port,
                             style: monoStyle(context, size: 14),
                             keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(labelText: 'Port'),
+                            decoration: InputDecoration(labelText: 'Port', hintText: groupPort?.toString()),
                             validator: (v) {
+                              if ((v ?? '').trim().isEmpty && groupPort != null) return null;
                               final n = int.tryParse(v?.trim() ?? '');
                               return (n == null || n < 1 || n > 65535) ? '1 to 65535' : null;
                             },
@@ -327,6 +431,14 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                       ),
                       validator: (v) => (v == null || v.trim().isEmpty) && _groupUser == null ? 'Needed' : null,
                     ),
+                    if (groupPort != null && groupPort != 22 && _portValue == 22) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        'Port 22 or blank uses the group\'s port, $groupPort.',
+                        key: const Key('host-port-inherited'),
+                        style: TextStyle(color: t.muted, fontSize: 13),
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -339,6 +451,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                       builder: (context, constraints) => constraints.maxWidth < 520
                           ? DropdownButtonFormField<_AuthChoice>(
                               initialValue: _auth,
+                              isExpanded: true,
                               decoration: const InputDecoration(labelText: 'Sign in with'),
                               items: [
                                 for (final c in _AuthChoice.values)
@@ -384,13 +497,25 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                             )
                           : DropdownButtonFormField<String>(
                               initialValue: identities.any((i) => i.id == _identityId) ? _identityId : null,
+                              isExpanded: true,
                               decoration: const InputDecoration(labelText: 'Key'),
                               items: [
                                 for (final i in identities)
-                                  DropdownMenuItem(value: i.id, child: Text('${i.label} (${i.keyType})')),
+                                  DropdownMenuItem(
+                                    value: i.id,
+                                    child: Text('${i.label} (${i.keyType})', overflow: TextOverflow.ellipsis),
+                                  ),
                               ],
                               onChanged: (v) => setState(() => _identityId = v),
                             ),
+                    if ((_auth == _AuthChoice.agent || _auth == _AuthChoice.ask) && groupKey != null) ...[
+                      Text(
+                        'Uses the group\'s key, ${groupKey.label}.',
+                        key: const Key('host-key-inherited'),
+                        style: TextStyle(color: t.text, fontSize: 13),
+                      ),
+                      const SizedBox(height: 6),
+                    ],
                     if (_auth == _AuthChoice.ask)
                       Text(
                         'The server decides: a password prompt, a two-factor code, or both. '
@@ -402,6 +527,16 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                         'For servers that check who you are another way, like Tailscale SSH.',
                         style: TextStyle(color: t.muted, fontSize: 13),
                       ),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: OutlinedButton.icon(
+                        key: const Key('host-test'),
+                        onPressed: _test,
+                        icon: const Icon(Icons.network_check),
+                        label: const Text('Test connection'),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -413,10 +548,12 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                         Expanded(
                           child: DropdownButtonFormField<String?>(
                             initialValue: groups.any((g) => g.id == _groupId) ? _groupId : null,
+                            isExpanded: true,
                             decoration: const InputDecoration(labelText: 'Group'),
                             items: [
                               const DropdownMenuItem<String?>(value: null, child: Text('No group')),
-                              for (final g in groups) DropdownMenuItem(value: g.id, child: Text(g.label)),
+                              for (final g in groups)
+                                DropdownMenuItem(value: g.id, child: Text(g.label, overflow: TextOverflow.ellipsis)),
                             ],
                             onChanged: (v) => setState(() => _groupId = v),
                           ),
@@ -465,6 +602,47 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                       value: _favourite,
                       onChanged: (v) => setState(() => _favourite = v),
                     ),
+                    const SizedBox(height: 4),
+                    TextFormField(
+                      key: const Key('host-tags'),
+                      controller: _tags,
+                      style: monoStyle(context, size: 14),
+                      decoration: const InputDecoration(
+                        labelText: 'Tags',
+                        hintText: 'web, eu-west',
+                        helperText: 'Separate tags with commas. Search finds hosts by tag.',
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                    if (parseTags(_tags.text).isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final tag in parseTags(_tags.text))
+                            Chip(label: Text(tag), visualDensity: VisualDensity.compact),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    SwitchListTile(
+                      key: const Key('host-production'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Mark as production'),
+                      subtitle: const Text('Its sessions get a red bar with a label, so you always know.'),
+                      value: _production,
+                      onChanged: (v) => setState(() => _production = v),
+                    ),
+                    if (_production)
+                      TextFormField(
+                        key: const Key('host-production-label'),
+                        controller: _productionLabel,
+                        decoration: const InputDecoration(
+                          labelText: 'Label on the bar',
+                          hintText: 'Production',
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 16),
@@ -474,13 +652,25 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                     DropdownButtonFormField<String?>(
                       key: const Key('host-jump'),
                       initialValue: otherHosts.any((h) => h.id == _jumpHostId) ? _jumpHostId : null,
-                      decoration: const InputDecoration(
+                      isExpanded: true,
+                      decoration: InputDecoration(
                         labelText: 'Jump host',
                         helperText: 'Connect through this host first. It can have a jump host of its own.',
+                        helperMaxLines: 3,
                       ),
                       items: [
-                        const DropdownMenuItem<String?>(value: null, child: Text('None, connect directly')),
-                        for (final h in otherHosts) DropdownMenuItem(value: h.id, child: Text(h.label)),
+                        DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text(
+                            groupJump == null || groupJump.id == _original.id
+                                ? 'None, connect directly'
+                                : 'The group\'s: ${groupJump.label}',
+                            key: const Key('host-jump-inherited'),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        for (final h in otherHosts)
+                          DropdownMenuItem(value: h.id, child: Text(h.label, overflow: TextOverflow.ellipsis)),
                       ],
                       onChanged: (v) => setState(() => _jumpHostId = v),
                     ),
@@ -771,6 +961,104 @@ class _Section extends StatelessWidget {
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
           ),
         ),
+      ],
+    );
+  }
+}
+
+/// "Test connection": the real connect flow, its steps and questions, in a
+/// dialog. A login that works is hung up straight away.
+class _TestConnectionDialog extends StatefulWidget {
+  const _TestConnectionDialog({required this.engine, required this.request});
+
+  final Engine engine;
+  final SshConnectRequest request;
+
+  @override
+  State<_TestConnectionDialog> createState() => _TestConnectionDialogState();
+}
+
+class _TestConnectionDialogState extends State<_TestConnectionDialog> {
+  late ConnectFlow _flow;
+
+  @override
+  void initState() {
+    super.initState();
+    _start();
+  }
+
+  void _start() {
+    _flow = ConnectFlow(engine: widget.engine, request: widget.request)..addListener(_onFlow);
+    _flow.start();
+  }
+
+  void _onFlow() {
+    // It worked: nothing more to do with the session.
+    if (_flow.sessionId != null) _flow.discard();
+    setState(() {});
+  }
+
+  void _stop() {
+    _flow
+      ..removeListener(_onFlow)
+      ..cancel()
+      ..dispose();
+  }
+
+  void _again() {
+    _stop();
+    setState(_start);
+  }
+
+  void _close() => Navigator.pop(context);
+
+  @override
+  void dispose() {
+    _stop();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final ok = _flow.sessionId != null;
+    return AlertDialog(
+      title: const Text('Test connection'),
+      contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 0),
+      content: SizedBox(
+        width: 560,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Flexible(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(PromptlyTokens.controlRadius),
+                child: ConnectingView(flow: _flow, onCancel: _close, onRetry: _again),
+              ),
+            ),
+            if (ok)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+                child: Row(
+                  children: [
+                    Icon(Icons.check_circle_outline, color: t.accent),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Connection works. Promptly signed in and hung up again.',
+                        key: const Key('host-test-ok'),
+                        style: TextStyle(color: t.text),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(key: const Key('host-test-close'), onPressed: _close, child: const Text('Close')),
       ],
     );
   }

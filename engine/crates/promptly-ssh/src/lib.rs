@@ -13,6 +13,7 @@
 pub mod connect;
 pub mod endpoint;
 pub mod exec;
+pub mod explain;
 pub mod files;
 pub mod forward;
 pub mod hostkey;
@@ -25,11 +26,12 @@ pub mod transport;
 use std::sync::LazyLock;
 
 pub use connect::{
-    connect, connect_handle, AuthMethod, ConnectError, ConnectParams, ConnectStep, Handler,
-    KeyboardPrompt, Prompter,
+    connect, connect_handle, AgentProblem, AuthMethod, ConnectError, ConnectParams, ConnectStep,
+    Handler, KeyboardPrompt, NetCause, Prompter,
 };
 pub use endpoint::{Endpoint, ParseError};
 pub use exec::{exec, ExecOutput};
+pub use explain::Explanation;
 pub use files::{join as join_remote_path, RemoteEntry, RemoteFs};
 pub use forward::{Connection, ForwardKind, ForwardSpec, ForwardStatus};
 pub use hostkey::{FileKnownHosts, HostKeyInfo, HostKeyStatus, KnownHosts};

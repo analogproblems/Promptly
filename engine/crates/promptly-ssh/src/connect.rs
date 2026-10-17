@@ -80,6 +80,7 @@ pub struct ConnectParams {
     pub auth: AuthMethod,
     pub term: String,
     pub size: TermSize,
+    /// How often to ping an idle connection; zero turns pinging off.
     pub keepalive: Duration,
     pub timeout: Duration,
     /// Connect through this host first (ProxyJump), which may itself have
@@ -208,6 +209,32 @@ pub trait Prompter: Send + Sync + 'static {
     ) -> BoxFuture<'_, Option<Vec<String>>>;
 }
 
+/// Why a TCP connection could not be made, for the plain-language advice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetCause {
+    /// The machine answered, but nothing listens on the port.
+    Refused,
+    TimedOut,
+    /// No route from this device to the address.
+    Unreachable,
+    Other,
+}
+
+/// What went wrong with the SSH agent.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AgentProblem {
+    #[error("no SSH agent: SSH_AUTH_SOCK is not set")]
+    NotRunning,
+    #[error("no SSH agent: {0}")]
+    Unreachable(String),
+    #[error("the SSH agent's socket could not be opened: {0}")]
+    PermissionDenied(String),
+    #[error("the SSH agent holds no keys")]
+    NoKeys,
+    #[error("the SSH agent failed: {0}")]
+    Failed(String),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectError {
     #[error("could not find a server called {host}")]
@@ -217,6 +244,7 @@ pub enum ConnectError {
         host: String,
         port: u16,
         reason: String,
+        cause: NetCause,
     },
     #[error("gave up connecting to {host} after {seconds} seconds")]
     Timeout { host: String, seconds: u64 },
@@ -241,12 +269,24 @@ pub enum ConnectError {
     },
     #[error("this server's host key is marked as revoked in a known_hosts file, so Promptly will not connect to it")]
     HostKeyRevoked,
+    #[error("{reason}{}", offered_list(offered))]
+    AuthFailed {
+        reason: String,
+        /// The methods the server still offered, by their SSH names
+        /// ("publickey", "password", "keyboard-interactive"); empty when
+        /// it did not say.
+        offered: Vec<&'static str>,
+    },
     #[error("{0}")]
-    AuthFailed(String),
+    Agent(AgentProblem),
     #[error("cancelled")]
     Cancelled,
     #[error("the private key could not be read: {0}")]
     BadKey(String),
+    #[error("the private key is protected by a passphrase, and none was given")]
+    KeyNeedsPassphrase,
+    #[error("the passphrase for the private key was wrong three times")]
+    WrongPassphrase,
     #[error("ssh error: {0}")]
     Ssh(#[from] russh::Error),
 }
@@ -422,13 +462,7 @@ pub async fn connect_handle(
         .into(),
         ..russh::Preferred::DEFAULT
     };
-    let config = Arc::new(client::Config {
-        keepalive_interval: Some(params.keepalive),
-        keepalive_max: 3,
-        nodelay: true,
-        preferred,
-        ..client::Config::default()
-    });
+    let config = Arc::new(client_config(params, preferred));
     let remote_targets = Arc::new(Mutex::new(HashMap::new()));
     let refused = Arc::new(Mutex::new(None));
     let handler = Handler {
@@ -463,6 +497,7 @@ pub async fn connect_handle(
                 host,
                 port,
                 reason: friendly_io(&e),
+                cause: net_cause(&e),
             })
         }
         Ok(Err(e)) => return Err(e),
@@ -477,6 +512,17 @@ pub async fn connect_handle(
     prompter.progress(ConnectStep::Authenticating);
     authenticate(&mut handle, params, &prompter).await?;
     Ok(Connection::new(handle, hops, remote_targets))
+}
+
+/// The client settings for one hop.
+fn client_config(params: &ConnectParams, preferred: russh::Preferred) -> client::Config {
+    client::Config {
+        keepalive_interval: (!params.keepalive.is_zero()).then_some(params.keepalive),
+        keepalive_max: 3,
+        nodelay: true,
+        preferred,
+        ..client::Config::default()
+    }
 }
 
 /// The transport-level part of connecting: a TCP connection, or a tunnel
@@ -534,6 +580,7 @@ async fn open_session(
             host: host.clone(),
             port,
             reason: friendly_io(&e),
+            cause: net_cause(&e),
         })?;
     let _ = stream.set_nodelay(true);
     let handle = client::connect_stream(config, stream, handler).await?;
@@ -728,6 +775,15 @@ async fn forward_agent(address: String, channel: Channel<Msg>) {
     }
 }
 
+fn net_cause(e: &io::Error) -> NetCause {
+    match e.kind() {
+        io::ErrorKind::ConnectionRefused => NetCause::Refused,
+        io::ErrorKind::TimedOut => NetCause::TimedOut,
+        io::ErrorKind::NetworkUnreachable | io::ErrorKind::HostUnreachable => NetCause::Unreachable,
+        _ => NetCause::Other,
+    }
+}
+
 fn friendly_io(e: &io::Error) -> String {
     match e.kind() {
         io::ErrorKind::ConnectionRefused => "nothing is listening there".into(),
@@ -749,10 +805,14 @@ async fn authenticate(
 
     // Some servers let the login in without any credentials (Tailscale SSH
     // checks who is on the tailnet instead). Ask first, as OpenSSH does, so
-    // nobody is prompted for a password the server would not need.
-    if let AuthResult::Success = handle.authenticate_none(user.clone()).await? {
-        return Ok(());
-    }
+    // nobody is prompted for a password the server would not need. The
+    // refusal lists the methods the server takes.
+    let offered = match handle.authenticate_none(user.clone()).await? {
+        AuthResult::Success => return Ok(()),
+        AuthResult::Failure {
+            remaining_methods, ..
+        } => remaining_methods,
+    };
 
     match &params.auth {
         AuthMethod::Key {
@@ -773,40 +833,76 @@ async fn authenticate(
                     remaining_methods, ..
                 } => {
                     if offers(&remaining_methods, MethodKind::KeyboardInteractive) {
-                        keyboard_interactive(handle, &user, prompter).await
+                        keyboard_interactive(handle, &user, prompter, None).await
                     } else if offers(&remaining_methods, MethodKind::Password) {
                         password(handle, &user, &where_, None, prompter).await
                     } else {
-                        Err(ConnectError::AuthFailed(
-                            "the server did not accept the key".into(),
+                        Err(auth_failed(
+                            "the server did not accept the key",
+                            &remaining_methods,
                         ))
                     }
                 }
             }
         }
         AuthMethod::Password { password: stored } => {
-            password(handle, &user, &where_, stored.clone(), prompter).await
+            if !offers(&offered, MethodKind::Password)
+                && offers(&offered, MethodKind::KeyboardInteractive)
+            {
+                // PAM-only servers ask for the password through
+                // keyboard-interactive instead.
+                let fill = PasswordFill {
+                    stored: stored.clone().map(Zeroizing::new),
+                    where_: &where_,
+                };
+                keyboard_interactive(handle, &user, prompter, Some(fill)).await
+            } else {
+                password(handle, &user, &where_, stored.clone(), prompter).await
+            }
         }
-        AuthMethod::Interactive => keyboard_interactive(handle, &user, prompter).await,
+        AuthMethod::Interactive => keyboard_interactive(handle, &user, prompter, None).await,
         AuthMethod::Agent => {
-            let remaining = match agent_auth(handle, &user).await {
+            let (remaining, problem) = match agent_auth(handle, &user).await {
                 Ok(None) => return Ok(()),
-                Ok(Some(remaining)) => remaining,
-                Err(e) => {
-                    tracing::info!("agent authentication unavailable: {e}");
-                    MethodSet::empty()
+                Ok(Some(remaining)) => (remaining, None),
+                Err(ConnectError::Agent(problem)) => {
+                    tracing::info!("agent authentication unavailable: {problem}");
+                    (offered, Some(problem))
                 }
+                Err(e) => return Err(e),
             };
             if offers(&remaining, MethodKind::KeyboardInteractive) {
-                keyboard_interactive(handle, &user, prompter).await
+                keyboard_interactive(handle, &user, prompter, None).await
             } else if offers(&remaining, MethodKind::Password) || remaining.is_empty() {
                 password(handle, &user, &where_, None, prompter).await
             } else {
-                Err(ConnectError::AuthFailed(
-                    "no key in the agent was accepted".into(),
-                ))
+                // Nothing else to try: say why the agent was no use.
+                Err(match problem {
+                    Some(problem) => ConnectError::Agent(problem),
+                    None => auth_failed("no key in the agent was accepted", &remaining),
+                })
             }
         }
+    }
+}
+
+fn auth_failed(reason: &str, offered: &MethodSet) -> ConnectError {
+    ConnectError::AuthFailed {
+        reason: reason.to_string(),
+        offered: offered
+            .iter()
+            .filter(|m| **m != MethodKind::None)
+            .map(<&'static str>::from)
+            .collect(),
+    }
+}
+
+/// " (the server accepts: publickey, password)", for the details.
+fn offered_list(offered: &[&'static str]) -> String {
+    if offered.is_empty() {
+        String::new()
+    } else {
+        format!(" (the server accepts: {})", offered.join(", "))
     }
 }
 
@@ -818,20 +914,20 @@ async fn agent_auth(
     user: &str,
 ) -> Result<Option<MethodSet>, ConnectError> {
     use russh::keys::agent::client::AgentClient;
-    let address = agent_address()
-        .ok_or_else(|| ConnectError::AuthFailed("no SSH agent: SSH_AUTH_SOCK is not set".into()))?;
-    let stream = open_agent(&address)
-        .await
-        .map_err(|e| ConnectError::AuthFailed(format!("no SSH agent: {e}")))?;
+    let address = agent_address().ok_or(ConnectError::Agent(AgentProblem::NotRunning))?;
+    let stream = open_agent(&address).await.map_err(|e| {
+        ConnectError::Agent(if e.kind() == io::ErrorKind::PermissionDenied {
+            AgentProblem::PermissionDenied(e.to_string())
+        } else {
+            AgentProblem::Unreachable(e.to_string())
+        })
+    })?;
     let mut agent = AgentClient::connect(stream);
-    let identities = agent
-        .request_identities()
-        .await
-        .map_err(|e| ConnectError::AuthFailed(format!("the SSH agent did not answer: {e}")))?;
+    let identities = agent.request_identities().await.map_err(|e| {
+        ConnectError::Agent(AgentProblem::Failed(format!("it did not answer: {e}")))
+    })?;
     if identities.is_empty() {
-        return Err(ConnectError::AuthFailed(
-            "the SSH agent holds no keys".into(),
-        ));
+        return Err(ConnectError::Agent(AgentProblem::NoKeys));
     }
     let hash = handle.best_supported_rsa_hash().await?.flatten();
     let mut remaining = MethodSet::empty();
@@ -844,8 +940,9 @@ async fn agent_auth(
                 &mut agent,
             )
             .await
-            .map_err(|e| ConnectError::AuthFailed(format!("the SSH agent could not sign: {e}")))?
-        {
+            .map_err(|e| {
+                ConnectError::Agent(AgentProblem::Failed(format!("it could not sign: {e}")))
+            })? {
             AuthResult::Success => return Ok(None),
             AuthResult::Failure {
                 remaining_methods, ..
@@ -867,33 +964,49 @@ async fn password(
     prompter: &Arc<dyn Prompter>,
 ) -> Result<(), ConnectError> {
     let mut attempt = 0;
-    let mut password = stored;
+    let mut password = stored.map(Zeroizing::new);
     loop {
         let pw = match password.take() {
             Some(p) => p,
-            None => prompter
-                .ask_secret(format!("Password for {where_}"))
-                .await
-                .ok_or(ConnectError::Cancelled)?,
+            None => Zeroizing::new(
+                prompter
+                    .ask_secret(format!("Password for {where_}"))
+                    .await
+                    .ok_or(ConnectError::Cancelled)?,
+            ),
         };
-        match handle.authenticate_password(user.to_string(), pw).await? {
+        match handle
+            .authenticate_password(user.to_string(), pw.as_str())
+            .await?
+        {
             AuthResult::Success => return Ok(()),
             AuthResult::Failure {
                 remaining_methods,
                 partial_success,
             } => {
                 if partial_success && offers(&remaining_methods, MethodKind::KeyboardInteractive) {
-                    return keyboard_interactive(handle, user, prompter).await;
+                    return keyboard_interactive(handle, user, prompter, None).await;
+                }
+                if !offers(&remaining_methods, MethodKind::Password) {
+                    if offers(&remaining_methods, MethodKind::KeyboardInteractive) {
+                        // The server never looked at the password: it takes
+                        // it through keyboard-interactive.
+                        let fill = PasswordFill {
+                            stored: Some(pw),
+                            where_,
+                        };
+                        return keyboard_interactive(handle, user, prompter, Some(fill)).await;
+                    }
+                    return Err(auth_failed(
+                        "the server does not accept passwords for this user",
+                        &remaining_methods,
+                    ));
                 }
                 attempt += 1;
                 if attempt >= 3 {
-                    return Err(ConnectError::AuthFailed(
-                        "the server rejected the password three times".into(),
-                    ));
-                }
-                if !offers(&remaining_methods, MethodKind::Password) {
-                    return Err(ConnectError::AuthFailed(
-                        "the server does not accept passwords for this user".into(),
+                    return Err(auth_failed(
+                        "the server rejected the password three times",
+                        &remaining_methods,
                     ));
                 }
                 // Ask again; a stored password that failed is not reused.
@@ -902,10 +1015,73 @@ async fn password(
     }
 }
 
+/// A password for the first keyboard-interactive question that asks for
+/// one, so a host set to Password works on servers that only ask that way.
+struct PasswordFill<'a> {
+    /// The saved password; asked for when there is none.
+    stored: Option<Zeroizing<String>>,
+    where_: &'a str,
+}
+
+/// One hidden question in the ordinary shape of a password prompt:
+/// "Password:", "Passwort:", "user@host's password:", "Password for
+/// user@host:", "Enter your password:". Anything else, such as
+/// "Response:", "Enter PIN" or "One time password:", goes to the person,
+/// since only the words say what a hidden question wants.
+fn asks_for_password(prompts: &[russh::client::Prompt]) -> bool {
+    let [only] = prompts else {
+        return false;
+    };
+    if only.echo {
+        return false;
+    }
+    let lower = only.prompt.to_lowercase();
+    let mut rest = lower.trim().trim_end_matches([':', '\u{ff1a}', ' ']);
+    // "(user@host) Password:", as newer servers add.
+    if rest.starts_with('(') {
+        if let Some(end) = rest.find(") ") {
+            rest = &rest[end + 2..];
+        }
+    }
+    for lead in ["enter your ", "enter ", "your "] {
+        if let Some(after) = rest.strip_prefix(lead) {
+            rest = after;
+            break;
+        }
+    }
+    // "user@host's password".
+    if let Some(at) = rest.rfind("'s ") {
+        if !rest[..at].contains(' ') {
+            rest = &rest[at + 3..];
+        }
+    }
+    // "password for user@host".
+    if let Some(at) = rest.find(" for ") {
+        if !rest[at + 5..].contains(' ') {
+            rest = &rest[..at];
+        }
+    }
+    [
+        "password",
+        "passwort",
+        "passwd",
+        "mot de passe",
+        "contraseña",
+        "senha",
+        "wachtwoord",
+        "пароль",
+        "パスワード",
+        "密码",
+        "密碼",
+    ]
+    .contains(&rest)
+}
+
 async fn keyboard_interactive(
     handle: &mut client::Handle<Handler>,
     user: &str,
     prompter: &Arc<dyn Prompter>,
+    mut fill: Option<PasswordFill<'_>>,
 ) -> Result<(), ConnectError> {
     let mut response = handle
         .authenticate_keyboard_interactive_start(user.to_string(), None)
@@ -913,9 +1089,12 @@ async fn keyboard_interactive(
     loop {
         match response {
             KeyboardInteractiveAuthResponse::Success => return Ok(()),
-            KeyboardInteractiveAuthResponse::Failure { .. } => {
-                return Err(ConnectError::AuthFailed(
-                    "the server rejected the answers".into(),
+            KeyboardInteractiveAuthResponse::Failure {
+                remaining_methods, ..
+            } => {
+                return Err(auth_failed(
+                    "the server rejected the answers",
+                    &remaining_methods,
                 ))
             }
             KeyboardInteractiveAuthResponse::InfoRequest {
@@ -923,8 +1102,26 @@ async fn keyboard_interactive(
                 instructions,
                 prompts,
             } => {
+                // The password goes in once. If the server asks again it was
+                // wrong, and the person sees the question themselves.
+                let password = if asks_for_password(&prompts) {
+                    fill.take()
+                } else {
+                    None
+                };
                 let answers = if prompts.is_empty() {
                     Vec::new()
+                } else if let Some(fill) = password {
+                    let pw = match fill.stored {
+                        Some(p) => p,
+                        None => Zeroizing::new(
+                            prompter
+                                .ask_secret(format!("Password for {}", fill.where_))
+                                .await
+                                .ok_or(ConnectError::Cancelled)?,
+                        ),
+                    };
+                    vec![pw.to_string()]
                 } else {
                     prompter
                         .ask_keyboard_interactive(
@@ -964,7 +1161,7 @@ async fn load_key(
                     prompter
                         .ask_secret("Passphrase for the private key".into())
                         .await
-                        .ok_or(ConnectError::Cancelled)?,
+                        .ok_or(ConnectError::KeyNeedsPassphrase)?,
                 ));
             }
             Err(e) if passphrase.is_some() && is_wrong_passphrase(&e) => {
@@ -972,15 +1169,13 @@ async fn load_key(
                     prompter
                         .ask_secret("Wrong passphrase. Passphrase for the private key".into())
                         .await
-                        .ok_or(ConnectError::Cancelled)?,
+                        .ok_or(ConnectError::KeyNeedsPassphrase)?,
                 ));
             }
             Err(e) => return Err(ConnectError::BadKey(e.to_string())),
         }
     }
-    Err(ConnectError::BadKey(
-        "the passphrase was wrong three times".into(),
-    ))
+    Err(ConnectError::WrongPassphrase)
 }
 
 fn is_wrong_passphrase(e: &keys::Error) -> bool {
@@ -989,7 +1184,6 @@ fn is_wrong_passphrase(e: &keys::Error) -> bool {
         keys::Error::KeyIsCorrupt | keys::Error::SshKey(_) | keys::Error::Decode(_)
     )
 }
-
 #[cfg(test)]
 mod tests {
 
@@ -1575,40 +1769,121 @@ mod tests {
         assert!(msg.contains("could not reach 127.0.0.1 on port 1"), "{msg}");
     }
 
-    /// A server on a loopback port that lets anyone in without credentials
-    /// when `open`, and otherwise wants the password "pw".
-    fn auth_only_server(open: bool) -> u16 {
+    /// How the loopback test server lets people in.
+    #[derive(Clone, Copy)]
+    enum ServerAuth {
+        /// Without any credentials.
+        Open,
+        /// With the password "pw".
+        Password,
+        /// Only through keyboard-interactive, as a PAM-only server does:
+        /// one hidden "Password:" question wanting "pw".
+        PamPassword,
+        /// Keyboard-interactive with two questions: "pw", then the code
+        /// "123456".
+        PamTwoQuestions,
+        /// Keyboard-interactive in two rounds: first the hidden challenge
+        /// given (instructions, question), wanting "123456", then
+        /// "Password: " wanting "pw".
+        PamChallengeThenPassword(&'static str, &'static str),
+    }
+
+    /// A server on a loopback port that checks logins the given way.
+    fn auth_only_server(mode: ServerAuth) -> u16 {
         let key =
             russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
                 .unwrap();
-        server_with_keys(open, vec![key])
+        server_with_keys(mode, vec![key])
     }
 
     /// The same, with the host keys given.
-    fn server_with_keys(open: bool, keys: Vec<russh::keys::PrivateKey>) -> u16 {
-        use russh::server::{self, Auth};
+    fn server_with_keys(mode: ServerAuth, keys: Vec<russh::keys::PrivateKey>) -> u16 {
+        use russh::server::{self, Auth, Response};
+        use std::borrow::Cow;
 
         struct Server {
-            open: bool,
+            mode: ServerAuth,
+            /// The challenge round was answered.
+            challenged: bool,
         }
         impl server::Handler for Server {
             type Error = russh::Error;
             async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
-                Ok(if self.open {
-                    Auth::Accept
-                } else {
-                    Auth::Reject {
-                        proceed_with_methods: Some(MethodSet::from(&[MethodKind::Password][..])),
-                        partial_success: false,
+                let methods: &[MethodKind] = match self.mode {
+                    ServerAuth::Open => return Ok(Auth::Accept),
+                    ServerAuth::Password => &[MethodKind::Password],
+                    ServerAuth::PamPassword
+                    | ServerAuth::PamTwoQuestions
+                    | ServerAuth::PamChallengeThenPassword(..) => {
+                        &[MethodKind::PublicKey, MethodKind::KeyboardInteractive]
                     }
+                };
+                Ok(Auth::Reject {
+                    proceed_with_methods: Some(MethodSet::from(methods)),
+                    partial_success: false,
                 })
             }
             async fn auth_password(&mut self, _user: &str, pw: &str) -> Result<Auth, Self::Error> {
-                Ok(if pw == "pw" {
+                Ok(if pw == "pw" && matches!(self.mode, ServerAuth::Password) {
+                    Auth::Accept
+                } else {
+                    Auth::reject()
+                })
+            }
+            async fn auth_keyboard_interactive<'a>(
+                &'a mut self,
+                _user: &str,
+                _submethods: &str,
+                response: Option<Response<'a>>,
+            ) -> Result<Auth, Self::Error> {
+                if let ServerAuth::PamChallengeThenPassword(instructions, prompt) = self.mode {
+                    let answers: Option<Vec<String>> = response.map(|r| {
+                        r.map(|b| String::from_utf8_lossy(&b).into_owned())
+                            .collect()
+                    });
+                    let ask = |instructions, prompt| Auth::Partial {
+                        name: Cow::Borrowed(""),
+                        instructions: Cow::Borrowed(instructions),
+                        prompts: Cow::Owned(vec![(Cow::Borrowed(prompt), false)]),
+                    };
+                    return Ok(match answers.as_deref() {
+                        None => ask(instructions, prompt),
+                        Some([code]) if code == "123456" => {
+                            self.challenged = true;
+                            ask("", "Password: ")
+                        }
+                        Some([pw]) if pw == "pw" && self.challenged => Auth::Accept,
+                        _ => Auth::reject(),
+                    });
+                }
+                let questions: &'static [(Cow<'static, str>, bool)] = match self.mode {
+                    ServerAuth::PamPassword => &[(Cow::Borrowed("Password: "), false)],
+                    ServerAuth::PamTwoQuestions => &[
+                        (Cow::Borrowed("Password: "), false),
+                        (Cow::Borrowed("Verification code: "), true),
+                    ],
+                    _ => return Ok(Auth::reject()),
+                };
+                let Some(response) = response else {
+                    return Ok(Auth::Partial {
+                        name: Cow::Borrowed(""),
+                        instructions: Cow::Borrowed(""),
+                        prompts: Cow::Borrowed(questions),
+                    });
+                };
+                let answers: Vec<String> = response
+                    .map(|b| String::from_utf8_lossy(&b).into_owned())
+                    .collect();
+                let wanted: &[&str] = if questions.len() == 1 {
+                    &["pw"]
+                } else {
+                    &["pw", "123456"]
+                };
+                Ok(if answers == wanted {
                     Auth::Accept
                 } else {
                     Auth::Reject {
-                        proceed_with_methods: None,
+                        proceed_with_methods: Some(MethodSet::from(&[MethodKind::PublicKey][..])),
                         partial_success: false,
                     }
                 })
@@ -1617,6 +1892,8 @@ mod tests {
 
         let config = Arc::new(server::Config {
             keys,
+            auth_rejection_time: Duration::from_millis(10),
+            auth_rejection_time_initial: Some(Duration::ZERO),
             ..Default::default()
         });
         let listener = crate::runtime()
@@ -1625,7 +1902,15 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         crate::runtime().spawn(async move {
             while let Ok((tcp, _)) = listener.accept().await {
-                if let Ok(session) = server::run_stream(config.clone(), tcp, Server { open }).await
+                if let Ok(session) = server::run_stream(
+                    config.clone(),
+                    tcp,
+                    Server {
+                        mode,
+                        challenged: false,
+                    },
+                )
+                .await
                 {
                     tokio::spawn(session);
                 }
@@ -1695,7 +1980,7 @@ mod tests {
 
     #[test]
     fn a_server_that_needs_no_credentials_is_not_asked_for_any() {
-        let port = auth_only_server(true);
+        let port = auth_only_server(ServerAuth::Open);
         for auth in [
             AuthMethod::Interactive,
             AuthMethod::Password { password: None },
@@ -1708,7 +1993,7 @@ mod tests {
 
     #[test]
     fn a_server_that_wants_a_password_still_gets_asked() {
-        let port = auth_only_server(false);
+        let port = auth_only_server(ServerAuth::Password);
         let (result, asks) = auth_against(port, AuthMethod::Password { password: None });
         assert!(result.is_ok(), "{:?}", result.err());
         assert_eq!(asks, 1);
@@ -1727,7 +2012,11 @@ mod tests {
         )
         .unwrap();
         let (ed_pub, ec_pub) = (ed.public_key().clone(), ec.public_key().clone());
-        (server_with_keys(true, vec![ed, ec]), ed_pub, ec_pub)
+        (
+            server_with_keys(ServerAuth::Open, vec![ed, ec]),
+            ed_pub,
+            ec_pub,
+        )
     }
 
     fn connect_with_store(
@@ -1792,5 +2081,198 @@ mod tests {
         );
         assert_eq!(asked, None, "nobody is offered the chance to trust it");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_password_host_logs_in_to_a_server_that_only_asks_through_pam() {
+        let port = auth_only_server(ServerAuth::PamPassword);
+        // The saved password answers the server's one question.
+        let saved = AuthMethod::Password {
+            password: Some("pw".into()),
+        };
+        let (result, asks) = auth_against(port, saved);
+        assert!(result.is_ok(), "{:?}", result.err());
+        assert_eq!(asks, 0, "nobody is asked anything");
+
+        // Without one, the person is asked for a password, as usual.
+        let (result, asks) = auth_against(port, AuthMethod::Password { password: None });
+        assert!(result.is_ok(), "{:?}", result.err());
+        assert_eq!(asks, 1);
+    }
+
+    #[test]
+    fn a_pam_server_with_more_questions_shows_them_to_the_person() {
+        let port = auth_only_server(ServerAuth::PamTwoQuestions);
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let prompter = Arc::new(Answering {
+            asked: asked.clone(),
+            answers: vec!["pw".into(), "123456".into()],
+        });
+        let saved = AuthMethod::Password {
+            password: Some("pw".into()),
+        };
+        let result = auth_with(port, saved, prompter);
+        assert!(result.is_ok(), "{:?}", result.err());
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec!["Password: ".to_string(), "Verification code: ".to_string()],
+            "both questions go to the person together"
+        );
+    }
+
+    /// Logs in against a challenge round then a password round, with "pw"
+    /// saved, and returns what the person was asked.
+    fn challenge_then_password(instructions: &'static str, question: &'static str) -> Vec<String> {
+        let port = auth_only_server(ServerAuth::PamChallengeThenPassword(instructions, question));
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let prompter = Arc::new(Answering {
+            asked: asked.clone(),
+            answers: vec!["123456".into()],
+        });
+        let saved = AuthMethod::Password {
+            password: Some("pw".into()),
+        };
+        let result = auth_with(port, saved, prompter);
+        assert!(result.is_ok(), "{question}: {:?}", result.err());
+        let asked = asked.lock().unwrap().clone();
+        asked
+    }
+
+    #[test]
+    fn a_hidden_challenge_that_is_not_a_password_goes_to_the_person() {
+        // The person sees the challenge as the server wrote it, and the
+        // saved password answers only the password round that follows.
+        assert_eq!(
+            challenge_then_password("Enter the code shown on your token.", "Response: "),
+            vec![
+                "Enter the code shown on your token.".to_string(),
+                "Response: ".to_string()
+            ]
+        );
+        for question in [
+            "One time password: ",
+            "One-time password: ",
+            "OTP password: ",
+        ] {
+            assert_eq!(
+                challenge_then_password("", question),
+                vec![question.to_string()]
+            );
+        }
+    }
+
+    #[test]
+    fn a_rejected_login_says_which_methods_the_server_takes() {
+        let port = auth_only_server(ServerAuth::PamPassword);
+        let prompter = Arc::new(Answering {
+            asked: Arc::default(),
+            answers: vec!["nope".into()],
+        });
+        let err = auth_with(port, AuthMethod::Interactive, prompter).unwrap_err();
+        match &err {
+            ConnectError::AuthFailed { offered, .. } => {
+                assert_eq!(offered, &vec!["publickey"])
+            }
+            other => panic!("expected a login failure, got {other:?}"),
+        }
+        assert!(
+            err.explain().hint.contains("only accepts keys"),
+            "{:?}",
+            err.explain()
+        );
+    }
+
+    #[test]
+    fn a_keep_alive_of_zero_turns_pinging_off() {
+        let endpoint = Endpoint::parse("me@127.0.0.1:22").unwrap();
+        let mut params = ConnectParams::new(endpoint, AuthMethod::Interactive, TermSize::default());
+        let on = client_config(&params, russh::Preferred::DEFAULT);
+        assert_eq!(on.keepalive_interval, Some(Duration::from_secs(30)));
+        params.keepalive = Duration::ZERO;
+        let off = client_config(&params, russh::Preferred::DEFAULT);
+        assert_eq!(off.keepalive_interval, None);
+    }
+
+    #[test]
+    fn only_a_single_hidden_question_counts_as_a_password_prompt() {
+        let prompt = |text: &str, echo: bool| russh::client::Prompt {
+            prompt: text.into(),
+            echo,
+        };
+        assert!(asks_for_password(&[prompt("Password: ", false)]));
+        assert!(asks_for_password(&[prompt("Passwort: ", false)]));
+        assert!(asks_for_password(&[prompt("me@web-1's password: ", false)]));
+        assert!(!asks_for_password(&[prompt("Verification code: ", false)]));
+        assert!(asks_for_password(&[prompt(
+            "Password for me@web-1: ",
+            false
+        )]));
+        assert!(asks_for_password(&[prompt("(me@web-1) Password: ", false)]));
+        assert!(asks_for_password(&[prompt("Enter your password:", false)]));
+        assert!(asks_for_password(&[prompt("Mot de passe : ", false)]));
+        assert!(!asks_for_password(&[prompt("One-time password: ", false)]));
+        assert!(!asks_for_password(&[prompt("One time password: ", false)]));
+        assert!(!asks_for_password(&[prompt("OTP password: ", false)]));
+        assert!(!asks_for_password(&[prompt("Password + token: ", false)]));
+        assert!(!asks_for_password(&[prompt("Einmalpasswort: ", false)]));
+        assert!(!asks_for_password(&[prompt("Response: ", false)]));
+        assert!(!asks_for_password(&[prompt("Enter PIN ", false)]));
+        assert!(!asks_for_password(&[prompt("Username: ", true)]));
+        assert!(!asks_for_password(&[
+            prompt("Password: ", false),
+            prompt("Code: ", true)
+        ]));
+    }
+
+    /// Answers every keyboard-interactive round with `answers`, noting the
+    /// questions it was shown.
+    struct Answering {
+        asked: Arc<Mutex<Vec<String>>>,
+        answers: Vec<String>,
+    }
+
+    impl Prompter for Answering {
+        fn progress(&self, _step: ConnectStep) {}
+        fn confirm_host_key(
+            &self,
+            _info: HostKeyInfo,
+            _status: HostKeyStatus,
+        ) -> BoxFuture<'_, bool> {
+            Box::pin(async { true })
+        }
+        fn ask_secret(&self, _prompt: String) -> BoxFuture<'_, Option<String>> {
+            Box::pin(async { None })
+        }
+        fn ask_keyboard_interactive(
+            &self,
+            _name: String,
+            instructions: String,
+            prompts: Vec<KeyboardPrompt>,
+        ) -> BoxFuture<'_, Option<Vec<String>>> {
+            let mut asked = self.asked.lock().unwrap();
+            asked.extend((!instructions.is_empty()).then_some(instructions));
+            asked.extend(prompts.iter().map(|p| p.prompt.clone()));
+            let answers = self.answers.clone();
+            Box::pin(async move { Some(answers) })
+        }
+    }
+
+    fn auth_with(
+        port: u16,
+        auth: AuthMethod,
+        prompter: Arc<dyn Prompter>,
+    ) -> Result<(), ConnectError> {
+        let endpoint = Endpoint::parse(&format!("me@127.0.0.1:{port}")).unwrap();
+        let params = ConnectParams::new(endpoint, auth, TermSize::default());
+        let dir = std::env::temp_dir().join(format!(
+            "promptly-ssh-test-{}-auth-with-{port}",
+            std::process::id()
+        ));
+        let known = Arc::new(FileKnownHosts::new(vec![], dir.join("known_hosts")));
+        let result = crate::runtime()
+            .block_on(connect_handle(&params, prompter, known))
+            .map(|_| ());
+        let _ = std::fs::remove_dir_all(&dir);
+        result
     }
 }

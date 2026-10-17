@@ -29,6 +29,16 @@ void main() {
     expect(back.lastConnectedAt, h.lastConnectedAt);
   });
 
+  test('a production host keeps its mark and label, and older records have none', () {
+    final h = Host(id: newRecordId(), label: 'db-1', hostname: 'db', production: true, productionLabel: 'Live');
+    final back = Host.fromJson(jsonDecode(jsonEncode(h.toJson())) as Map<String, dynamic>);
+    expect(back.production, isTrue);
+    expect(back.productionBadge, 'Live');
+    final old = Host.fromJson({'id': 'x', 'label': 'x', 'hostname': 'x'});
+    expect(old.production, isFalse);
+    expect(old.copyWith(production: true).productionBadge, 'Production');
+  });
+
   test('ids are UUIDs and colours are stable per label', () {
     expect(newRecordId(), matches(RegExp(r'^[0-9a-f-]{36}$')));
     expect(defaultColorFor('web-1'), defaultColorFor('web-1'));

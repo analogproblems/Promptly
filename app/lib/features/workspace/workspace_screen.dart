@@ -4,10 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/host_colors.dart';
+import '../hosts/inheritance.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
 import '../sessions/session_body.dart';
 import '../sessions/session_manager.dart';
+import '../sessions/status_dot.dart';
 import '../sessions/sessions_screen.dart' show supportsLocalShell;
 import 'desktop_actions.dart';
 import 'workspace.dart';
@@ -162,7 +164,6 @@ class _Tab extends StatelessWidget {
         final s = session;
         final title = s == null ? 'New tab' : s.title;
         final accent = s?.color == null ? null : hostColor(s!.color, brightness);
-        final live = s?.controller != null && !(s!.controller!.exited);
         return InkWell(
           onTap: onSelect,
           child: Container(
@@ -171,32 +172,21 @@ class _Tab extends StatelessWidget {
             decoration: BoxDecoration(
               color: selected ? t.background : null,
               border: Border(
-                bottom: BorderSide(color: selected ? (accent ?? t.accent) : Colors.transparent, width: 2),
+                bottom: BorderSide(
+                  color: s?.production != null ? t.danger : (selected ? (accent ?? t.accent) : Colors.transparent),
+                  width: 2,
+                ),
                 right: BorderSide(color: t.border),
               ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Semantics(
-                  label: s == null
-                      ? 'Empty'
-                      : live
-                          ? 'Connected'
-                          : 'Not connected',
-                  child: Container(
-                    width: 7,
-                    height: 7,
-                    decoration: BoxDecoration(
-                      color: s == null
-                          ? t.muted
-                          : live
-                              ? (accent ?? t.accent)
-                              : t.muted,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
+                SessionStatusDot(entry: s, size: 7, liveColor: accent),
+                if (s?.production case final badge?) ...[
+                  const SizedBox(width: 6),
+                  _ProductionTag(label: badge),
+                ],
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
@@ -242,10 +232,7 @@ class _HostsPanelState extends ConsumerState<_HostsPanel> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final hosts = ref.watch(hostsProvider).where((h) {
-      if (_query.isEmpty) return true;
-      return h.label.toLowerCase().contains(_query) || h.hostname.toLowerCase().contains(_query);
-    }).toList();
+    final hosts = ref.watch(hostsProvider).where((h) => hostMatches(h, _query)).toList();
     final actions = DesktopActions(context, ref);
     final brightness = Theme.of(context).brightness;
     return SizedBox(
@@ -497,10 +484,7 @@ class _EmptyPaneState extends ConsumerState<_EmptyPane> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final hosts = ref.watch(hostsProvider).where((h) {
-      if (_query.isEmpty) return true;
-      return h.label.toLowerCase().contains(_query) || h.hostname.toLowerCase().contains(_query);
-    }).toList();
+    final hosts = ref.watch(hostsProvider).where((h) => hostMatches(h, _query)).toList();
     final actions = DesktopActions(context, ref);
     final brightness = Theme.of(context).brightness;
     return Listener(
@@ -580,6 +564,35 @@ class _EmptyPaneState extends ConsumerState<_EmptyPane> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The production label on a tab, in words as well as red.
+class _ProductionTag extends StatelessWidget {
+  const _ProductionTag({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 90),
+      child: Container(
+        key: const Key('tab-production'),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          border: Border.all(color: t.danger),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          label.toUpperCase(),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: t.danger),
         ),
       ),
     );

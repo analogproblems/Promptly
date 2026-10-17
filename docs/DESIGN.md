@@ -260,6 +260,7 @@ Host
   persistent_session: bool
   port_forwards[]: { kind: local | remote | dynamic, bind_host, bind_port, target_host, target_port, auto }
   last_connected_at?, favourite: bool
+  production: bool, production_label     the red bar and its words
 
 Group
   label, parent_id?, color

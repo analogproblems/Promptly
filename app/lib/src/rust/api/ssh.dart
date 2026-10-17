@@ -7,7 +7,9 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `auth_for`, `blank`, `forward_spec`, `params_for`
+// These functions are ignored because they are not marked as `pub`: `auth_for`, `blank`, `claim_tmux_name`, `forward_spec`, `params_for`, `tmux_name_for`
+// These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `TmuxHolder`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `cmp`, `eq`, `partial_cmp`
 
 /// Register a connection attempt. Nothing happens until `ssh_connect_events`
 /// is subscribed.
@@ -218,7 +220,15 @@ class SshEvent {
   final String? kbInstructions;
   final List<SshKbPrompt>? kbPrompts;
   final int? sessionId;
+
+  /// For `Failed`: the technical reason, for a "Details" section.
   final String? error;
+
+  /// For `Failed`: what happened, in plain words.
+  final String? errorTitle;
+
+  /// For `Failed`: one line on what to try.
+  final String? errorHint;
 
   const SshEvent({
     required this.kind,
@@ -230,6 +240,8 @@ class SshEvent {
     this.kbPrompts,
     this.sessionId,
     this.error,
+    this.errorTitle,
+    this.errorHint,
   });
 
   @override
@@ -242,7 +254,9 @@ class SshEvent {
       kbInstructions.hashCode ^
       kbPrompts.hashCode ^
       sessionId.hashCode ^
-      error.hashCode;
+      error.hashCode ^
+      errorTitle.hashCode ^
+      errorHint.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -257,7 +271,9 @@ class SshEvent {
           kbInstructions == other.kbInstructions &&
           kbPrompts == other.kbPrompts &&
           sessionId == other.sessionId &&
-          error == other.error;
+          error == other.error &&
+          errorTitle == other.errorTitle &&
+          errorHint == other.errorHint;
 }
 
 enum SshEventKind {

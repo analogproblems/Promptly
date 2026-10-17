@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
+import '../hosts/inheritance.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
 import '../settings/settings_providers.dart';
@@ -16,7 +17,14 @@ import 'connect_flow.dart';
 /// or exited. Notifies when it changes state; the controller notifies on
 /// every frame and the entry passes that on.
 class SessionEntry extends ChangeNotifier {
-  SessionEntry({required this.id, required this.label, required this.isLocal, this.hostId, this.color});
+  SessionEntry({
+    required this.id,
+    required this.label,
+    required this.isLocal,
+    this.hostId,
+    this.color,
+    this.production,
+  });
 
   /// The app's own id, stable for the session's whole life. Not the engine's.
   final int id;
@@ -29,6 +37,10 @@ class SessionEntry extends ChangeNotifier {
   /// The host's colour name, so you always know which box you are typing
   /// into. Null for local shells and one-off connections.
   final String? color;
+
+  /// The words on the red bar of a session to a production host; null for
+  /// every other session.
+  final String? production;
 
   TerminalController? _controller;
   ConnectFlow? _flow;
@@ -168,6 +180,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       isLocal: false,
       hostId: host.id,
       color: host.color ?? defaultColorFor(host.label),
+      production: host.production ? host.productionBadge : null,
     );
     final plan = requestFor(host, theme: theme);
     if (plan.request == null) {
@@ -211,7 +224,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
         SshHop(
           user: hopLogin.username,
           host: hop.hostname,
-          port: hop.port,
+          port: hopLogin.port,
           auth: hopLogin.kind,
           password: hopLogin.password,
           privateKey: hopLogin.privateKey,
@@ -225,7 +238,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final request = SshConnectRequest(
       user: login.username,
       host: host.hostname,
-      port: host.port,
+      port: login.port,
       auth: login.kind,
       password: login.password,
       privateKey: login.privateKey,
@@ -259,26 +272,21 @@ class SessionManager extends Notifier<List<SessionEntry>> {
         auto: f.auto,
       );
 
+  Inherited _inherited(Host host) => Inherited(host, ref.read(groupsProvider));
+
   /// The host's own jump host, or its group's.
-  String? _jumpHostIdFor(Host host) {
-    if (host.jumpHostId != null) return host.jumpHostId;
-    final group = ref.read(groupsProvider.notifier).byId(host.groupId);
-    return group?.defaults['jump_host_id'] as String?;
-  }
+  String? _jumpHostIdFor(Host host) => _inherited(host).jumpHostId;
 
   /// How to log in to a host: its own settings, with the group filling in
   /// what it leaves blank.
-  ({String username, SshAuthKind kind, String? password, String? privateKey, String? problem}) _loginFor(Host host) {
+  ({String username, int port, SshAuthKind kind, String? password, String? privateKey, String? problem}) _loginFor(
+    Host host,
+  ) {
     final engine = ref.read(engineProvider);
-    final group = ref.read(groupsProvider.notifier).byId(host.groupId);
-    final defaults = group?.defaults ?? const <String, dynamic>{};
-    var username = host.username;
-    if (username.isEmpty) username = defaults['username'] as String? ?? '';
-    var auth = host.auth;
-    final defaultIdentity = defaults['identity_id'] as String?;
-    if ((auth.kind == AuthKind.interactive || auth.kind == AuthKind.agent) && defaultIdentity != null) {
-      auth = HostAuth(kind: AuthKind.identity, identityId: defaultIdentity);
-    }
+    final inherited = _inherited(host);
+    final username = inherited.username;
+    final port = inherited.port;
+    final auth = inherited.auth;
     switch (auth.kind) {
       case AuthKind.identity:
         final identity = ref.read(identitiesProvider.notifier).byId(auth.identityId);
@@ -286,6 +294,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
         final privateKey = secretId == null ? null : _secret(engine, secretId);
         return (
           username: username,
+          port: port,
           kind: SshAuthKind.key,
           password: null,
           privateKey: privateKey,
@@ -295,18 +304,33 @@ class SessionManager extends Notifier<List<SessionEntry>> {
         final secretId = auth.passwordSecretId;
         return (
           username: username,
+          port: port,
           kind: SshAuthKind.password,
           password: secretId == null ? null : _secret(engine, secretId),
           privateKey: null,
           problem: null,
         );
       case AuthKind.agent:
-        return (username: username, kind: SshAuthKind.agent, password: null, privateKey: null, problem: null);
+        return (
+          username: username,
+          port: port,
+          kind: SshAuthKind.agent,
+          password: null,
+          privateKey: null,
+          problem: null,
+        );
       // The engine always tries a login without credentials first, so these
       // two differ only in what the person picked.
       case AuthKind.interactive:
       case AuthKind.none:
-        return (username: username, kind: SshAuthKind.interactive, password: null, privateKey: null, problem: null);
+        return (
+          username: username,
+          port: port,
+          kind: SshAuthKind.interactive,
+          password: null,
+          privateKey: null,
+          problem: null,
+        );
     }
   }
 
@@ -366,7 +390,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       }
     } else if (flow.error != null) {
       if (entry.reconnecting) {
-        _reconnectFailed(entry, flow.error!);
+        _reconnectFailed(entry, flow.errorTitle ?? flow.error!);
       } else if (entry.error == null) {
         entry.setError(flow.error);
       }

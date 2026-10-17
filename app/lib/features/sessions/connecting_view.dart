@@ -48,7 +48,7 @@ class ConnectingView extends StatelessWidget {
                       onAnswer: flow.answerKeyboard,
                     )
                   else if (flow.error != null)
-                    _ErrorPanel(message: flow.error!, onRetry: onRetry, onCancel: onCancel)
+                    _ErrorPanel(flow: flow, onRetry: onRetry, onCancel: onCancel)
                   else if (!flow.finished)
                     TextButton(onPressed: onCancel, child: const Text('Cancel')),
                 ],
@@ -83,7 +83,11 @@ class _Steps extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(host, style: monoStyle(context, size: 13, weight: FontWeight.w600, color: t.text)),
+        Text(
+          host,
+          overflow: TextOverflow.ellipsis,
+          style: monoStyle(context, size: 13, weight: FontWeight.w600, color: t.text),
+        ),
         const SizedBox(height: 10),
         for (final s in shown)
           Padding(
@@ -103,9 +107,11 @@ class _Steps extends StatelessWidget {
                             ),
                 ),
                 const SizedBox(width: 6),
-                Text(
-                  stepLabel(s),
-                  style: monoStyle(context, size: 13, color: flow.completed.contains(s) ? t.muted : t.text),
+                Flexible(
+                  child: Text(
+                    stepLabel(s),
+                    style: monoStyle(context, size: 13, color: flow.completed.contains(s) ? t.muted : t.text),
+                  ),
                 ),
               ],
             ),
@@ -181,13 +187,14 @@ class _HostKeyPanel extends StatelessWidget {
             child: Text(key_.randomart, style: monoStyle(context, size: 12, color: t.muted)),
           ),
           const SizedBox(height: 16),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               FilledButton(
                 onPressed: () => onAnswer(true),
                 child: const Text('Trust this key and connect'),
               ),
-              const SizedBox(width: 8),
               OutlinedButton(onPressed: () => onAnswer(false), child: const Text('Cancel')),
             ],
           ),
@@ -242,10 +249,11 @@ class _SecretPanelState extends State<_SecretPanel> {
             ),
           ),
           const SizedBox(height: 12),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               FilledButton(onPressed: () => widget.onAnswer(_controller.text), child: const Text('Connect')),
-              const SizedBox(width: 8),
               OutlinedButton(onPressed: () => widget.onAnswer(null), child: const Text('Cancel')),
             ],
           ),
@@ -313,10 +321,11 @@ class _KeyboardPanelState extends State<_KeyboardPanel> {
             const SizedBox(height: 8),
           ],
           const SizedBox(height: 4),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               FilledButton(onPressed: _submit, child: const Text('Continue')),
-              const SizedBox(width: 8),
               OutlinedButton(onPressed: () => widget.onAnswer(null), child: const Text('Cancel')),
             ],
           ),
@@ -326,15 +335,27 @@ class _KeyboardPanelState extends State<_KeyboardPanel> {
   }
 }
 
-class _ErrorPanel extends StatelessWidget {
-  const _ErrorPanel({required this.message, required this.onRetry, required this.onCancel});
-  final String message;
+/// What went wrong in plain words, what to try, and the technical reason
+/// behind "Details" for whoever runs the server.
+class _ErrorPanel extends StatefulWidget {
+  const _ErrorPanel({required this.flow, required this.onRetry, required this.onCancel});
+  final ConnectFlow flow;
   final VoidCallback onRetry;
   final VoidCallback onCancel;
 
   @override
+  State<_ErrorPanel> createState() => _ErrorPanelState();
+}
+
+class _ErrorPanelState extends State<_ErrorPanel> {
+  bool _details = false;
+
+  @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final flow = widget.flow;
+    final title = flow.errorTitle;
+    final hint = flow.errorHint;
     return _Panel(
       accent: t.danger,
       child: Column(
@@ -344,17 +365,44 @@ class _ErrorPanel extends StatelessWidget {
             children: [
               Icon(Icons.error_outline, color: t.danger),
               const SizedBox(width: 8),
-              Expanded(child: Text('Could not connect', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: t.text))),
+              Expanded(
+                child: Text(
+                  title ?? 'Could not connect',
+                  key: const Key('connect-error-title'),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: t.text),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 8),
-          SelectableText(message, style: TextStyle(fontSize: 13, height: 1.45, color: t.muted)),
+          if (title == null)
+            SelectableText(flow.error!, style: TextStyle(fontSize: 13, height: 1.45, color: t.muted))
+          else ...[
+            if (hint != null)
+              Text(
+                hint,
+                key: const Key('connect-error-hint'),
+                style: TextStyle(fontSize: 13, height: 1.45, color: t.text),
+              ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                key: const Key('connect-error-details'),
+                style: TextButton.styleFrom(padding: EdgeInsets.zero, foregroundColor: t.muted),
+                onPressed: () => setState(() => _details = !_details),
+                icon: Icon(_details ? Icons.expand_less : Icons.expand_more, size: 18),
+                label: const Text('Details'),
+              ),
+            ),
+            if (_details) SelectableText(flow.error!, style: monoStyle(context, size: 12, color: t.muted)),
+          ],
           const SizedBox(height: 14),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              FilledButton(onPressed: onRetry, child: const Text('Try again')),
-              const SizedBox(width: 8),
-              OutlinedButton(onPressed: onCancel, child: const Text('Close')),
+              FilledButton(onPressed: widget.onRetry, child: const Text('Try again')),
+              OutlinedButton(onPressed: widget.onCancel, child: const Text('Close')),
             ],
           ),
         ],

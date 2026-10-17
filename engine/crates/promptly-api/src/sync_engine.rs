@@ -10,13 +10,13 @@ use std::time::{Duration, Instant};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use promptly_ssh::{
-    Algorithm, AuthMethod, ConnectError, ConnectParams, Endpoint, FileKnownHosts, HostKeyInfo,
-    HostKeyStatus, KnownHosts, PublicKey, QuietPrompter, SftpBackend, SftpError,
+    Algorithm, ConnectError, ConnectParams, Endpoint, FileKnownHosts, HostKeyInfo, HostKeyStatus,
+    KnownHosts, PublicKey, QuietPrompter, SftpBackend, SftpError,
 };
 use promptly_store::{Collection, SecretStore, Store};
 use promptly_term::TermSize;
 use promptly_vault::backend::LocalFolder;
-use promptly_vault::model::{Auth, Device, Host, Identity, KnownHost};
+use promptly_vault::model::{Device, Host, KnownHost};
 use promptly_vault::{crypto, Backend, Dek, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -264,69 +264,18 @@ pub fn forget_sftp() {
 }
 
 /// The saved host as connection parameters, using its stored password or
-/// key. Unattended, so anything that would need a prompt is an error that
-/// says what to do.
+/// key, with its group's defaults and jump hosts resolved as a terminal
+/// connection does. Unattended, so anything that would need a prompt is an
+/// error that says what to do.
 pub fn sftp_params(store: &Store, host_id: &str) -> Result<(ConnectParams, String), String> {
-    let record = store
-        .get(Collection::Hosts, host_id)
-        .map_err(|e| e.to_string())?
-        .ok_or("that host is no longer saved")?;
-    let host: Host = serde_json::from_str(&record.json).map_err(|e| e.to_string())?;
-    let auth = match &host.auth {
-        Auth::Identity { identity_id } => {
-            let identity = store
-                .get(Collection::Identities, &identity_id.to_string())
-                .map_err(|e| e.to_string())?
-                .and_then(|r| serde_json::from_str::<Identity>(&r.json).ok())
-                .ok_or_else(|| format!("the key for {} is missing", host.label))?;
-            let secret_id = identity.private_key_secret_id.ok_or_else(|| {
-                format!(
-                    "the key for {} has no private half on this device",
-                    host.label
-                )
-            })?;
-            let private_key = secrets()
-                .get(&secret_id.to_string())
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("the key for {} is missing on this device", host.label))?;
-            AuthMethod::Key {
-                private_key: String::from_utf8_lossy(&private_key).into_owned(),
-                passphrase: None,
-            }
-        }
-        Auth::Password {
-            password_secret_id: Some(password_secret_id),
-        } => {
-            let password = secrets()
-                .get(&password_secret_id.to_string())
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("the saved password for {} is missing", host.label))?;
-            AuthMethod::Password {
-                password: Some(String::from_utf8_lossy(&password).into_owned()),
-            }
-        }
-        Auth::Password {
-            password_secret_id: None,
-        }
-        | Auth::Agent
-        | Auth::Interactive
-        | Auth::None => {
-            return Err(format!(
-                "Sync needs a stored login: edit {} and save a password or pick a key.",
-                host.label
-            ))
-        }
-    };
+    let (mut request, label) = crate::host_plan::unattended_request(store, &*secrets(), host_id)?;
     let endpoint = Endpoint {
-        user: host.username.clone(),
-        host: host.hostname.clone(),
-        port: host.port,
+        user: request.user.clone(),
+        host: request.host.clone(),
+        port: request.port,
     };
-    let mut params = ConnectParams::new(endpoint, auth, TermSize::default());
-    if host.keepalive_seconds > 0 {
-        params.keepalive = Duration::from_secs(u64::from(host.keepalive_seconds));
-    }
-    Ok((params, host.label))
+    let params = crate::api::ssh::params_for(&mut request, endpoint, TermSize::default(), None);
+    Ok((params, label))
 }
 
 /// Connect to the saved host over SFTP, reusing a live connection.
@@ -357,9 +306,16 @@ pub fn connect_sftp(host_id: &str, remote_dir: &str) -> Result<Arc<SftpBackend>,
             "{label}'s host key is marked as revoked in a known_hosts file, so sync stopped."
         ),
         SftpError::Connect(ConnectError::Cancelled)
-        | SftpError::Connect(ConnectError::AuthFailed(_)) => format!(
+        | SftpError::Connect(ConnectError::AuthFailed { .. }) => format!(
             "The saved login for {label} did not work. Check the password or key on the host."
         ),
+        SftpError::Connect(ConnectError::KeyNeedsPassphrase) => format!(
+            "The key for {label} needs its passphrase, which sync can't ask for. Pick a key without one for this host."
+        ),
+        SftpError::Connect(e) => {
+            let plain = e.explain();
+            format!("{label}: {}. {}", plain.title, plain.hint)
+        }
         other => format!("{label}: {other}"),
     })?;
     let backend = Arc::new(backend);
