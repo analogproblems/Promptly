@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'core/router.dart';
 import 'core/theme/theme.dart';
+import 'features/lock/lock_gate.dart';
 import 'features/sessions/session_manager.dart';
 import 'features/settings/settings_providers.dart';
 import 'features/sync/sync_providers.dart';
@@ -46,7 +47,9 @@ class _PromptlyAppState extends ConsumerState<PromptlyApp> with WidgetsBindingOb
       themeMode: themeMode,
       routerConfig: ref.watch(routerProvider),
       builder: (context, child) =>
-          TerminalThemeSync(child: SyncRefresh(child: UpdateReminder(child: child ?? const SizedBox.shrink()))),
+          LockGate(
+            child: TerminalThemeSync(child: SyncRefresh(child: UpdateReminder(child: child ?? const SizedBox.shrink()))),
+          ),
     );
   }
 }

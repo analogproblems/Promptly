@@ -83,3 +83,18 @@ List<String> parseTags(String text) {
   }
   return out;
 }
+
+/// Whether reaching [host] uses a saved private key anywhere: on the host
+/// itself or on any jump host on the way, each with its group's defaults.
+bool reachingUsesKey(Host host, List<Host> hosts, List<Group> groups) {
+  final byId = {for (final h in hosts) h.id: h};
+  final seen = <String>{};
+  Host? h = host;
+  while (h != null && seen.add(h.id)) {
+    final inherited = Inherited(h, groups);
+    if (inherited.auth.kind == AuthKind.identity) return true;
+    final next = inherited.jumpHostId;
+    h = next == null ? null : byId[next];
+  }
+  return false;
+}

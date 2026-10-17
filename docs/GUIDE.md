@@ -702,6 +702,11 @@ If the file holds several themes, save the ones you want. Imported themes appear
 | **Appearance** | **App look** | Light, dark, or follow the system. |
 | | **Terminal theme** | The terminal's colours. See [chapter 15](#15-themes-and-appearance). |
 | **Terminal** | **Let programs copy to the clipboard** | Lets programs such as `tmux` and `vim` set your clipboard, even over SSH. Off by default. |
+| **Security** | **Unlock SSH keys before use** | Asks for your fingerprint, face, device PIN or Windows Hello before connecting with a key, testing a connection, or setting up sync with a host that uses one. Once sync is set up, it uses the host's key in the background without asking. On by default. |
+| | **Lock Promptly** | Asks the same when Promptly opens, and when you come back to it after the time below. Off by default. If the device's screen lock is later turned off, Promptly stays locked until it's back. |
+| | **Ask again** | How long a check lasts before keys ask again, and how long Promptly can be away before it locks: every time, or after 1, 5, 15 or 60 minutes. 5 minutes by default. |
+| | | Turning either lock off, asking less often, or removing the app passcode asks first, so someone holding your unlocked device can't simply switch them off. |
+| | **App passcode** | Only on computers with no fingerprint or PIN check that apps can use (Linux). Sets a passcode Promptly asks for instead. It's stored only as a hash, on that computer. |
 | **Updates** | **Check for updates automatically** | Asks GitHub once a day whether a new version is out. Off by default. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |
 | | **Import from a CSV file** | Imports hosts from a CSV file. |
@@ -769,6 +774,7 @@ Every vault command takes the vault folder, and asks for the passphrase, or read
 
 - **Promptly collects nothing about you.** There are no analytics, no crash reporting and no accounts. Apart from your SSH connections, nothing leaves your device unless you set up sync, which sends only encrypted data to the storage you chose, or check for updates, which asks GitHub for the newest version number. See the [privacy policy](PRIVACY.md).
 - **Your data is encrypted, on your device and in the vault.** Your hosts, keys, snippets and settings, and your saved passwords, private keys and the vault's key, are encrypted in Promptly's data folder with a key held in your system's secure storage (the Keychain, Android Keystore, Windows Credential Manager or the Linux keyring), so a copy of the folder, such as a backup, doesn't reveal them. They go into the vault only in encrypted form, and your passphrase never leaves your device. On a Linux computer with no keyring, Promptly can't encrypt them on the device; **Settings** then says so, and installing a keyring such as GNOME Keyring or KWallet turns encryption on the next time Promptly starts. The `promptly` command-line tool's own copy is encrypted too, so it opens only with the vault's passphrase or recovery code.
+- **Keys unlock with you.** Before a key is used, Promptly asks for your fingerprint, face or device PIN (Windows Hello on Windows, an app passcode on Linux), and it can lock itself when it opens or when you come back to it. See **Security** in [Settings](#16-settings-reference).
 - **Host keys are always checked.** Promptly warns you before connecting to a server it hasn't seen before, and stops you if a known server's key changes.
 - **You choose what programs can do.** Remote programs can only set your clipboard if you allow it, and agent forwarding is off unless you turn it on for a host.
 - **Reachability checks are local.** With **Show which hosts are up** on, your device knocks on each host's SSH port directly; nothing goes anywhere else.

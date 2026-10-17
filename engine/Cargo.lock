@@ -1986,6 +1986,7 @@ name = "promptly_api"
 version = "1.0.1"
 dependencies = [
  "anyhow",
+ "argon2",
  "base64 0.23.1",
  "flutter_rust_bridge",
  "promptly-session",
@@ -1993,6 +1994,7 @@ dependencies = [
  "promptly-store",
  "promptly-term",
  "promptly-vault",
+ "rand",
  "serde",
  "serde_json",
  "time",

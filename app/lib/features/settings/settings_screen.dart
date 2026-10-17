@@ -10,6 +10,7 @@ import '../shell/empty_state.dart';
 import 'settings_providers.dart';
 import '../hosts/csv_import.dart';
 import '../hosts/ssh_config_import.dart';
+import '../lock/lock_settings.dart';
 import '../sessions/sessions_screen.dart' show supportsLocalShell;
 import '../sync/sync_providers.dart';
 import '../updates/updates.dart';
@@ -132,6 +133,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
               ),
+              const SizedBox(height: 16),
+              const _Section(title: 'Security', child: LockSettingsCard()),
               const SizedBox(height: 16),
               _Section(
                 title: 'Hosts',

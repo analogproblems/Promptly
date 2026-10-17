@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
+import '../lock/app_lock.dart';
 import '../sessions/connect_flow.dart';
 import '../sessions/connecting_view.dart';
 import '../sessions/session_manager.dart';
@@ -968,17 +969,17 @@ class _Section extends StatelessWidget {
 
 /// "Test connection": the real connect flow, its steps and questions, in a
 /// dialog. A login that works is hung up straight away.
-class _TestConnectionDialog extends StatefulWidget {
+class _TestConnectionDialog extends ConsumerStatefulWidget {
   const _TestConnectionDialog({required this.engine, required this.request});
 
   final Engine engine;
   final SshConnectRequest request;
 
   @override
-  State<_TestConnectionDialog> createState() => _TestConnectionDialogState();
+  ConsumerState<_TestConnectionDialog> createState() => _TestConnectionDialogState();
 }
 
-class _TestConnectionDialogState extends State<_TestConnectionDialog> {
+class _TestConnectionDialogState extends ConsumerState<_TestConnectionDialog> {
   late ConnectFlow _flow;
 
   @override
@@ -988,7 +989,11 @@ class _TestConnectionDialogState extends State<_TestConnectionDialog> {
   }
 
   void _start() {
-    _flow = ConnectFlow(engine: widget.engine, request: widget.request)..addListener(_onFlow);
+    _flow = ConnectFlow(
+      engine: widget.engine,
+      request: widget.request,
+      unlock: () => ref.read(appLockProvider.notifier).unlockKeys(),
+    )..addListener(_onFlow);
     _flow.start();
   }
 

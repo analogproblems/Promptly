@@ -47,6 +47,17 @@ class ConnectingView extends StatelessWidget {
                       prompts: flow.keyboard!.prompts,
                       onAnswer: flow.answerKeyboard,
                     )
+                  else if (flow.unlocking)
+                    Row(
+                      children: [
+                        Icon(Icons.fingerprint, color: t.accent),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text('Unlock your SSH key to connect.', style: TextStyle(color: t.text)),
+                        ),
+                        TextButton(onPressed: onCancel, child: const Text('Cancel')),
+                      ],
+                    )
                   else if (flow.error != null)
                     _ErrorPanel(flow: flow, onRetry: onRetry, onCancel: onCancel)
                   else if (!flow.finished)

@@ -10,6 +10,7 @@ import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/inheritance.dart';
+import '../lock/app_lock.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
 import '../shell/empty_state.dart';
@@ -138,6 +139,15 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
     }
     if (_remote.text.trim().isEmpty) {
       setState(() => _error = 'Name a folder on the server.');
+      return;
+    }
+    // Setting sync up is the person's own use of the host's key, so it is
+    // unlocked like any other; after that, sync uses it in the background.
+    final hosts = ref.read(hostsProvider);
+    final host = hosts.where((h) => h.id == hostId).firstOrNull;
+    final usesKey = host != null && reachingUsesKey(host, hosts, ref.read(groupsProvider));
+    if (usesKey && !await ref.read(appLockProvider.notifier).unlockKeys()) {
+      setState(() => _error = 'The host\'s SSH key stays locked, so Promptly did not connect.');
       return;
     }
     setState(() {

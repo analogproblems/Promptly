@@ -8,6 +8,7 @@ import '../../core/theme/tokens.dart';
 import '../hosts/host_colors.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
+import '../lock/app_lock.dart';
 import '../sessions/session_manager.dart';
 import '../settings/settings_providers.dart';
 import 'repositories.dart';
@@ -46,6 +47,15 @@ class _RunOnHostsScreenState extends ConsumerState<RunOnHostsScreen> {
     if (values == null || !mounted) return;
     final command = snippet.render(values);
     final hosts = [for (final h in ref.read(hostsProvider)) if (_selected.contains(h.id)) h];
+    // One check for the whole run, before any key is used.
+    final manager = ref.read(sessionManagerProvider.notifier);
+    final theme = terminalThemeFor(ref, context);
+    final usesKey = hosts.any((h) {
+      final r = manager.requestFor(h, theme: theme).request;
+      return r != null && (r.privateKey != null || r.jumps.any((j) => j.privateKey != null));
+    });
+    if (usesKey && !await ref.read(appLockProvider.notifier).unlockKeys()) return;
+    if (!mounted) return;
     setState(() {
       _command = command;
       _results.clear();

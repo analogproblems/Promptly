@@ -46,6 +46,7 @@ dependencies:
   file_selector: ^1.1.0
   crypto: ^3.0.6
   flutter_secure_storage: ^11.2.0
+  local_auth: ^3.0.2
 
 dev_dependencies:
   flutter_test:

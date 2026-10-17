@@ -1,6 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- SSH and sync both need the network. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Fingerprint or face to unlock the app and SSH keys, when turned on. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <application
         android:label="Promptly"
         android:name="${applicationName}"
