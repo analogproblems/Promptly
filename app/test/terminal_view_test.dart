@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
@@ -470,6 +472,87 @@ void main() {
     expect(engine.written.last, [13]);
     insert('x\x1b[201~y');
     expect(engine.written.last, 'x[201~y'.codeUnits);
+    controller.dispose();
+  });
+
+  testWidgets('a keyboard paste that replaces typed text erases nothing until it is accepted', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    Completer<String?>? answer;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(
+          body: TerminalView(
+            controller: controller,
+            imeInput: true,
+            confirmPaste: (text) => (answer = Completer<String?>()).future,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' ',
+        textInserted: 'abc',
+        insertionOffset: 1,
+        selection: TextSelection.collapsed(offset: 4),
+        composing: TextRange.empty,
+      ),
+    ]);
+    final typed = engine.written.length;
+    void replaceAbc() => client.updateEditingValueWithDeltas([
+          const TextEditingDeltaReplacement(
+            oldText: ' abc',
+            replacementText: 'one\ntwo',
+            replacedRange: TextRange(start: 1, end: 4),
+            selection: TextSelection.collapsed(offset: 8),
+            composing: TextRange.empty,
+          ),
+        ]);
+
+    // While the check is up, and after Cancel, nothing is erased or sent,
+    // and typing meanwhile waits behind the paste.
+    replaceAbc();
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' one\ntwo',
+        textInserted: 'x',
+        insertionOffset: 8,
+        selection: TextSelection.collapsed(offset: 9),
+        composing: TextRange.empty,
+      ),
+    ]);
+    await tester.pump();
+    expect(engine.written.length, typed);
+    answer!.complete(null);
+    await tester.pump();
+    expect(engine.written.sublist(typed), ['x'.codeUnits]);
+    expect(engine.pasted, isEmpty);
+
+    // Accepted: the replaced text is erased, then the paste goes in.
+    final before = engine.written.length;
+    final calls = engine.calls.length;
+    replaceAbc();
+    answer!.complete('one\ntwo');
+    await tester.pump();
+    expect(engine.written.sublist(before), [
+      [0x7f, 0x7f, 0x7f],
+    ]);
+    expect(engine.calls.sublist(calls).last, 'paste');
+    expect(engine.pasted, ['one\ntwo']);
+
+    // The whole-value fallback holds its erasure back the same way.
+    final whole = engine.written.length;
+    client.updateEditingValue(const TextEditingValue(text: ' ab'));
+    client.updateEditingValue(const TextEditingValue(text: ' a\nb'));
+    await tester.pump();
+    expect(engine.written.length, whole + 1); // typing "ab" only
+    answer!.complete(null);
+    await tester.pump();
+    expect(engine.written.length, whole + 1);
     controller.dispose();
   });
 

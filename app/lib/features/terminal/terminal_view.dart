@@ -187,19 +187,41 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     c.write(c.encodeTyped(text));
   }
 
-  /// Text from the soft keyboard. Enter on its own is Enter; anything else
-  /// with a line break in it came from the keyboard's paste (or a dictated
-  /// paragraph) and goes through the same check and clean-up as any paste.
-  /// Control characters a keyboard should never produce are dropped.
-  void _imeText(String text) {
+  /// A keyboard paste waiting on its check. Keyboard input that arrives
+  /// meanwhile waits behind it, so nothing overtakes the paste.
+  Future<void>? _imePending;
+
+  /// An edit from the soft keyboard: erase [erase] characters, then type
+  /// [text]. Enter on its own is Enter; anything else with a line break in
+  /// it came from the keyboard's paste (or a dictated paragraph) and goes
+  /// through the same check and clean-up as any paste, erasure included, so
+  /// cancelling it changes nothing. Control characters a keyboard should
+  /// never produce are dropped.
+  void _imeText(String text, {int erase = 0}) {
+    final pending = _imePending;
+    final next = pending == null
+        ? _imeEdit(text, erase)
+        : pending.catchError((Object _) {}).then((_) => _imeEdit(text, erase));
+    if (next == null) return;
+    _imePending = next;
+    next.whenComplete(() {
+      if (identical(_imePending, next)) _imePending = null;
+    });
+  }
+
+  Future<void>? _imeEdit(String text, int erase) {
+    if (!mounted) return null;
+    if (text.length > 1 && (text.contains('\n') || text.contains('\r'))) {
+      return _pasteText(text, erase: erase, fromKeyboard: true);
+    }
+    _erase(erase);
     if (text == '\n' || text == '\r') {
       _writeText('\r');
-    } else if (text.contains('\n') || text.contains('\r')) {
-      _pasteText(text);
     } else {
       final clean = text.replaceAll(_controlChars, '');
       if (clean.isNotEmpty) _writeText(clean);
     }
+    return null;
   }
 
   static final _controlChars = RegExp('[\x00-\x08\x0b-\x1f\x7f-\x9f]');
@@ -217,10 +239,9 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
         case TextEditingDeltaInsertion(:final textInserted):
           _imeText(textInserted);
         case TextEditingDeltaDeletion(:final oldText, :final deletedRange):
-          _erase(_characters(oldText, deletedRange));
+          _imeText('', erase: _characters(oldText, deletedRange));
         case TextEditingDeltaReplacement(:final oldText, :final replacedRange, :final replacementText):
-          _erase(_characters(oldText, replacedRange));
-          _imeText(replacementText);
+          _imeText(replacementText, erase: _characters(oldText, replacedRange));
         case TextEditingDeltaNonTextUpdate():
           break;
       }
@@ -245,9 +266,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     }
     // Never split an emoji's two halves between kept and changed.
     if (common > 0 && (before.codeUnitAt(common - 1) & 0xFC00) == 0xD800) common--;
-    _erase(before.substring(common).runes.length);
-    final typed = after.substring(common);
-    if (typed.isNotEmpty) _imeText(typed);
+    _imeText(after.substring(common), erase: before.substring(common).runes.length);
     _imeValue = value;
     _trimImeBuffer();
   }
@@ -393,16 +412,26 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   }
 
   /// Paste [text]: shown first when the hook says so, then sent as a paste
-  /// (bracketed for programs that ask, control characters removed).
-  Future<void> _pasteText(String original) async {
+  /// (bracketed for programs that ask, control characters removed). [erase]
+  /// characters the paste replaces are erased only once it goes ahead.
+  Future<void> _pasteText(String original, {int erase = 0, bool fromKeyboard = false}) async {
     String? text = original;
     final confirm = widget.confirmPaste;
     if (confirm != null) {
       text = await confirm(text);
       if (!mounted) return;
+      if (fromKeyboard) {
+        // The keyboard's buffer holds the paste whatever the answer; start
+        // it afresh so it matches what the program has.
+        _imeValue = _imeBase;
+        _ime?.setEditingState(_imeBase);
+      }
       _focus.requestFocus();
     }
-    if (text != null && text.isNotEmpty) widget.controller.paste(text);
+    if (text != null && text.isNotEmpty) {
+      _erase(erase);
+      widget.controller.paste(text);
+    }
   }
 
   Future<void> _copySelection() async {
