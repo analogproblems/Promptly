@@ -58,6 +58,10 @@ class TerminalView extends StatefulWidget {
 /// the pointer is dragged past an edge; the engine clamps it.
 typedef _Cell = ({int col, int line, bool right});
 
+/// A few pixels between the pane's left edge and the first column, so text
+/// does not sit flush against it.
+const double _inset = 8;
+
 class _TerminalViewState extends State<TerminalView> with TextInputClient, DeltaTextInputClient {
   TextInputConnection? _ime;
 
@@ -376,8 +380,9 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   _Cell _cellAt(Offset local) {
     final cw = _metrics.width;
     final ch = _metrics.height;
-    final col = (local.dx / cw).floor().clamp(0, 0xFFFF);
-    final right = local.dx - col * cw > cw / 2;
+    final x = local.dx - _inset;
+    final col = (x / cw).floor().clamp(0, 0xFFFF);
+    final right = x - col * cw > cw / 2;
     final line = (local.dy / ch).floor();
     return (col: col, line: line, right: right);
   }
@@ -585,7 +590,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     final c = widget.controller;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final cols = _metrics.colsFor(constraints.maxWidth);
+        final cols = _metrics.colsFor(constraints.maxWidth - _inset);
         final rows = _metrics.rowsFor(constraints.maxHeight);
         c.resize(cols, rows);
         return Semantics(
@@ -617,6 +622,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
                       cursorVisible: _cursorOn,
                       focused: _focus.hasFocus,
                       generation: c.grid.generation,
+                      inset: _inset,
                     ),
                   ),
                 ),

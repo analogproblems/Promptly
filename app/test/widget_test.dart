@@ -1534,6 +1534,42 @@ void main() {
     expect(workspaceOf(tester).currentTab!.leaves.length, 1);
   });
 
+  testWidgets('every menu opens below the menu bar, inside the window, with room after the shortcuts', (tester) async {
+    for (final height in [900.0, 600.0]) {
+      tester.view.physicalSize = Size(1400, height);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(app(FakeEngine()));
+      await tester.pumpAndSettle();
+      final barBottom = tester.getBottomLeft(find.byType(MenuBar)).dy;
+      for (final name in ['File', 'Edit', 'View', 'Session', 'Help']) {
+        await tester.tap(find.text(name));
+        await tester.pumpAndSettle();
+        // The open menu is the panel holding the menu's items.
+        final items = find.byType(MenuItemButton);
+        expect(items, findsWidgets, reason: '$name opens');
+        final top = tester.getTopLeft(items.first).dy;
+        expect(top, greaterThanOrEqualTo(barBottom), reason: '$name at $height high must not cover the bar');
+        final panel = find.ancestor(of: items.first, matching: find.byType(SingleChildScrollView)).first;
+        final bottom = tester.getBottomLeft(panel).dy;
+        expect(bottom, lessThanOrEqualTo(height), reason: '$name stays inside the window');
+        for (final item in tester.widgetList<MenuItemButton>(items)) {
+          if (item.shortcut == null) continue;
+          final f = find.byWidget(item);
+          if (tester.getRect(f).bottom > height) continue;
+          final label = find.descendant(of: f, matching: find.byType(Text)).last;
+          expect(
+            tester.getTopRight(f).dx - tester.getTopRight(label).dx,
+            greaterThanOrEqualTo(16),
+            reason: '$name: shortcut ${(tester.widget<Text>(label)).data} needs room on its right',
+          );
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+      }
+    }
+  });
+
   testWidgets('tabs open, cycle and close with the keyboard', (tester) async {
     desktopWindow(tester);
     final engine = FakeEngine();
