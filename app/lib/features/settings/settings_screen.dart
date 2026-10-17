@@ -12,6 +12,7 @@ import '../hosts/csv_import.dart';
 import '../hosts/ssh_config_import.dart';
 import '../sessions/sessions_screen.dart' show supportsLocalShell;
 import '../sync/sync_providers.dart';
+import '../updates/updates.dart';
 import 'themes_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -239,6 +240,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
               ),
+              if (updateChecksSupported) ...[
+                const SizedBox(height: 16),
+                _Section(
+                  title: 'Updates',
+                  child: SwitchListTile(
+                    key: const Key('update-check'),
+                    title: const Text('Check for updates automatically'),
+                    subtitle: const Text(
+                      'Asks GitHub once a day whether a new version is out. Off, Promptly only looks when you press Check on the About page.',
+                    ),
+                    value: ref.watch(updateCheckProvider),
+                    onChanged: (v) => ref.read(updateCheckProvider.notifier).set(v),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               _Section(
                 title: 'Help',
