@@ -375,7 +375,7 @@ Press Ctrl+= for bigger text, Ctrl+- for smaller, and Ctrl+0 to go back to the n
 
 ### Letting programs set your clipboard
 
-Some programs, such as `tmux` and `vim`, can copy text to your clipboard directly, even over SSH. This is on by default. To stop any remote program from changing your clipboard, turn off **Settings › Terminal › Let programs copy to the clipboard**.
+Some programs, such as `tmux` and `vim`, can copy text to your clipboard directly, even over SSH. This is off by default, so no remote program can change your clipboard. To allow it, turn on **Settings › Terminal › Let programs copy to the clipboard**.
 
 ### On a phone or tablet
 
@@ -683,7 +683,7 @@ If the file holds several themes, save the ones you want. Imported themes appear
 |---|---|---|
 | **Appearance** | **App look** | Light, dark, or follow the system. |
 | | **Terminal theme** | The terminal's colours. See [chapter 15](#15-themes-and-appearance). |
-| **Terminal** | **Let programs copy to the clipboard** | Lets programs such as `tmux` and `vim` set your clipboard, even over SSH. On by default. |
+| **Terminal** | **Let programs copy to the clipboard** | Lets programs such as `tmux` and `vim` set your clipboard, even over SSH. Off by default. |
 | **Updates** | **Check for updates automatically** | Asks GitHub once a day whether a new version is out. Off by default. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |
 | | **Import from a CSV file** | Imports hosts from a CSV file. |
