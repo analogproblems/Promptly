@@ -150,7 +150,7 @@ On a phone the tabs sit along the bottom of the screen. On a tablet or a compute
 
 ### Phone and tablet layout
 
-On a narrow screen the **Sessions** tab lists every open session with a live thumbnail of its screen, so you can glance at a long-running job without opening it. Tap a session to open it full screen, and tap the back arrow to return to the list. A session keeps running while you move around the app.
+On a narrow screen the **Sessions** tab lists every open session with a live thumbnail of its screen, so you can glance at a long-running job without opening it. Tap a session to open it full screen, and tap the back arrow to return to the list. To go straight to the next session in the list, swipe sideways across the terminal with two fingers: to the left for the next one, to the right for the one before. A session keeps running while you move around the app.
 
 ### Desktop layout
 
@@ -374,6 +374,12 @@ If reconnecting stops or runs out of tries, the session stays on screen with its
 
 A reconnect starts a new shell on the server; programs you were running in the old one have ended. To keep programs running through a drop, turn on **Persistent session** for the host (see [chapter 13](#13-more-connection-options)).
 
+### When you leave the app on a phone
+
+On Android, open sessions keep running while you use other apps or the screen is off. While at least one is open, Promptly shows a notification such as **Promptly: 2 sessions open**; tap it to come back. The first time, Android 13 and later ask whether Promptly may show notifications. If you say no, the sessions still keep running, but the notification is hidden. Swiping Promptly away from your recent apps closes its sessions.
+
+If a connection drops while you're away anyway (the phone lost its signal, or the system stopped the app's network to save battery), Promptly reconnects it as soon as you come back, without waiting for the next try. With **Persistent session** on, you're back in the same `tmux` session with nothing lost. Sessions you stopped with **Stop** stay ended.
+
 ### Local shells
 
 On Linux, Windows and macOS, Promptly can also open a terminal on your own computer. Tap **Local shell** on the **Sessions** tab, or choose **File › New local shell**. When the shell exits, tap **New shell** to start another.
@@ -403,7 +409,7 @@ Typing clears the selection, as in other terminals.
 
 ### Programs that use the mouse
 
-Some full-screen programs, such as `vim` with mouse support on, `tmux` and `htop`, ask for the mouse. In those programs, clicks, drags and the scroll wheel go to the program. **Hold Shift** to select text or scroll the terminal yourself instead.
+Some full-screen programs, such as `vim` with mouse support on, `tmux` and `htop`, ask for the mouse. In those programs, clicks, drags and the scroll wheel go to the program. **Hold Shift** to select text or scroll the terminal yourself instead. On a touch screen, a tap is a click at the spot you tap, so you can move the cursor in `vim`, pick a `tmux` pane or a process in `htop`.
 
 ### Scrolling back
 
@@ -421,9 +427,11 @@ Web addresses in the output are faintly underlined. **Ctrl+click** a link to ope
 
 File paths that start with `/` or `~/` (such as `/var/log/syslog`) and IP addresses (such as `10.0.0.1` or `10.0.0.1:22`) are found too. They aren't underlined, so the screen stays calm, but the pointer changes over them. **Ctrl+click** one to copy it, or **right-click** it and choose **Copy path** or **Copy address**. Version numbers such as `1.2.3` are left alone.
 
+On a touch screen, tap a link, path or address for the same menu: **Open link** and **Copy link**, or **Copy path** or **Copy address**. This works in programs that use the mouse, too.
+
 ### Text size
 
-Press Ctrl+= for bigger text, Ctrl+- for smaller, and Ctrl+0 to go back to the normal size. These are also in the **View** menu. The terminal resizes to fit, and the server is told the new size. Promptly remembers the size, so new sessions open at it. You can also pick it with **Text size** in Settings, Terminal, which changes open sessions too.
+Press Ctrl+= for bigger text, Ctrl+- for smaller, and Ctrl+0 to go back to the normal size. On a touch screen, pinch the terminal with two fingers: spread them for bigger text, close them for smaller. These are also in the **View** menu. The terminal resizes to fit, and the server is told the new size. Promptly remembers the size, so new sessions open at it. You can also pick it with **Text size** in Settings, Terminal, which changes open sessions too.
 
 ### The bell
 
@@ -436,6 +444,13 @@ Some programs, such as `tmux` and `vim`, can copy text to your clipboard directl
 ### On a phone or tablet
 
 Tap the terminal to bring up the keyboard. Promptly takes what you type exactly as the keyboard sends it, including autocorrected words and emoji.
+
+With your fingers on the terminal:
+
+- **Tap** a link, path or address to open or copy it. In a program that uses the mouse, a tap is a click.
+- **Double tap** a word to select it, then choose **Copy** from the menu that appears.
+- **Pinch** to change the text size. Promptly remembers it for new sessions.
+- **Swipe sideways with two fingers** to go to the next or previous session.
 
 Above the keyboard is a bar with the keys a phone keyboard lacks. Swipe it sideways to see them all:
 
@@ -454,7 +469,7 @@ At the right end of the bar, the **‹›** button opens your snippets, and the 
 
 **To choose the keys on the bar,** go to **Settings › Terminal › Keyboard bar**. Drag a key by its handle to move it, tap **−** to take it off the bar, and tap a key under **More keys** to add it: there are F1 to F12, Insert and more symbols such as `_`, `\`, `*`, `&` and brackets. **Use the usual keys** puts the bar back as it came.
 
-> **Note** Selecting text and scrolling back with your finger aren't available yet on touch screens. To find earlier output, use **Search**.
+> **Note** Selecting more than one word and scrolling back with your finger aren't available yet on touch screens. To find earlier output, use **Search**.
 
 ## 9. The desktop workspace
 

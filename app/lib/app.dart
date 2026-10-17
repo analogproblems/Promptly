@@ -5,6 +5,7 @@ import 'core/router.dart';
 import 'core/theme/theme.dart';
 import 'features/lock/lock_gate.dart';
 import 'features/sessions/session_manager.dart';
+import 'features/sessions/sessions_in_background.dart';
 import 'features/settings/settings_providers.dart';
 import 'features/sync/sync_providers.dart';
 import 'features/updates/update_reminder.dart';
@@ -48,7 +49,11 @@ class _PromptlyAppState extends ConsumerState<PromptlyApp> with WidgetsBindingOb
       routerConfig: ref.watch(routerProvider),
       builder: (context, child) =>
           LockGate(
-            child: TerminalThemeSync(child: SyncRefresh(child: UpdateReminder(child: child ?? const SizedBox.shrink()))),
+            child: TerminalThemeSync(
+              child: SessionsInBackground(
+                child: SyncRefresh(child: UpdateReminder(child: child ?? const SizedBox.shrink())),
+              ),
+            ),
           ),
     );
   }

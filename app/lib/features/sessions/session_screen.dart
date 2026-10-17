@@ -34,6 +34,14 @@ class SessionScreen extends ConsumerWidget {
         ref.read(sessionManagerProvider.notifier).close(id);
         context.go('/sessions');
       },
+      onSwitchSession: (step) {
+        // The sessions in the order the list shows them; no wrapping round.
+        final sessions = ref.read(sessionManagerProvider);
+        final here = sessions.indexWhere((e) => e.id == id);
+        final at = here + step;
+        if (here < 0 || at < 0 || at >= sessions.length) return;
+        context.go('/sessions/${sessions[at].id}');
+      },
     );
   }
 }
