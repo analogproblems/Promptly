@@ -237,6 +237,8 @@ class RecordingEngine implements Engine {
   @override
   Future<void> syncRemoveDevice(String deviceRecordId) async {}
   @override
+  Future<SyncSetupResult> syncRotateKey(String passphrase) => throw UnimplementedError();
+  @override
   String? syncQrPayload() => null;
 }
 

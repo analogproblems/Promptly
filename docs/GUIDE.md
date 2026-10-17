@@ -227,6 +227,7 @@ Some servers only ask for the password through their own login prompt (PAM). A h
 - **Favourite:** show the host in the **Favourites** section.
 - **Tags:** words to find the host by, separated by commas, such as `web, eu-west`.
 - **Mark as production:** see [Marking a production host](#marking-a-production-host) below.
+- **Keep on this device only:** if you use sync, the host and its saved password stay on this device and never go into the vault. Turning it on for a host that already syncs removes it from your other devices; it stays here. Turn it off to sync it again. See [Keeping things on one device](#keeping-things-on-one-device).
 
 **Connection.** Jump host, persistent session, agent forwarding, startup command, environment variables and keep-alive. These are explained in [chapter 13](#13-more-connection-options).
 
@@ -286,7 +287,8 @@ Your keys are listed on the **Keys** tab, each with its type and fingerprint.
 1. On **Keys**, tap **Generate**.
 2. Give the key a name, such as `laptop` or `work`.
 3. Choose a type. **ed25519** is recommended. Choose **ECDSA P-256** only if a server requires it, or **RSA 4096** for very old servers (it takes a few seconds to generate).
-4. Tap **Generate**.
+4. If you use sync and want this key on this device only, turn on **Keep on this device only**. Keys sync by default.
+5. Tap **Generate**.
 
 ### Putting your public key on a server
 
@@ -303,7 +305,12 @@ From then on the host logs in with the key.
 2. Give the key a name.
 3. Paste the private key into **Private key**, or tap **Choose a file** to pick it. Promptly reads OpenSSH keys (such as `id_ed25519`), PEM files and PuTTY `.ppk` files. PuTTY keys are converted to the OpenSSH format.
 4. If the key is protected by a passphrase, type it in **Passphrase**.
-5. Tap **Import**.
+5. To keep it on this device only, turn on **Keep on this device only**.
+6. Tap **Import**.
+
+### Keeping a key on one device
+
+Open the key's **⋮** menu and choose **Keep on this device only**. The key leaves the vault and your other devices, and stays here. **Sync with the vault** in the same menu puts it back. Keys kept on one device show **this device only** under their name.
 
 ### Deleting a key
 
@@ -620,6 +627,12 @@ Promptly keeps your data in a **vault**: a small folder of encrypted files, usua
 
 After you change something, Promptly syncs within a few seconds, and keeps checking for changes from your other devices while it's open. It also syncs when you come back to the app, and you can pull the **Hosts** list (or the sync screen) down to sync straight away. A host added on one computer usually appears on another within half a minute. Promptly doesn't sync while it's closed or in the background on a phone.
 
+### Keeping things on one device
+
+A host or key with **Keep on this device only** turned on never goes into the vault, and neither does the password or private key that goes with it. Use it for something that should never leave this device, such as a key for a server only this computer may reach.
+
+Turning it on for something that already syncs removes it from your other devices, and from the vault, the next time this device syncs. Nothing is deleted here. Changes your other devices make to it are ignored on this one. Turning it off sends it to the vault again in full.
+
 ### Choosing where the vault lives
 
 Go to **Settings › Sync** and tap **Set up** (or tap the sync indicator on the **Hosts** tab). You have three choices:
@@ -667,17 +680,34 @@ Sometimes a few changes from another device can't be read yet: the file is still
 
 Promptly checks the vault's settings file every time it syncs. If something about the vault itself has changed, sync pauses, your data keeps working on this device, and **Settings › Sync** says what to do:
 
-- **The vault passphrase changed.** Someone changed it on another device. Type the new passphrase (or your recovery code) and tap **Unlock and sync**.
+- **The vault passphrase or key changed.** Someone changed the passphrase, or re-keyed the vault, on another device. Type the new passphrase (or the new recovery code) and tap **Unlock and sync**.
+- **This device was removed from the vault.** Another device removed this one, so it no longer syncs. Everything on it stays and keeps working. To sync it again, tap **Disconnect this device**, then set sync up again and join the vault: it joins as a new device.
 - **The vault folder is missing.** The folder, or the settings file in it, was deleted or moved. If you moved it, disconnect and join it again in its new place. Otherwise, tap **Set up the vault again here**: Promptly writes the vault back from this device, locked with a passphrase you choose, and shows you a new recovery code (the old one stops working). Your other devices then ask for that passphrase once.
 - **A different vault is in the folder.** Type that vault's passphrase to join it, or disconnect this device.
 - **Promptly needs an update.** The vault was last changed by a newer version of Promptly. Update this one to keep syncing.
 
 ### Removing a device
 
-If you stop using a device, or lose one, remove it from another device: in **Settings › Sync**, tap the delete button beside it. Its part of the vault is deleted, after everything it contributed has been kept. Removing a device stops it appearing in the list, but it doesn't lock that device out. A device that has joined the vault keeps the key that unlocks it. Changing the passphrase makes Promptly on that device ask for the new one before it syncs again, but the key it already has still opens the vault's files, so that doesn't lock it out either.
+If you stop using a device, or lose one, remove it from another device: in **Settings › Sync**, tap the delete button beside it, then choose:
+
+- **Remove.** The device leaves the list and stops syncing: anything it changes from now on is ignored by your other devices, and it tells you it was removed the next time it syncs. Everything it changed before it was removed is kept. Its part of the vault is tidied away later, once another device has kept everything in it.
+- **Remove and re-key.** The same, and the vault also gets a new key, locked with a new passphrase you choose, and a new recovery code. Use this for a lost or stolen device.
+
+Removing a device on its own doesn't lock it out of what it already has. It keeps its copy of your hosts and keys, and the key that opens the vault's files written so far. Changing the passphrase doesn't change that key, so it doesn't lock the device out either. Re-keying does: after it, nothing new can be read with the old key.
+
+### Re-keying the vault
+
+Tap **Re-key** under **Re-key the vault** in **Settings › Sync** (or choose **Remove and re-key** when removing a device).
+
+1. Choose a new passphrase, different from the vault's current one, and type it again. Anyone who knew the old passphrase could otherwise open the new key with it.
+2. Promptly syncs, gives the vault a new key, and writes everything again under it.
+3. Write down the new recovery code it shows. The old code stops working.
+
+Your other devices pause and ask for the new passphrase once, then carry on. A removed device, or anyone else with only the old key, can't read anything written from now on.
 
 > **Important** If a device was lost or stolen, treat everything in Promptly on it as exposed:
 >
+> - Remove it and re-key the vault.
 > - Cut off its access to where the vault lives: sign it out of your sync service (Dropbox, iCloud and so on), or, for a vault on your own server, remove the login it used.
 > - Change the passwords it had saved, and remove its keys from your servers' `~/.ssh/authorized_keys` files, replacing them with new keys.
 

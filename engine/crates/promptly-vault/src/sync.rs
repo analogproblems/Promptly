@@ -3,8 +3,11 @@
 //! A [`Vault`] is one device's view of a vault on one backend. It holds the
 //! data key and knows the device id; the caller keeps the merged [`State`],
 //! the [`Clock`] and the [`SyncState`] (what has been applied so far) and
-//! persists them between runs.
+//! persists them between runs. The caller also says which records stay on
+//! this device ([`Vault::with_kept`]); those never go out and are never
+//! taken in.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -13,8 +16,10 @@ use crate::backend::{Backend, BackendError, Entry};
 use crate::clock::{Clock, DeviceId};
 use crate::crypto::{self, CryptoError, Dek};
 use crate::manifest::{KdfParams, Manifest, ManifestError, RecoveryCode};
+use crate::model::Collection;
 use crate::ops::{Op, Segment};
-use crate::state::{Snapshot, State};
+use crate::policy::{removed_devices, Kept, REMOVED_AFTER, REMOVED_AT};
+use crate::state::{Snapshot, SnapshotRecord, State};
 
 pub const MANIFEST_NAME: &str = "vault.json";
 pub const DEVICES_DIR: &str = "devices";
@@ -40,7 +45,7 @@ pub enum SyncError {
     VaultExists,
     #[error("this folder now holds a different vault")]
     DifferentVault,
-    #[error("the vault's passphrase was changed on another device")]
+    #[error("the vault's passphrase or key was changed on another device")]
     KeysChanged,
 }
 
@@ -56,6 +61,14 @@ pub struct Marker {
     /// below the missing one so it is tried again; these are not re-read.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub ahead: BTreeSet<u64>,
+}
+
+impl Marker {
+    /// The highest file number applied, gaps or not.
+    pub fn highest(&self) -> u64 {
+        let ahead = self.ahead.last().copied().unwrap_or(0);
+        self.seq.max(self.snap).max(ahead)
+    }
 }
 
 /// Everything the caller persists between syncs besides the state itself.
@@ -83,11 +96,30 @@ pub struct PullReport {
 }
 
 /// One device's handle on a vault.
+#[derive(Clone)]
 pub struct Vault<'a> {
     backend: &'a dyn Backend,
     vault_id: String,
     device: DeviceId,
     dek: Dek,
+    kept: Kept,
+}
+
+/// What one pull read from one device's folder, before any of it applies.
+struct Folder {
+    device: DeviceId,
+    /// Every segment number listed, in order.
+    listed: Vec<u64>,
+    snapshot: Option<(u64, Result<Snapshot, String>)>,
+    segments: BTreeMap<u64, Result<Segment, String>>,
+}
+
+/// What a device writes about its own record is applied, except whether
+/// it was removed: only another device may say that.
+fn is_own_removal(device: &DeviceId, col: Collection, id: &str, field: &str) -> bool {
+    col == Collection::Devices
+        && (field == REMOVED_AT || field == REMOVED_AFTER)
+        && id == device.as_uuid().to_string()
 }
 
 /// `NNNNNN.seg` or `NNNNNN.snap`.
@@ -126,12 +158,7 @@ impl<'a> Vault<'a> {
         let (manifest, dek, recovery) = Manifest::create(passphrase, params);
         backend.put_new(MANIFEST_NAME, manifest.to_json().as_bytes())?;
         Ok((
-            Self {
-                backend,
-                vault_id: manifest.vault_id,
-                device,
-                dek,
-            },
+            Self::with_dek(backend, device, manifest.vault_id, dek),
             recovery,
         ))
     }
@@ -186,6 +213,40 @@ impl<'a> Vault<'a> {
         Ok((manifest, recovery))
     }
 
+    /// Put `manifest` in place of the one this device last saw, whose
+    /// [`Manifest::keys_fingerprint`] is `known`. If another device changed
+    /// it meanwhile, nothing is written: [`SyncError::KeysChanged`].
+    pub fn replace_manifest(&self, known: &str, manifest: &Manifest) -> Result<(), SyncError> {
+        if manifest.vault_id != self.vault_id {
+            return Err(SyncError::DifferentVault);
+        }
+        self.check_manifest(Some(known))?;
+        self.backend
+            .replace(MANIFEST_NAME, manifest.to_json().as_bytes())?;
+        Ok(())
+    }
+
+    /// Give the vault a new data key (VAULT.md section 11): it is wrapped
+    /// under `passphrase` and a new recovery code, and the manifest is
+    /// replaced. The handle returned writes with the new key. The caller
+    /// then encrypts its secrets again and writes a snapshot with it, which
+    /// also removes this device's files under the old key. Whoever has only
+    /// the old key can read nothing written from then on.
+    pub fn rotate(
+        &self,
+        known: &str,
+        passphrase: &str,
+        params: KdfParams,
+    ) -> Result<(Vault<'a>, Manifest, RecoveryCode), SyncError> {
+        let dek = Dek::generate();
+        let (manifest, recovery) =
+            Manifest::create_for(self.vault_id.clone(), &dek, passphrase, params);
+        self.replace_manifest(known, &manifest)?;
+        let mut vault = self.clone();
+        vault.dek = dek;
+        Ok((vault, manifest, recovery))
+    }
+
     /// Open an existing vault with its passphrase.
     pub fn open(
         backend: &'a dyn Backend,
@@ -221,7 +282,28 @@ impl<'a> Vault<'a> {
             vault_id,
             device,
             dek,
+            kept: Kept::new(),
         }
+    }
+
+    /// The records that stay on this device (see [`crate::policy`]). Their
+    /// operations are never pushed, snapshots carry only their tombstones,
+    /// and whatever other devices say about them is not applied.
+    pub fn with_kept(mut self, kept: Kept) -> Self {
+        self.kept = kept;
+        self
+    }
+
+    pub fn kept(&self) -> &Kept {
+        &self.kept
+    }
+
+    /// The same vault, writing into another device folder: for a device
+    /// that was removed and joins again as a new one.
+    pub fn for_device(&self, device: DeviceId) -> Self {
+        let mut vault = self.clone();
+        vault.device = device;
+        vault
     }
 
     pub fn vault_id(&self) -> &str {
@@ -278,7 +360,58 @@ impl<'a> Vault<'a> {
             .collect())
     }
 
+    /// An operation from `device` as it may be applied here: `None` for a
+    /// record kept on this device, and never a device's say about its own
+    /// removal.
+    fn admit<'o>(&self, device: &DeviceId, op: &'o Op) -> Option<Cow<'o, Op>> {
+        if self.kept.contains_key(&(op.col(), op.id().to_string())) {
+            return None;
+        }
+        match op {
+            Op::Put {
+                col,
+                id,
+                ts,
+                at,
+                fields,
+            } if fields.keys().any(|f| is_own_removal(device, *col, id, f)) => {
+                let fields: BTreeMap<_, _> = fields
+                    .iter()
+                    .filter(|(f, _)| !is_own_removal(device, *col, id, f))
+                    .map(|(f, v)| (f.clone(), v.clone()))
+                    .collect();
+                (!fields.is_empty()).then(|| {
+                    Cow::Owned(Op::Put {
+                        col: *col,
+                        id: id.clone(),
+                        ts: ts.clone(),
+                        at: at.clone(),
+                        fields,
+                    })
+                })
+            }
+            _ => Some(Cow::Borrowed(op)),
+        }
+    }
+
+    /// A snapshot from `device` as it may be applied here, as [`Self::admit`].
+    fn admit_snapshot(&self, device: &DeviceId, snap: &Snapshot) -> Snapshot {
+        let mut snap = snap.clone();
+        snap.records
+            .retain(|r| !self.kept.contains_key(&(r.col, r.id.clone())));
+        for r in &mut snap.records {
+            let (col, id) = (r.col, r.id.clone());
+            r.fields.retain(|f, _| !is_own_removal(device, col, &id, f));
+        }
+        snap
+    }
+
     /// Apply everything new from every other device.
+    ///
+    /// Everything new is read first and applied after, so that a device
+    /// removed in a file read now is cut off in this same pull, whatever
+    /// order the folders come in: removals are worked out from every file,
+    /// then each device's files apply up to its cut-off.
     pub fn pull(
         &self,
         sync: &mut SyncState,
@@ -286,66 +419,123 @@ impl<'a> Vault<'a> {
         clock: &mut Clock,
     ) -> Result<PullReport, SyncError> {
         let mut report = PullReport::default();
+        let removed_before = removed_devices(state);
+        let mut folders = Vec::new();
         for device in self.other_devices()? {
             report.devices_seen.push(device.clone());
-            let entries = self.backend.list(&Self::device_dir(&device))?;
-            let marker = sync.markers.entry(device.clone()).or_default();
-            let mut files: Vec<(u64, bool, Entry)> = entries
+            let limit = removed_before.get(&device).copied().unwrap_or(u64::MAX);
+            let marker = sync.markers.get(&device).cloned().unwrap_or_default();
+            let mut snaps = Vec::new();
+            let mut listed = Vec::new();
+            for e in self.backend.list(&Self::device_dir(&device))? {
+                match parse_name(&e.name) {
+                    Some((n, true)) if !e.is_dir => snaps.push(n),
+                    Some((n, false)) if !e.is_dir => listed.push(n),
+                    _ => {}
+                }
+            }
+            listed.sort_unstable();
+            // The newest snapshot, if it is newer than what we applied.
+            let mut covered = marker.seq;
+            let snapshot = snaps
                 .into_iter()
-                .filter(|e| !e.is_dir)
-                .filter_map(|e| parse_name(&e.name).map(|(n, snap)| (n, snap, e)))
-                .collect();
-            files.sort_by_key(|(n, snap, _)| (*n, !*snap)); // snapshots before segments of the same number
-
-            // The newest snapshot, if it is newer than what we applied. One
-            // that cannot be read stands for every segment it replaced, so
-            // those are not reported missing one by one.
-            let mut unread_snapshot = 0;
-            if let Some((n, _, entry)) = files
+                .filter(|n| *n <= limit)
+                .max()
+                .filter(|n| *n > marker.snap)
+                .map(|n| {
+                    let read = self.read_file::<Snapshot>(&device, &snap_name(n));
+                    if read.is_ok() {
+                        covered = covered.max(n);
+                    }
+                    (n, read.map_err(|e| e.to_string()))
+                });
+            let segments = listed
                 .iter()
-                .filter(|(_, s, _)| *s)
-                .max_by_key(|(n, _, _)| *n)
-            {
-                if *n > marker.snap {
-                    match self.read_file::<Snapshot>(&device, &entry.name) {
-                        Ok(snap) => {
-                            let changed = state.apply_snapshot(&snap);
-                            for r in &snap.records {
-                                for (_, ts) in r.fields.values() {
-                                    clock.observe(ts);
-                                }
-                                if let Some(d) = &r.deleted {
-                                    clock.observe(d);
-                                }
-                            }
-                            report.files_applied += 1;
-                            report.ops_applied += changed;
-                            marker.snap = *n;
-                            marker.seq = marker.seq.max(*n);
-                        }
-                        Err(e) => {
-                            unread_snapshot = *n;
-                            report
-                                .warnings
-                                .push(format!("{}/{}: {e}", device, entry.name));
-                        }
+                .filter(|n| **n > covered && **n <= limit && !marker.ahead.contains(n))
+                .map(|n| {
+                    let read = self.read_file::<Segment>(&device, &seg_name(*n));
+                    (*n, read.map_err(|e| e.to_string()))
+                })
+                .collect();
+            folders.push(Folder {
+                device,
+                listed,
+                snapshot,
+                segments,
+            });
+        }
+
+        // Who is removed, counting what was just read.
+        let mut devices = State::new();
+        for (col, id, r) in state.records() {
+            if col == Collection::Devices {
+                devices.insert_record(col, id.to_string(), r.clone());
+            }
+        }
+        for f in &folders {
+            if let Some((_, Ok(snap))) = &f.snapshot {
+                let mut snap = self.admit_snapshot(&f.device, snap);
+                snap.records.retain(|r| r.col == Collection::Devices);
+                devices.apply_snapshot(&snap);
+            }
+            for seg in f.segments.values().flatten() {
+                for op in seg.ops.iter().filter(|op| op.col() == Collection::Devices) {
+                    if let Some(op) = self.admit(&f.device, op) {
+                        devices.apply(&op);
                     }
                 }
             }
-            // Then every segment above the marker. Merging does not depend
-            // on order, so one that cannot be read yet (damaged, still
-            // syncing, or not arrived: a mirror can deliver files out of
-            // order) is skipped and the rest still apply. The marker stays
-            // below it, so it is read again next time and nothing in it is
-            // lost if it turns up whole later.
+        }
+        let removed = removed_devices(&devices);
+
+        for f in folders {
+            let device = f.device;
+            let limit = removed.get(&device).copied().unwrap_or(u64::MAX);
+            let marker = sync.markers.entry(device.clone()).or_default();
+            // One snapshot that cannot be read stands for every segment it
+            // replaced, so those are not reported missing one by one.
+            let mut unread_snapshot = 0;
+            if let Some((n, read)) = f.snapshot.filter(|(n, _)| *n <= limit) {
+                match read {
+                    Ok(snap) => {
+                        let snap = self.admit_snapshot(&device, &snap);
+                        let changed = state.apply_snapshot(&snap);
+                        for r in &snap.records {
+                            for (_, ts) in r.fields.values() {
+                                clock.observe(ts);
+                            }
+                            if let Some(d) = &r.deleted {
+                                clock.observe(d);
+                            }
+                        }
+                        report.files_applied += 1;
+                        report.ops_applied += changed;
+                        marker.snap = n;
+                        marker.seq = marker.seq.max(n);
+                    }
+                    Err(e) => {
+                        unread_snapshot = n;
+                        report
+                            .warnings
+                            .push(format!("{}/{}: {e}", device, snap_name(n)));
+                    }
+                }
+            }
+            // Then every segment above the marker, up to its cut-off if it
+            // was removed. Merging does not depend on order, so one that
+            // cannot be read yet (damaged, still syncing, or not arrived: a
+            // mirror can deliver files out of order) is skipped and the rest
+            // still apply. The marker stays below it, so it is read again
+            // next time and nothing in it is lost if it turns up whole later.
+            let mut segments = f.segments;
             let mut expect = marker.seq + 1;
             let mut gap_reported = false;
-            for (n, is_snap, entry) in &files {
-                if *is_snap || *n <= marker.seq {
+            for n in f.listed {
+                if n <= marker.seq || n > limit {
                     continue;
                 }
                 let first_missing = expect.max(unread_snapshot + 1);
-                if *n > first_missing && !gap_reported {
+                if n > first_missing && !gap_reported {
                     report.warnings.push(format!(
                         "{}/{}: has not arrived yet",
                         device,
@@ -354,23 +544,30 @@ impl<'a> Vault<'a> {
                     gap_reported = true;
                 }
                 expect = n + 1;
-                if marker.ahead.contains(n) {
+                if marker.ahead.contains(&n) {
                     continue;
                 }
-                match self.read_file::<Segment>(&device, &entry.name) {
+                // Not read: a snapshot covered it, then turned out to be
+                // past the device's cut-off. It is read next time.
+                let Some(read) = segments.remove(&n) else {
+                    continue;
+                };
+                match read {
                     Ok(seg) => {
                         for op in &seg.ops {
                             clock.observe(op.ts());
-                            if state.apply(op) {
-                                report.ops_applied += 1;
+                            if let Some(op) = self.admit(&device, op) {
+                                if state.apply(&op) {
+                                    report.ops_applied += 1;
+                                }
                             }
                         }
                         report.files_applied += 1;
-                        marker.ahead.insert(*n);
+                        marker.ahead.insert(n);
                     }
                     Err(e) => report
                         .warnings
-                        .push(format!("{}/{}: {e}", device, entry.name)),
+                        .push(format!("{}/{}: {e}", device, seg_name(n))),
                 }
             }
             let seq = marker.seq;
@@ -399,8 +596,19 @@ impl<'a> Vault<'a> {
     }
 
     /// Write pending operations as the next segment. Returns its number.
+    /// Operations on records kept on this device are left out; when that
+    /// leaves nothing, nothing is written and the last number is returned.
     pub fn push(&self, sync: &mut SyncState, ops: &[Op]) -> Result<u64, SyncError> {
         self.resume_numbering(sync)?;
+        let ops: Vec<Op> = ops
+            .iter()
+            .filter(|op| !self.kept.contains_key(&(op.col(), op.id().to_string())))
+            .cloned()
+            .collect();
+        if ops.is_empty() {
+            return Ok(sync.my_seq);
+        }
+        let ops = &ops[..];
         let mut seq = sync.my_seq + 1;
         loop {
             let segment = Segment::new(self.device.clone(), seq, ops.to_vec());
@@ -432,8 +640,25 @@ impl<'a> Vault<'a> {
         Ok(seq)
     }
 
+    /// The snapshot this device writes: everything, except that a record
+    /// kept on this device is only its tombstone.
+    fn snapshot_of(&self, state: &State, seq: u64, clock: &Clock) -> Snapshot {
+        let mut snap = state.to_snapshot(self.device.clone(), seq, clock.counter());
+        snap.records
+            .retain(|r| !self.kept.contains_key(&(r.col, r.id.clone())));
+        snap.records
+            .extend(self.kept.iter().map(|((col, id), ts)| SnapshotRecord {
+                col: *col,
+                id: id.clone(),
+                deleted: Some(ts.clone()),
+                fields: BTreeMap::new(),
+            }));
+        snap
+    }
+
     /// Write a snapshot of `state` at this device's current segment number
-    /// and drop the files it makes redundant.
+    /// and drop the files it makes redundant; then tidy away the folders of
+    /// removed devices it now covers.
     pub fn write_snapshot(
         &self,
         sync: &mut SyncState,
@@ -443,7 +668,7 @@ impl<'a> Vault<'a> {
         self.resume_numbering(sync)?;
         let mut seq = sync.my_seq;
         loop {
-            let snap = state.to_snapshot(self.device.clone(), seq, clock.counter());
+            let snap = self.snapshot_of(state, seq, clock);
             match self.write_file(&snap_name(seq), &snap) {
                 Ok(()) => break,
                 // An older snapshot holds this number. Take the next one, which
@@ -464,7 +689,37 @@ impl<'a> Vault<'a> {
                 }
             }
         }
+        self.tidy_removed(sync, state);
         Ok(())
+    }
+
+    /// Delete the folder of every removed device whose files, up to its
+    /// cut-off, this device has all applied: a snapshot of ours then holds
+    /// everything it had, and nothing past the cut-off counts. Returns the
+    /// devices tidied away. A folder that will not go now is tried again at
+    /// the next snapshot.
+    pub fn tidy_removed(&self, sync: &SyncState, state: &State) -> Vec<DeviceId> {
+        let mut tidied = Vec::new();
+        for (other, after) in removed_devices(state) {
+            if other == self.device {
+                continue;
+            }
+            let covered = sync
+                .markers
+                .get(&other)
+                .map_or(after == 0, |m| m.seq >= after);
+            let present = self
+                .backend
+                .list(&Self::device_dir(&other))
+                .is_ok_and(|files| !files.is_empty());
+            if covered && present {
+                match self.delete_device_folder(&other) {
+                    Ok(()) => tidied.push(other),
+                    Err(e) => tracing::warn!("could not tidy away a removed device: {e}"),
+                }
+            }
+        }
+        tidied
     }
 
     /// Write a snapshot if one is owed or this device's folder has grown
@@ -536,7 +791,16 @@ mod tests {
 
     impl Device {
         fn new() -> Self {
-            let id = DeviceId::generate();
+            Self::with_id(DeviceId::generate())
+        }
+
+        /// A device with an id made of one repeated hex digit, so tests can
+        /// choose which folder lists first.
+        fn named(c: char) -> Self {
+            Self::with_id(DeviceId::parse(&c.to_string().repeat(32)).unwrap())
+        }
+
+        fn with_id(id: DeviceId) -> Self {
             Self {
                 id: id.clone(),
                 state: State::new(),
@@ -678,9 +942,15 @@ mod tests {
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         assert_eq!(c.state.list(Collection::Snippets).len(), 25);
         assert!(c.hosts().is_empty());
-        // Once A pulls B's snippets, every device holds the same state.
+        // Once A pulls B's snippets, every device shows the same records.
+        // (Snapshots leave out fields a deletion hides, so C, which came in
+        // from snapshots, holds less bookkeeping than A.)
         a.sync(&va);
-        assert_eq!(c.state, a.state);
+        assert_eq!(c.hosts(), a.hosts());
+        assert_eq!(
+            c.state.list(Collection::Snippets),
+            a.state.list(Collection::Snippets)
+        );
         assert_eq!(report.devices_seen.len(), 2);
     }
 
@@ -1028,6 +1298,260 @@ mod tests {
         let report = b.sync(&vb);
         assert!(report.warnings.is_empty());
         assert_eq!(b.hosts()[0].1["label"], "two");
+    }
+
+    /// Mark `who` removed on `by`, as far as `by` has read its files.
+    fn remove(by: &mut Device, who: &DeviceId) {
+        let after = by.sync.markers.get(who).map_or(0, Marker::highest);
+        by.put(
+            Collection::Devices,
+            &who.as_uuid().to_string(),
+            json!({"name": "gone", REMOVED_AT: "2026-10-17T10:00:00Z", REMOVED_AFTER: after}),
+        );
+    }
+
+    #[test]
+    fn a_removed_device_is_cut_off_even_in_the_pull_that_learns_of_it() {
+        let backend = MemoryBackend::default();
+        // B's folder lists before A's, so a fresh reader meets B's files
+        // before the file that removes it.
+        let mut a = Device::named('f');
+        let mut b = Device::named('1');
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        b.put(Collection::Hosts, "h1", json!({"label": "before"}));
+        b.sync(&vb);
+        a.sync(&va);
+        assert_eq!(a.hosts().len(), 1);
+
+        remove(&mut a, &b.id);
+        a.sync(&va);
+        // B has not noticed yet and carries on, and tries to put itself back.
+        b.put(Collection::Hosts, "h2", json!({"label": "after"}));
+        b.put(
+            Collection::Devices,
+            &b.id.as_uuid().to_string(),
+            json!({REMOVED_AFTER: null, "name": "still here"}),
+        );
+        vb.push(&mut b.sync, &b.pending).unwrap();
+        b.pending.clear();
+
+        a.sync(&va);
+        assert_eq!(a.hosts().len(), 1, "nothing new from B is taken in");
+        let mut c = Device::new();
+        let vc = Vault::open(&backend, c.id.clone(), "pw").unwrap();
+        let report = c.sync(&vc);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let labels: Vec<_> = c.hosts().into_iter().map(|(id, _)| id).collect();
+        assert_eq!(
+            labels,
+            ["h1"],
+            "B's earlier work stays, its later work does not"
+        );
+        assert_eq!(
+            removed_devices(&c.state).get(&b.id),
+            Some(&1),
+            "B could not undo its own removal"
+        );
+
+        // A's next snapshot covers everything B had, so B's folder goes.
+        va.write_snapshot(&mut a.sync, &a.state, &a.clock).unwrap();
+        assert!(backend
+            .list(&format!("devices/{}", b.id))
+            .unwrap()
+            .is_empty());
+        let mut d = Device::new();
+        let vd = Vault::open(&backend, d.id.clone(), "pw").unwrap();
+        d.sync(&vd);
+        assert_eq!(d.hosts().len(), 1, "a newcomer still gets B's earlier host");
+    }
+
+    #[test]
+    fn a_removed_device_folder_stays_until_everything_before_its_cut_off_is_read() {
+        let backend = MemoryBackend::default();
+        let mut a = Device::new();
+        let mut b = Device::new();
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        for i in 1..=2 {
+            b.put(Collection::Hosts, &format!("h{i}"), json!({"label": i}));
+            b.sync(&vb);
+        }
+        // B's first file has not reached A yet; its second has.
+        let first = format!("devices/{}/000001.seg", b.id);
+        let held = backend.get(&first).unwrap();
+        backend.delete(&first).unwrap();
+        a.sync(&va);
+        remove(&mut a, &b.id);
+        a.sync(&va);
+        va.write_snapshot(&mut a.sync, &a.state, &a.clock).unwrap();
+        assert!(
+            !backend
+                .list(&format!("devices/{}", b.id))
+                .unwrap()
+                .is_empty(),
+            "kept while a file before the cut-off is still to come"
+        );
+
+        backend.put_new(&first, &held).unwrap();
+        a.sync(&va);
+        assert_eq!(a.hosts().len(), 2, "it still counts: it was written before");
+        va.write_snapshot(&mut a.sync, &a.state, &a.clock).unwrap();
+        assert!(backend
+            .list(&format!("devices/{}", b.id))
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn records_kept_on_a_device_never_leave_it_and_leave_the_vault_when_switched() {
+        use crate::policy::{kept_on_device, plan_kept};
+        let backend = MemoryBackend::default();
+        let mut a = Device::new();
+        let mut b = Device::new();
+        let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        a.put(
+            Collection::Hosts,
+            "h",
+            json!({"label": "home", "sync": "vault", "auth": {"kind": "password", "password_secret_id": "p"}}),
+        );
+        a.put(
+            Collection::Secrets,
+            "p",
+            json!({"kind": "password", "ciphertext": [1, 2, 3]}),
+        );
+        a.sync(&va);
+        b.sync(&vb);
+        assert_eq!(b.hosts().len(), 1);
+
+        // A keeps the host to itself from now on, and renames it.
+        a.put(
+            Collection::Hosts,
+            "h",
+            json!({"label": "home (private)", "sync": "local_only", "auth": {"kind": "password", "password_secret_id": "p"}}),
+        );
+        a.put(
+            Collection::Secrets,
+            "p",
+            json!({"kind": "password", "ciphertext": [4, 5, 6]}),
+        );
+        let plan = plan_kept(&a.state, &Kept::new());
+        assert!(plan.newly_kept);
+        assert_eq!(plan.kept.len(), 2, "the host and its password");
+        let kept = va.clone().with_kept(plan.kept.clone());
+        assert_eq!(a.sync.my_seq, 1);
+        a.sync(&kept);
+        assert_eq!(a.sync.my_seq, 1, "nothing about it was written");
+        // The snapshot carries the tombstones, and B's copies go.
+        kept.write_snapshot(&mut a.sync, &a.state, &a.clock)
+            .unwrap();
+        b.sync(&vb);
+        assert!(b.hosts().is_empty());
+        assert!(b.state.list(Collection::Secrets).is_empty());
+        assert_eq!(a.hosts()[0].1["label"], "home (private)", "A keeps its own");
+
+        // B edits its old copy all the same; A takes none of it.
+        b.put(Collection::Hosts, "h", json!({"label": "from b"}));
+        b.sync(&vb);
+        a.sync(&kept);
+        assert_eq!(a.hosts()[0].1["label"], "home (private)");
+        assert_eq!(
+            a.state.get(Collection::Secrets, "p").unwrap()["ciphertext"],
+            json!([4, 5, 6])
+        );
+
+        // A newcomer never sees the new name or the new password.
+        let mut c = Device::new();
+        let vc = Vault::open(&backend, c.id.clone(), "pw").unwrap();
+        c.sync(&vc);
+        assert!(c
+            .hosts()
+            .iter()
+            .all(|(_, h)| h["label"] != "home (private)"));
+        assert!(c.state.get(Collection::Secrets, "p").is_none());
+
+        // Back into the vault: the record goes out again in full.
+        a.put(
+            Collection::Hosts,
+            "h",
+            json!({"label": "home (private)", "sync": "vault", "auth": {"kind": "password", "password_secret_id": "p"}}),
+        );
+        let back = plan_kept(&a.state, &plan.kept);
+        assert!(back.kept.is_empty());
+        assert_eq!(back.back.len(), 2);
+        for (col, id) in &back.back {
+            let fields = a.state.get(*col, id).unwrap();
+            a.del(*col, id);
+            a.put(*col, id, Value::Object(fields));
+        }
+        assert!(kept_on_device(&a.state).is_empty());
+        a.sync(&va);
+        c.sync(&vc);
+        assert_eq!(c.hosts()[0].1["label"], "home (private)");
+        assert_eq!(
+            c.state.get(Collection::Secrets, "p").unwrap()["ciphertext"],
+            json!([4, 5, 6])
+        );
+    }
+
+    #[test]
+    fn a_new_key_shuts_out_the_old_one() {
+        let backend = MemoryBackend::default();
+        let mut a = Device::new();
+        let mut b = Device::new();
+        let (va, old_code) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
+        let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        a.put(Collection::Hosts, "h1", json!({"label": "before"}));
+        a.sync(&va);
+        b.sync(&vb);
+        let known = va.check_manifest(None).unwrap();
+
+        // Someone changed the manifest since A last looked: nothing happens.
+        assert!(matches!(
+            va.rotate("stale", "new pass", fast()),
+            Err(SyncError::KeysChanged)
+        ));
+        assert_eq!(va.check_manifest(None).unwrap(), known);
+
+        let (va2, manifest, code) = va.rotate(&known, "new pass", fast()).unwrap();
+        assert_ne!(va2.dek(), va.dek());
+        assert_eq!(manifest.vault_id, va.vault_id());
+        va2.write_snapshot(&mut a.sync, &a.state, &a.clock).unwrap();
+        let files = backend.list(&format!("devices/{}", a.id)).unwrap();
+        assert_eq!(
+            files.len(),
+            1,
+            "only the snapshot under the new key: {files:?}"
+        );
+        a.put(Collection::Hosts, "h2", json!({"label": "after"}));
+        a.sync(&va2);
+
+        // The old key, as a removed device still holds it, reads nothing new.
+        let mut thief = Device::new();
+        let old = Vault::with_dek(
+            &backend,
+            thief.id.clone(),
+            va.vault_id().into(),
+            va.dek().clone(),
+        );
+        let report = thief.sync(&old);
+        assert!(thief.hosts().is_empty());
+        assert!(!report.warnings.is_empty());
+        assert!(Vault::open(&backend, thief.id.clone(), "pw").is_err());
+        assert!(Vault::open_with_recovery(&backend, thief.id.clone(), &old_code).is_err());
+
+        // B notices, and the passphrase gives it the new key.
+        assert!(matches!(
+            vb.check_manifest(Some(&known)),
+            Err(SyncError::KeysChanged)
+        ));
+        let vb2 = Vault::open(&backend, b.id.clone(), "new pass").unwrap();
+        assert_eq!(vb2.dek(), va2.dek());
+        b.sync(&vb2);
+        assert_eq!(b.hosts().len(), 2);
+        let by_code = Vault::open_with_recovery(&backend, b.id.clone(), &code).unwrap();
+        assert_eq!(by_code.dek(), va2.dek());
     }
 
     #[test]

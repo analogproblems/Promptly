@@ -37,6 +37,9 @@ pub enum SyncAttention {
     VaultMissing,
     /// The folder now holds another vault: join it, or disconnect.
     DifferentVault,
+    /// Another device removed this one, so nothing it writes counts:
+    /// disconnect, and join again to sync here once more.
+    Removed,
 }
 
 pub struct SyncStatus {
@@ -147,8 +150,13 @@ pub fn sync_create_local_folder(
     }
     let store = crate::api::store::store()?;
     let backend = promptly_vault::LocalFolder::new(&path);
-    let (vault, recovery) = Vault::create(&backend, store.device_id().clone(), &passphrase, kdf())
-        .map_err(|e| e.to_string())?;
+    let (vault, recovery) = Vault::create(
+        &backend,
+        sync_engine::vault_device(&store),
+        &passphrase,
+        kdf(),
+    )
+    .map_err(|e| e.to_string())?;
     let manifest_keys = keys_of(&backend);
     let config = VaultConfig {
         kind: "local_folder".into(),
@@ -158,8 +166,9 @@ pub fn sync_create_local_folder(
         recovery_hint: Some(recovery.hint()),
         host_id: None,
         manifest_keys,
+        snapshot_due: false,
     };
-    sync_engine::finish_setup(config, vault.dek(), &vault, true)?;
+    sync_engine::finish_setup(config, vault.dek(), &vault, true, false)?;
     Ok(SyncSetupResult {
         vault_id: vault.vault_id().to_string(),
         recovery_code: recovery.as_str().to_string(),
@@ -176,7 +185,7 @@ pub fn sync_join_local_folder(
 ) -> Result<(), String> {
     let store = crate::api::store::store()?;
     let backend = promptly_vault::LocalFolder::new(&path);
-    let device = store.device_id().clone();
+    let device = sync_engine::vault_device(&store);
     let manifest = Vault::read_manifest(&backend).map_err(|e| e.to_string())?;
     let vault = match (passphrase, recovery_code) {
         (Some(p), _) => Vault::open(&backend, device, &p).map_err(|e| e.to_string())?,
@@ -197,8 +206,9 @@ pub fn sync_join_local_folder(
         recovery_hint: manifest.recovery_hint().map(str::to_string),
         host_id: None,
         manifest_keys,
+        snapshot_due: false,
     };
-    sync_engine::finish_setup(config, vault.dek(), &vault, true)
+    sync_engine::finish_setup(config, vault.dek(), &vault, true, false)
 }
 
 /// Whether a folder on a saved host already holds a vault. Connects, so
@@ -222,8 +232,13 @@ pub fn sync_create_sftp(
     }
     let store = crate::api::store::store()?;
     let backend = sync_engine::connect_sftp(&host_id, &remote_dir)?;
-    let (vault, recovery) = Vault::create(&*backend, store.device_id().clone(), &passphrase, kdf())
-        .map_err(|e| e.to_string())?;
+    let (vault, recovery) = Vault::create(
+        &*backend,
+        sync_engine::vault_device(&store),
+        &passphrase,
+        kdf(),
+    )
+    .map_err(|e| e.to_string())?;
     let manifest_keys = keys_of(&*backend);
     let config = VaultConfig {
         kind: "sftp".into(),
@@ -233,8 +248,9 @@ pub fn sync_create_sftp(
         recovery_hint: Some(recovery.hint()),
         host_id: Some(host_id),
         manifest_keys,
+        snapshot_due: false,
     };
-    sync_engine::finish_setup(config, vault.dek(), &vault, true)?;
+    sync_engine::finish_setup(config, vault.dek(), &vault, true, false)?;
     Ok(SyncSetupResult {
         vault_id: vault.vault_id().to_string(),
         recovery_code: recovery.as_str().to_string(),
@@ -251,7 +267,7 @@ pub fn sync_join_sftp(
 ) -> Result<(), String> {
     let store = crate::api::store::store()?;
     let backend = sync_engine::connect_sftp(&host_id, &remote_dir)?;
-    let device = store.device_id().clone();
+    let device = sync_engine::vault_device(&store);
     let manifest = Vault::read_manifest(&*backend).map_err(|e| e.to_string())?;
     let vault = match (passphrase, recovery_code) {
         (Some(p), _) => Vault::open(&*backend, device, &p).map_err(|e| e.to_string())?,
@@ -272,8 +288,9 @@ pub fn sync_join_sftp(
         recovery_hint: manifest.recovery_hint().map(str::to_string),
         host_id: Some(host_id),
         manifest_keys,
+        snapshot_due: false,
     };
-    sync_engine::finish_setup(config, vault.dek(), &vault, true)
+    sync_engine::finish_setup(config, vault.dek(), &vault, true, false)
 }
 
 /// Pull, push and compact now, as the person asked (the Sync now button,
@@ -311,7 +328,10 @@ pub fn sync_recreate_vault(passphrase: String) -> Result<SyncSetupResult, String
     }
     let code = sync_engine::recreate(&passphrase, kdf())?;
     Ok(SyncSetupResult {
-        vault_id: sync_engine::config()?
+        // Not a reason to lose the code, which the vault already needs.
+        vault_id: sync_engine::config()
+            .ok()
+            .flatten()
             .map(|c| c.vault_id)
             .unwrap_or_default(),
         recovery_code: code,
@@ -324,70 +344,33 @@ pub fn sync_disconnect() -> Result<(), String> {
     sync_engine::disconnect()
 }
 
-/// Remove another device: its record goes, a snapshot of ours is written
-/// so nothing of its is lost, and its folder is deleted.
+/// Remove another device. It is marked removed, so every device ignores
+/// what it writes from now on and it stops syncing once it finds out; its
+/// folder in the vault is tidied away later. It keeps the copy of the
+/// vault it has: re-key the vault too if it was lost or stolen.
 pub fn sync_remove_device(device_record_id: String) -> Result<(), String> {
-    let store = crate::api::store::store()?;
-    let Some(config) = sync_engine::config()? else {
-        return Err("sync is not set up".into());
-    };
-    if device_record_id == store.device_id().as_uuid().to_string() {
-        return Err("To remove this device, disconnect it instead.".into());
+    sync_engine::remove_device(&device_record_id)
+}
+
+/// Re-key the vault: a new key, locked with `passphrase` and a new
+/// recovery code (returned, shown once; the old code stops working).
+/// Removed devices, and anyone else with only the old key, can read
+/// nothing written from now on. The other devices ask for the passphrase
+/// once.
+pub fn sync_rotate_key(passphrase: String) -> Result<SyncSetupResult, String> {
+    if passphrase.chars().count() < 8 {
+        return Err("Use a passphrase of at least eight characters.".into());
     }
-    let folder = uuid::Uuid::parse_str(&device_record_id)
-        .map(|u| {
-            u.as_bytes()
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>()
-        })
-        .ok()
-        .and_then(|hex| promptly_vault::DeviceId::parse(&hex));
-    sync_engine::sync_once()?;
-    // Its folder is about to go, so every file in it must have been applied.
-    if let Some(other) = &folder {
-        let prefix = format!("{other}/");
-        if sync_engine::status()?
-            .warnings
-            .iter()
-            .any(|w| w.starts_with(&prefix))
-        {
-            return Err(
-                "Some of that device's changes could not be read yet, so it was not removed. Try again once sync shows no warnings."
-                    .into(),
-            );
-        }
-    }
-    store
-        .delete(promptly_store::Collection::Devices, &device_record_id)
-        .map_err(|e| e.to_string())?;
-    let dek = {
-        let bytes = crate::api::store::secrets()
-            .get(sync_engine::DEK_SECRET_ID)
-            .map_err(|e| e.to_string())?
-            .ok_or("the vault key is missing")?;
-        use base64::Engine;
-        let raw = base64::engine::general_purpose::STANDARD
-            .decode(bytes)
-            .map_err(|e| e.to_string())?;
-        promptly_vault::Dek::from_slice(&raw).ok_or("the vault key is not valid")?
-    };
-    let backend = sync_engine::backend_for(&config)?;
-    let vault = Vault::with_dek(
-        &*backend,
-        store.device_id().clone(),
-        config.vault_id.clone(),
-        dek,
-    );
-    store.compact(&vault, true).map_err(|e| e.to_string())?;
-    if let Some(other) = folder {
-        vault
-            .delete_device_folder(&other)
-            .map_err(|e| e.to_string())?;
-    }
-    sync_engine::notify_change();
-    sync_engine::emit();
-    Ok(())
+    let code = sync_engine::rotate_key(&passphrase, kdf())?;
+    Ok(SyncSetupResult {
+        // Not a reason to lose the code, which the vault already needs.
+        vault_id: sync_engine::config()
+            .ok()
+            .flatten()
+            .map(|c| c.vault_id)
+            .unwrap_or_default(),
+        recovery_code: code,
+    })
 }
 
 /// What a QR code for enrolling another device carries, as JSON, or

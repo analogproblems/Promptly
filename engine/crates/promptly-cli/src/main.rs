@@ -1,8 +1,8 @@
 //! `promptly`, the command-line companion.
 //!
 //! The vault format is open; this tool is the proof. It reads a vault folder
-//! with its passphrase and can inspect, export, import, sync and turn the
-//! hosts into an OpenSSH config. It is a device of its own, with its own
+//! with its passphrase and can inspect, export, import, sync, turn the
+//! hosts into an OpenSSH config, remove devices and give the vault a new key. It is a device of its own, with its own
 //! small local store, so it merges like any other.
 
 mod commands;
@@ -72,6 +72,49 @@ enum Command {
     },
     /// Re-wrap the vault's key under a new passphrase. Data is untouched.
     ChangePassphrase(VaultArgs),
+    /// Give the vault a new key, under a new passphrase and recovery code.
+    /// Devices with only the old key can read nothing written afterwards.
+    RotateDek(VaultArgs),
+    /// The devices that sync with the vault.
+    Devices {
+        #[command(subcommand)]
+        action: DevicesAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum DevicesAction {
+    /// Every device, with when it joined and was last seen.
+    List(VaultArgs),
+    /// Remove a device: what it writes from now on is ignored.
+    Remove {
+        #[command(flatten)]
+        vault: VaultArgs,
+        /// The device's id, or its name.
+        device: String,
+        /// Also give the vault a new key, so the removed device can read
+        /// nothing new. Use this for a lost or stolen device.
+        #[arg(long)]
+        rekey: bool,
+    },
+}
+
+/// Ask for a new passphrase twice.
+fn new_passphrase() -> Result<String> {
+    let new = rpassword::prompt_password("New passphrase: ")?;
+    let again = rpassword::prompt_password("Again: ")?;
+    anyhow::ensure!(new == again, "the two passphrases differ");
+    anyhow::ensure!(new.chars().count() >= 8, "use at least eight characters");
+    Ok(new)
+}
+
+fn print_recovery_code(code: &str) {
+    println!("{code}");
+    eprintln!(
+        "The vault has a new key. Above is its new recovery code: write it down and keep it \
+         safe. The old code no longer works. Your other devices ask for the new passphrase \
+         once."
+    );
 }
 
 fn main() {
@@ -132,12 +175,40 @@ fn run() -> Result<()> {
         Command::ChangePassphrase(v) => {
             let unlocked = commands::unlock(&v)?
                 .ok_or_else(|| anyhow::anyhow!("the current passphrase is needed"))?;
-            let new = rpassword::prompt_password("New passphrase: ")?;
-            let again = rpassword::prompt_password("Again: ")?;
-            anyhow::ensure!(new == again, "the two passphrases differ");
-            anyhow::ensure!(new.chars().count() >= 8, "use at least eight characters");
+            let new = new_passphrase()?;
             commands::change_passphrase(&v.folder, &unlocked, &new)?;
             eprintln!("passphrase changed");
+        }
+        Command::RotateDek(v) => {
+            let unlocked = commands::unlock(&v)?
+                .ok_or_else(|| anyhow::anyhow!("the current passphrase is needed"))?;
+            let new = new_passphrase()?;
+            print_recovery_code(&commands::rotate_dek(&v.folder, &unlocked, &new)?);
+        }
+        Command::Devices {
+            action: DevicesAction::List(v),
+        } => {
+            let unlocked =
+                commands::unlock(&v)?.ok_or_else(|| anyhow::anyhow!("a passphrase is needed"))?;
+            print!("{}", commands::list_devices(&v.folder, &unlocked)?);
+        }
+        Command::Devices {
+            action:
+                DevicesAction::Remove {
+                    vault,
+                    device,
+                    rekey,
+                },
+        } => {
+            let unlocked = commands::unlock(&vault)?
+                .ok_or_else(|| anyhow::anyhow!("a passphrase is needed"))?;
+            // Asked first, so a typo does not leave the job half done.
+            let new = rekey.then(new_passphrase).transpose()?;
+            let name = commands::remove_device(&vault.folder, &unlocked, &device)?;
+            eprintln!("removed {name}");
+            if let Some(new) = new {
+                print_recovery_code(&commands::rotate_dek(&vault.folder, &unlocked, &new)?);
+            }
         }
     }
     Ok(())

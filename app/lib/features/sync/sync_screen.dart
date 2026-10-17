@@ -647,6 +647,8 @@ class _PlaceOption extends StatelessWidget {
 
 // ---- Configured ------------------------------------------------------------
 
+enum _RemoveChoice { remove, removeAndRekey }
+
 class _ConfiguredView extends ConsumerWidget {
   const _ConfiguredView({required this.status});
 
@@ -684,26 +686,86 @@ class _ConfiguredView extends ConsumerWidget {
   }
 
   Future<void> _remove(BuildContext context, WidgetRef ref, SyncDevice d) async {
-    final ok = await showDialog<bool>(
+    final choice = await showDialog<_RemoveChoice>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('Remove ${d.name}?'),
-        content: const Text(
-          'Its folder in the vault is deleted after everything it had is kept in a snapshot from this device. This does not lock the device out: it keeps the key to the vault, even if you change the passphrase. If it was lost or stolen, cut off its access to where the vault lives, and change the passwords and keys it had.',
+        content: SizedBox(
+          width: 420,
+          child: Text(
+            '${d.name} stops syncing: anything it changes from now on is ignored, and its folder in the vault is tidied away later. '
+            'It keeps the copy of your hosts, keys and snippets it already has.\n\n'
+            'If it was lost or stolen, choose Remove and re-key. The vault gets a new key and passphrase, so ${d.name} cannot read anything new. '
+            'Then change the passwords and keys it had.',
+            style: const TextStyle(height: 1.4),
+          ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          OutlinedButton(
+            key: const Key('sync-remove-confirm'),
+            onPressed: () => Navigator.pop(ctx, _RemoveChoice.remove),
+            child: const Text('Remove'),
+          ),
+          FilledButton(
+            key: const Key('sync-remove-rekey'),
+            onPressed: () => Navigator.pop(ctx, _RemoveChoice.removeAndRekey),
+            child: const Text('Remove and re-key'),
+          ),
         ],
       ),
     );
-    if (ok == true) {
-      try {
-        await ref.read(engineProvider).syncRemoveDevice(d.id);
-      } catch (e) {
-        if (context.mounted) notYet(context, 'Could not remove: $e');
-      }
+    if (choice == null || !context.mounted) return;
+    // Held before waiting: the person may leave the screen, but a re-key
+    // they asked for must still happen and its new code must still be shown.
+    final engine = ref.read(engineProvider);
+    final pending = ref.read(pendingRecoveryProvider.notifier);
+    final fail = _failNote(context);
+    // Asked before anything happens, so cancelling it removes nothing.
+    final passphrase = choice == _RemoveChoice.removeAndRekey ? await _askRekeyPassphrase(context) : null;
+    if (choice == _RemoveChoice.removeAndRekey && passphrase == null) return;
+    try {
+      await engine.syncRemoveDevice(d.id);
+    } catch (e) {
+      fail('Could not remove: $e');
+      return;
     }
+    if (passphrase != null) await _rotate(fail, engine, pending, passphrase);
+  }
+
+  Future<String?> _askRekeyPassphrase(BuildContext context) => showDialog<String>(
+        context: context,
+        builder: (_) => const _NewPassphraseDialog(
+          keyPrefix: 'sync-rekey',
+          title: 'Re-key the vault',
+          body: 'The vault gets a new key, locked with a new passphrase you choose now (not the current one), and a new recovery code. '
+              'Removed devices, and anyone else with only the old key, cannot read anything written from now on. '
+              'Your other devices ask for the new passphrase once.',
+          action: 'Re-key',
+        ),
+      );
+
+  /// Shows a note while [context] is still on screen; after that the
+  /// person has moved on and there is nowhere to show it.
+  void Function(String) _failNote(BuildContext context) => (message) {
+        if (context.mounted) notYet(context, message);
+      };
+
+  Future<void> _rotate(void Function(String) fail, Engine engine, PendingRecovery pending, String passphrase) async {
+    try {
+      // The new recovery code, shown by the screen above like a fresh setup.
+      pending.set(await engine.syncRotateKey(passphrase));
+    } catch (e) {
+      fail('Could not re-key: $e');
+    }
+  }
+
+  Future<void> _rekey(BuildContext context, WidgetRef ref) async {
+    final engine = ref.read(engineProvider);
+    final pending = ref.read(pendingRecoveryProvider.notifier);
+    final fail = _failNote(context);
+    final passphrase = await _askRekeyPassphrase(context);
+    if (passphrase != null) await _rotate(fail, engine, pending, passphrase);
   }
 
   void _showQr(BuildContext context, WidgetRef ref) {
@@ -832,6 +894,21 @@ class _ConfiguredView extends ConsumerWidget {
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          Card(
+            child: ListTile(
+              leading: Icon(Icons.key_outlined, color: t.muted),
+              title: const Text('Re-key the vault'),
+              subtitle: const Text(
+                'A new key, passphrase and recovery code. Do this if a device was lost, stolen or removed: with only the old key it cannot read anything new.',
+              ),
+              trailing: TextButton(
+                key: const Key('sync-rekey'),
+                onPressed: status.attention != null ? null : () => _rekey(context, ref),
+                child: const Text('Re-key'),
+              ),
+            ),
+          ),
           const SizedBox(height: 24),
           Align(
             alignment: Alignment.centerLeft,
@@ -905,7 +982,15 @@ class _AttentionCardState extends ConsumerState<AttentionCard> {
       });
 
   Future<void> _recreate() async {
-    final passphrase = await showDialog<String>(context: context, builder: (_) => const _NewPassphraseDialog());
+    final passphrase = await showDialog<String>(
+      context: context,
+      builder: (_) => const _NewPassphraseDialog(
+        keyPrefix: 'sync-recreate',
+        title: 'Set up the vault again',
+        body: 'Choose the passphrase that locks it from now on. It can be the one you used before. You get a new recovery code next.',
+        action: 'Set up again',
+      ),
+    );
     if (passphrase == null || !mounted) return;
     // Held before waiting: this card goes as soon as the vault is back, and
     // the person may leave the screen, but the new code must still be shown.
@@ -922,9 +1007,10 @@ class _AttentionCardState extends ConsumerState<AttentionCard> {
     final t = context.tokens;
     final title = switch (widget.attention) {
       SyncAttention.updateNeeded => 'Promptly needs an update',
-      SyncAttention.passphraseChanged => 'The vault passphrase changed',
+      SyncAttention.passphraseChanged => 'The vault passphrase or key changed',
       SyncAttention.vaultMissing => 'The vault folder is missing',
       SyncAttention.differentVault => 'A different vault is in the folder',
+      SyncAttention.removed => 'This device was removed from the vault',
     };
     final asksForPassphrase = widget.attention == SyncAttention.passphraseChanged ||
         widget.attention == SyncAttention.differentVault;
@@ -998,6 +1084,19 @@ class _AttentionCardState extends ConsumerState<AttentionCard> {
                 label: Text(_busy ? 'Setting up…' : 'Set up the vault again here'),
               ),
             ],
+            if (widget.attention == SyncAttention.removed)
+              FilledButton.icon(
+                key: const Key('sync-removed-disconnect'),
+                onPressed: () {
+                  try {
+                    ref.read(engineProvider).syncDisconnect();
+                  } catch (e) {
+                    setState(() => _error = e is String ? e : e.toString());
+                  }
+                },
+                icon: const Icon(Icons.link_off, size: 18),
+                label: const Text('Disconnect this device'),
+              ),
             if (widget.attention == SyncAttention.updateNeeded)
               OutlinedButton.icon(
                 key: const Key('sync-check-updates'),
@@ -1016,9 +1115,15 @@ class _AttentionCardState extends ConsumerState<AttentionCard> {
   }
 }
 
-/// Asks for the passphrase a vault set up again is locked with, twice.
+/// Asks twice for the passphrase that locks the vault from now on: when it
+/// is set up again, or given a new key.
 class _NewPassphraseDialog extends StatefulWidget {
-  const _NewPassphraseDialog();
+  const _NewPassphraseDialog({required this.keyPrefix, required this.title, required this.body, required this.action});
+
+  final String keyPrefix;
+  final String title;
+  final String body;
+  final String action;
 
   @override
   State<_NewPassphraseDialog> createState() => _NewPassphraseDialogState();
@@ -1049,20 +1154,18 @@ class _NewPassphraseDialogState extends State<_NewPassphraseDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Set up the vault again'),
+      title: Text(widget.title),
+      scrollable: true,
       content: SizedBox(
         width: 360,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Choose the passphrase that locks it from now on. It can be the one you used before. You get a new recovery code next.',
-              style: TextStyle(height: 1.4),
-            ),
+            Text(widget.body, style: const TextStyle(height: 1.4)),
             const SizedBox(height: 12),
             TextField(
-              key: const Key('sync-recreate-passphrase'),
+              key: Key('${widget.keyPrefix}-passphrase'),
               controller: _pass,
               obscureText: true,
               autofocus: true,
@@ -1070,7 +1173,7 @@ class _NewPassphraseDialogState extends State<_NewPassphraseDialog> {
             ),
             const SizedBox(height: 8),
             TextField(
-              key: const Key('sync-recreate-confirm'),
+              key: Key('${widget.keyPrefix}-confirm'),
               controller: _confirm,
               obscureText: true,
               decoration: const InputDecoration(labelText: 'Again'),
@@ -1086,9 +1189,9 @@ class _NewPassphraseDialogState extends State<_NewPassphraseDialog> {
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
         FilledButton(
-          key: const Key('sync-recreate-confirm-button'),
+          key: Key('${widget.keyPrefix}-confirm-button'),
           onPressed: _submit,
-          child: const Text('Set up again'),
+          child: Text(widget.action),
         ),
       ],
     );

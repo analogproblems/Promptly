@@ -38,6 +38,14 @@ pub trait Backend: Send + Sync {
     /// Write a file that must not exist yet, creating parent folders.
     fn put_new(&self, path: &str, bytes: &[u8]) -> Result<(), BackendError>;
     fn delete(&self, path: &str) -> Result<(), BackendError>;
+
+    /// Put a whole new version of a file in place of the old one. Only the
+    /// manifest is ever replaced, on a key change. Without a way to swap it
+    /// in one step, the old one goes first, so for a moment there is none.
+    fn replace(&self, path: &str, bytes: &[u8]) -> Result<(), BackendError> {
+        self.delete(path)?;
+        self.put_new(path, bytes)
+    }
 }
 
 /// A folder on this machine.
@@ -170,6 +178,30 @@ impl Backend for LocalFolder {
             Err(e) => Err(BackendError::Io(p.display().to_string(), e)),
         }
     }
+
+    /// Written beside the old one and renamed over it, so a reader always
+    /// finds one whole file, old or new.
+    fn replace(&self, path: &str, bytes: &[u8]) -> Result<(), BackendError> {
+        let p = self.resolve(path)?;
+        let tmp = p.with_file_name(format!(
+            ".{}.tmp-{}",
+            p.file_name()
+                .map(|n| n.to_string_lossy())
+                .unwrap_or_default(),
+            std::process::id()
+        ));
+        let write = || -> std::io::Result<()> {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(bytes)?;
+            f.sync_all()?;
+            std::fs::rename(&tmp, &p)
+        };
+        write().map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            BackendError::Io(p.display().to_string(), e)
+        })
+    }
 }
 
 /// Put the file written at `tmp` in place at `target`, never replacing a
@@ -291,6 +323,14 @@ impl Backend for MemoryBackend {
         files.retain(|k, _| !k.starts_with(&prefix));
         Ok(())
     }
+
+    fn replace(&self, path: &str, bytes: &[u8]) -> Result<(), BackendError> {
+        self.files
+            .lock()
+            .unwrap()
+            .insert(path.to_string(), bytes.to_vec());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -345,6 +385,9 @@ mod tests {
         assert_eq!(b.list("devices/aa").unwrap().len(), 1);
         b.delete("devices/bb").unwrap();
         assert!(b.list("devices/bb").unwrap().is_empty());
+        b.replace("vault.json", b"{\"new\":1}").unwrap();
+        assert_eq!(b.get("vault.json").unwrap(), b"{\"new\":1}");
+        assert_eq!(b.list("").unwrap().len(), 2, "one manifest, no temp file");
     }
 
     #[test]

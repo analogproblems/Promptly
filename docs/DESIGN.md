@@ -221,7 +221,7 @@ promptly/
 
 **promptly-api.** A flat set of async functions and streams for the bridge: `connect(host_id)`, `write(session, bytes)`, `frames(session)`, `hosts()`, `sync_now()` and so on. No business logic here; it only adapts.
 
-**promptly-cli.** `promptly vault inspect`, `export`, `import`, `sync`, `devices`, `rotate-passphrase`, `ssh-config`. Installs with `cargo install` or as a release binary. Its existence is a feature.
+**promptly-cli.** `promptly vault inspect`, `export`, `import`, `sync`, `devices`, `change-passphrase`, `rotate-dek`, `ssh-config`. Installs with `cargo install` or as a release binary. Its existence is a feature.
 
 ### 5.4 Flutter app
 
@@ -291,7 +291,8 @@ Settings                            one record
   copy_on_select, paste_warning, haptics, app_lock, ...
 
 Device                              one per enrolled device
-  name, platform, enrolled_at, last_seen_at, app_version
+  name, platform, enrolled_at, last_seen_at, app_version,
+  removed_at, removed_after         set by another device that removed this one
 ```
 
 ## 7. Look and feel
@@ -366,7 +367,7 @@ Done in M4 (the desktop pass; phones get checked with TalkBack on the Play test)
 | Threat | Defence |
 |---|---|
 | Storage provider is breached or curious | Vault files are encrypted on the device with a key derived from your passphrase. The provider holds ciphertext and opaque file names only. |
-| Device lost or stolen | The vault key lives in the OS keychain behind biometrics or the passcode. Optional app lock on open and after a timeout. The local database is encrypted at rest. |
+| Device lost or stolen | The vault key lives in the OS keychain behind biometrics or the passcode. Optional app lock on open and after a timeout. The local database is encrypted at rest. Removing it from another device makes every device ignore what it writes; re-keying the vault means it can read nothing written afterwards. |
 | Malicious server you connect to | Host key verification on first connect; a loud warning on change. Agent forwarding is off by default and per-host. |
 | Network attacker | SSH as designed. Backend traffic uses TLS or SSH. The vault adds authenticated encryption, so tampering with a file is detected. |
 | Malicious app on the same device | Platform sandboxing, keychain access control, and hardware-backed keys that cannot be extracted at all. |

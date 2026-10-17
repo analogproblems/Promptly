@@ -126,30 +126,61 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
 
   /// Generate a key pair in the engine and keep the private half in the
   /// secret store. Returns the new identity.
-  Identity generate({required String label, required SshKeyKind kind}) {
+  /// With [localOnly] the key never leaves this device.
+  Identity generate({required String label, required SshKeyKind kind, bool localOnly = false}) {
     final engine = ref.read(engineProvider);
     final id = newRecordId();
     final generated = engine.keyGenerate(kind, label);
     // Secret ids are record ids too: the engine's model types them as UUIDs.
     final secretId = newRecordId();
-    engine.secretPut(secretId, 'private_key', generated.privateOpenssh);
     final identity = Identity(
       id: id,
       label: label,
       keyType: generated.kind,
       publicKey: generated.publicOpenssh,
       privateKeySecretId: secretId,
+      sync: localOnly ? 'local_only' : 'vault',
     );
-    engine.recordPut('identities', id, jsonEncode(identity.toJson()));
-    state = _load();
+    _saveWithSecret(identity, secretId, generated.privateOpenssh);
     return identity;
+  }
+
+  /// The identity first, so it says whether its key may leave this device
+  /// before the key is saved; then the key. A key that cannot be saved
+  /// takes the identity with it.
+  void _saveWithSecret(Identity identity, String secretId, String privateKey) {
+    final engine = ref.read(engineProvider);
+    engine.recordPut('identities', identity.id, jsonEncode(identity.toJson()));
+    try {
+      engine.secretPut(secretId, 'private_key', privateKey);
+    } catch (_) {
+      try {
+        engine.recordDelete('identities', identity.id);
+      } catch (_) {}
+      state = _load();
+      rethrow;
+    }
+    state = _load();
+  }
+
+  /// Keep a key on this device only, or let it sync again. Kept here, it
+  /// leaves the vault and your other devices; nothing is deleted here.
+  void setLocalOnly(String id, bool localOnly) {
+    final identity = byId(id);
+    if (identity == null) return;
+    ref.read(engineProvider).recordPut(
+          'identities',
+          id,
+          jsonEncode(identity.copyWith(sync: localOnly ? 'local_only' : 'vault').toJson()),
+        );
+    state = _load();
   }
 
   /// Import a pasted private key. Encrypted keys are kept encrypted; the
   /// passphrase is asked for at connect time. A PuTTY or PEM key that
   /// could be read in full is stored in OpenSSH form instead, behind the
   /// same passphrase if it had one.
-  Identity import({required String label, required String privateKey, String? passphrase}) {
+  Identity import({required String label, required String privateKey, String? passphrase, bool localOnly = false}) {
     final engine = ref.read(engineProvider);
     final info = engine.keyInspect(privateKey, passphrase);
     final publicKey = info.publicOpenssh;
@@ -160,16 +191,15 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
     // Secret ids are record ids too: the engine's model types them as UUIDs.
     final secretId = newRecordId();
     final stored = info.converted && info.privateOpenssh != null ? info.privateOpenssh! : privateKey.trim();
-    engine.secretPut(secretId, 'private_key', stored);
     final identity = Identity(
       id: id,
       label: label,
       keyType: info.kind,
       publicKey: publicKey,
       privateKeySecretId: secretId,
+      sync: localOnly ? 'local_only' : 'vault',
     );
-    engine.recordPut('identities', id, jsonEncode(identity.toJson()));
-    state = _load();
+    _saveWithSecret(identity, secretId, stored);
     return identity;
   }
 

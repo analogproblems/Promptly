@@ -39,7 +39,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.13.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -1356165681;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 541899890;
 
 // Section: executor
 
@@ -2130,6 +2130,39 @@ fn wire__crate__api__sync__sync_remove_device_impl(
         },
     )
 }
+fn wire__crate__api__sync__sync_rotate_key_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "sync_rotate_key",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_passphrase = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::sync::sync_rotate_key(api_passphrase)?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
+        },
+    )
+}
 fn wire__crate__api__sync__sync_sftp_folder_has_vault_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
@@ -4062,6 +4095,7 @@ impl SseDecode for crate::api::sync::SyncAttention {
             1 => crate::api::sync::SyncAttention::PassphraseChanged,
             2 => crate::api::sync::SyncAttention::VaultMissing,
             3 => crate::api::sync::SyncAttention::DifferentVault,
+            4 => crate::api::sync::SyncAttention::Removed,
             _ => unreachable!("Invalid variant for SyncAttention: {}", inner),
         };
     }
@@ -4421,14 +4455,15 @@ fn pde_ffi_dispatcher_primary_impl(
         61 => wire__crate__api__sync__sync_now_impl(port, ptr, rust_vec_len, data_len),
         63 => wire__crate__api__sync__sync_recreate_vault_impl(port, ptr, rust_vec_len, data_len),
         64 => wire__crate__api__sync__sync_remove_device_impl(port, ptr, rust_vec_len, data_len),
-        65 => wire__crate__api__sync__sync_sftp_folder_has_vault_impl(
+        65 => wire__crate__api__sync__sync_rotate_key_impl(port, ptr, rust_vec_len, data_len),
+        66 => wire__crate__api__sync__sync_sftp_folder_has_vault_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        67 => wire__crate__api__sync__sync_unlock_impl(port, ptr, rust_vec_len, data_len),
-        70 => wire__crate__api__terminal__terminal_events_impl(port, ptr, rust_vec_len, data_len),
+        68 => wire__crate__api__sync__sync_unlock_impl(port, ptr, rust_vec_len, data_len),
+        71 => wire__crate__api__terminal__terminal_events_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -4482,34 +4517,34 @@ fn pde_ffi_dispatcher_sync_impl(
         56 => wire__crate__api__sync__sync_disconnect_impl(ptr, rust_vec_len, data_len),
         58 => wire__crate__api__sync__sync_folder_has_vault_impl(ptr, rust_vec_len, data_len),
         62 => wire__crate__api__sync__sync_qr_payload_impl(ptr, rust_vec_len, data_len),
-        66 => wire__crate__api__sync__sync_status_impl(ptr, rust_vec_len, data_len),
-        68 => wire__crate__api__sync__sync_wake_impl(ptr, rust_vec_len, data_len),
-        69 => wire__crate__api__terminal__terminal_close_impl(ptr, rust_vec_len, data_len),
-        71 => wire__crate__api__terminal__terminal_link_at_impl(ptr, rust_vec_len, data_len),
-        72 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
-        73 => wire__crate__api__terminal__terminal_mouse_impl(ptr, rust_vec_len, data_len),
-        74 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
-        75 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
-        76 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
-        77 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
-        78 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
-        79 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
-        80 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
-        81 => {
+        67 => wire__crate__api__sync__sync_status_impl(ptr, rust_vec_len, data_len),
+        69 => wire__crate__api__sync__sync_wake_impl(ptr, rust_vec_len, data_len),
+        70 => wire__crate__api__terminal__terminal_close_impl(ptr, rust_vec_len, data_len),
+        72 => wire__crate__api__terminal__terminal_link_at_impl(ptr, rust_vec_len, data_len),
+        73 => wire__crate__api__terminal__terminal_list_impl(ptr, rust_vec_len, data_len),
+        74 => wire__crate__api__terminal__terminal_mouse_impl(ptr, rust_vec_len, data_len),
+        75 => wire__crate__api__terminal__terminal_notice_impl(ptr, rust_vec_len, data_len),
+        76 => wire__crate__api__terminal__terminal_open_local_impl(ptr, rust_vec_len, data_len),
+        77 => wire__crate__api__terminal__terminal_paste_impl(ptr, rust_vec_len, data_len),
+        78 => wire__crate__api__terminal__terminal_refresh_impl(ptr, rust_vec_len, data_len),
+        79 => wire__crate__api__terminal__terminal_resize_impl(ptr, rust_vec_len, data_len),
+        80 => wire__crate__api__terminal__terminal_screen_text_impl(ptr, rust_vec_len, data_len),
+        81 => wire__crate__api__terminal__terminal_scroll_impl(ptr, rust_vec_len, data_len),
+        82 => {
             wire__crate__api__terminal__terminal_scroll_to_bottom_impl(ptr, rust_vec_len, data_len)
         }
-        82 => wire__crate__api__terminal__terminal_search_set_impl(ptr, rust_vec_len, data_len),
-        83 => wire__crate__api__terminal__terminal_search_step_impl(ptr, rust_vec_len, data_len),
-        84 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
-        85 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
-        86 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
-        87 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
-        88 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
-        89 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
-        90 => wire__crate__api__themes__theme_delete_impl(ptr, rust_vec_len, data_len),
-        91 => wire__crate__api__themes__theme_import_preview_impl(ptr, rust_vec_len, data_len),
-        92 => wire__crate__api__themes__theme_save_impl(ptr, rust_vec_len, data_len),
-        93 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
+        83 => wire__crate__api__terminal__terminal_search_set_impl(ptr, rust_vec_len, data_len),
+        84 => wire__crate__api__terminal__terminal_search_step_impl(ptr, rust_vec_len, data_len),
+        85 => wire__crate__api__terminal__terminal_select_begin_impl(ptr, rust_vec_len, data_len),
+        86 => wire__crate__api__terminal__terminal_select_clear_impl(ptr, rust_vec_len, data_len),
+        87 => wire__crate__api__terminal__terminal_select_update_impl(ptr, rust_vec_len, data_len),
+        88 => wire__crate__api__terminal__terminal_selection_text_impl(ptr, rust_vec_len, data_len),
+        89 => wire__crate__api__terminal__terminal_set_theme_impl(ptr, rust_vec_len, data_len),
+        90 => wire__crate__api__terminal__terminal_write_impl(ptr, rust_vec_len, data_len),
+        91 => wire__crate__api__themes__theme_delete_impl(ptr, rust_vec_len, data_len),
+        92 => wire__crate__api__themes__theme_import_preview_impl(ptr, rust_vec_len, data_len),
+        93 => wire__crate__api__themes__theme_save_impl(ptr, rust_vec_len, data_len),
+        94 => wire__crate__api__themes__themes_list_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -5160,6 +5195,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::sync::SyncAttention {
             Self::PassphraseChanged => 1.into_dart(),
             Self::VaultMissing => 2.into_dart(),
             Self::DifferentVault => 3.into_dart(),
+            Self::Removed => 4.into_dart(),
             _ => unreachable!(),
         }
     }
@@ -6312,6 +6348,7 @@ impl SseEncode for crate::api::sync::SyncAttention {
                 crate::api::sync::SyncAttention::PassphraseChanged => 1,
                 crate::api::sync::SyncAttention::VaultMissing => 2,
                 crate::api::sync::SyncAttention::DifferentVault => 3,
+                crate::api::sync::SyncAttention::Removed => 4,
                 _ => {
                     unimplemented!("");
                 }
