@@ -11,6 +11,7 @@ use flutter_rust_bridge::frb;
 use promptly_ssh::{RemoteFs, SftpError};
 
 use crate::ssh_flow::connection;
+use crate::transfers::{Partial, Transfers};
 
 pub struct FileEntry {
     pub name: String,
@@ -33,18 +34,21 @@ pub struct FileTransfer {
     pub done: u64,
     pub total: u64,
     pub finished: bool,
+    /// Stopped by the person before it was done.
+    pub cancelled: bool,
     pub error: Option<String>,
 }
 
 struct Browser {
     fs: Arc<RemoteFs>,
-    transfers: Mutex<Vec<Arc<Mutex<FileTransfer>>>>,
+    /// Which server the files are on, as `host:port`.
+    server: String,
+    transfers: Arc<Transfers>,
 }
 
 static BROWSERS: LazyLock<Mutex<HashMap<u32, Arc<Browser>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
-static NEXT_TRANSFER: AtomicU32 = AtomicU32::new(1);
 
 fn browser(id: u32) -> Result<Arc<Browser>, String> {
     BROWSERS
@@ -85,7 +89,8 @@ pub fn files_open(session_id: u32) -> Result<u32, String> {
         id,
         Arc::new(Browser {
             fs: Arc::new(fs),
-            transfers: Mutex::new(Vec::new()),
+            server: conn.server().to_string(),
+            transfers: Arc::default(),
         }),
     );
     Ok(id)
@@ -181,103 +186,66 @@ pub fn files_write_text(id: u32, path: String, text: String) -> Result<(), Strin
         .map_err(friendly)
 }
 
-fn start_transfer(b: &Arc<Browser>, name: String, upload: bool) -> Arc<Mutex<FileTransfer>> {
-    let t = Arc::new(Mutex::new(FileTransfer {
-        id: NEXT_TRANSFER.fetch_add(1, Ordering::Relaxed),
-        name,
-        upload,
-        done: 0,
-        total: 0,
-        finished: false,
-        error: None,
-    }));
-    b.transfers.lock().unwrap().push(t.clone());
-    t
-}
-
 /// Start copying a remote file to a local path. Returns the transfer id;
 /// `files_transfers` reports its progress.
 #[frb(sync)]
 pub fn files_download(id: u32, remote: String, local: String) -> Result<u32, String> {
     let b = browser(id)?;
     let name = remote.rsplit('/').next().unwrap_or(&remote).to_string();
-    let t = start_transfer(&b, name, false);
-    let tid = t.lock().unwrap().id;
     let fs = b.fs.clone();
-    promptly_ssh::runtime().spawn(async move {
-        let progress = t.clone();
-        let result = fs
-            .download(&remote, &PathBuf::from(local), |done, total| {
-                let mut p = progress.lock().unwrap();
-                p.done = done;
-                p.total = total;
-            })
-            .await;
-        let mut p = t.lock().unwrap();
-        p.finished = true;
-        if let Err(e) = result {
-            p.error = Some(friendly(e));
-        }
-    });
-    Ok(tid)
+    let local = PathBuf::from(local);
+    let partial = Partial::Local(local.clone());
+    b.transfers
+        .spawn(name, false, partial, move |progress| async move {
+            fs.download(&remote, &local, progress)
+                .await
+                .map_err(friendly)
+        })
 }
 
-/// Start copying a local file to a remote path, replacing what is there.
+/// Start copying a local file to a remote path. A file already there is
+/// replaced only with `replace`; otherwise the upload fails and leaves it.
 #[frb(sync)]
-pub fn files_upload(id: u32, local: String, remote: String) -> Result<u32, String> {
+pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Result<u32, String> {
     let b = browser(id)?;
     let name = remote.rsplit('/').next().unwrap_or(&remote).to_string();
-    let t = start_transfer(&b, name, true);
-    let tid = t.lock().unwrap().id;
     let fs = b.fs.clone();
-    promptly_ssh::runtime().spawn(async move {
-        let progress = t.clone();
-        let result = fs
-            .upload(&PathBuf::from(local), &remote, |done, total| {
-                let mut p = progress.lock().unwrap();
-                p.done = done;
-                p.total = total;
-            })
-            .await;
-        let mut p = t.lock().unwrap();
-        p.finished = true;
-        if let Err(e) = result {
-            p.error = Some(friendly(e));
+    let partial = Partial::Remote(b.server.clone(), remote.clone());
+    b.transfers
+        .spawn(name, true, partial, move |progress| async move {
+            fs.upload(&PathBuf::from(local), &remote, replace, progress)
+                .await
+                .map_err(friendly)
+        })
+}
+
+/// Stop a running upload or download, and remove the half-written copy it
+/// leaves. Nothing happens if it has already finished.
+#[frb(sync)]
+pub fn files_cancel_transfer(id: u32, transfer: u32) -> Result<(), String> {
+    let b = browser(id)?;
+    let fs = b.fs.clone();
+    b.transfers.cancel(transfer, move |partial| async move {
+        match partial {
+            Partial::Local(path) => match tokio::fs::remove_file(&path).await {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                _ => Ok(()),
+            },
+            Partial::Remote(_, path) => fs.remove_file(&path).await.map_err(friendly),
         }
     });
-    Ok(tid)
+    Ok(())
 }
 
 /// Every transfer of a browser, oldest first.
 #[frb(sync)]
 pub fn files_transfers(id: u32) -> Result<Vec<FileTransfer>, String> {
-    let b = browser(id)?;
-    let transfers = b.transfers.lock().unwrap();
-    let out = transfers
-        .iter()
-        .map(|t| {
-            let t = t.lock().unwrap();
-            FileTransfer {
-                id: t.id,
-                name: t.name.clone(),
-                upload: t.upload,
-                done: t.done,
-                total: t.total,
-                finished: t.finished,
-                error: t.error.clone(),
-            }
-        })
-        .collect();
-    Ok(out)
+    Ok(browser(id)?.transfers.snapshot())
 }
 
 /// Forget finished transfers.
 #[frb(sync)]
 pub fn files_clear_transfers(id: u32) -> Result<(), String> {
-    let b = browser(id)?;
-    b.transfers
-        .lock()
-        .unwrap()
-        .retain(|t| !t.lock().unwrap().finished);
+    browser(id)?.transfers.clear_finished();
     Ok(())
 }

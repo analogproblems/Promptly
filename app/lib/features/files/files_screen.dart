@@ -12,6 +12,7 @@ import '../hosts/models.dart' show relativeTime;
 import '../sessions/session_manager.dart';
 import '../shell/empty_state.dart';
 import '../shell/shell_scaffold.dart';
+import 'device_files.dart';
 import 'fs.dart';
 
 /// Where the local pane starts; tests point it at a folder of their own.
@@ -50,6 +51,10 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
   final _localPane = GlobalKey<_FsPaneState>();
   List<FileTransfer> _transfers = const [];
   Timer? _poll;
+
+  /// Downloads to hand on once they finish, by transfer id: the file to
+  /// share or open.
+  final Map<int, ({_Then then, String path})> _after = {};
 
   @override
   void initState() {
@@ -108,6 +113,11 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
     final wasRunning = _transfers.any((t) => !t.finished);
     final running = now.any((t) => !t.finished);
     setState(() => _transfers = now);
+    for (final t in now) {
+      if (!t.finished) continue;
+      final next = _after.remove(t.id);
+      if (next != null && !t.cancelled && t.error == null) _handOn(next.then, next.path);
+    }
     if (wasRunning && !running) {
       // Something finished: the lists may have changed.
       _remotePane.currentState?.refresh();
@@ -137,13 +147,166 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
       } else {
         final dir = _remotePane.currentState?.path;
         if (dir == null) return;
-        engine.filesUpload(id, entry.path, _remote!.join(dir, entry.name));
+        engine.filesUpload(id, entry.path, _remote!.join(dir, entry.name), replace: true);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is String ? e : e.toString())));
       return;
     }
     _watchTransfers();
+  }
+
+  void _say(Object message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message is String ? message : '$message')));
+  }
+
+  /// Start a copy the engine runs, reporting a refusal instead of throwing.
+  int? _start(int Function(Engine engine, int browser) copy) {
+    final id = _browserId;
+    if (id == null) return null;
+    try {
+      final tid = copy(ref.read(engineProvider), id);
+      _watchTransfers();
+      return tid;
+    } catch (e) {
+      _say(e);
+      return null;
+    }
+  }
+
+  /// Where the share sheet points from on a tablet: this screen.
+  Rect? _origin() {
+    final box = context.findRenderObject();
+    return box is RenderBox && box.hasSize ? box.localToGlobal(Offset.zero) & box.size : null;
+  }
+
+  /// One pane only (a phone): pick files on this device and upload them
+  /// into the server folder on show.
+  Future<void> _upload() async {
+    final pane = _remotePane.currentState;
+    final dir = pane?.path;
+    if (dir == null) return;
+    final List<PickedFile> picked;
+    try {
+      picked = await ref.read(deviceFilesProvider).pick();
+    } catch (e) {
+      _say(e);
+      return;
+    }
+    if (picked.isEmpty || !mounted) return;
+    // Two picked files with one name would land on each other.
+    final unique = <String, PickedFile>{};
+    for (final f in picked) {
+      unique.putIfAbsent(f.name, () => f);
+    }
+    // Looked up now rather than taken from the list on show, which may be
+    // out of date. Anything that appears after this is refused by the
+    // engine rather than replaced.
+    final Set<String> there;
+    try {
+      there = {for (final e in await pane!.widget.fs.list(dir)) e.name};
+    } catch (e) {
+      _say(e);
+      return;
+    }
+    if (!mounted) return;
+    final clash = [
+      for (final name in unique.keys)
+        if (there.contains(name)) name,
+    ];
+    if (clash.isNotEmpty && !await _confirmReplace(clash)) return;
+    if (unique.length < picked.length) {
+      _say('Some of those files share a name, so only the first of each was uploaded.');
+    }
+    for (final f in unique.values) {
+      _start(
+        (engine, id) => engine.filesUpload(id, f.path, _remote!.join(dir, f.name), replace: there.contains(f.name)),
+      );
+    }
+  }
+
+  Future<bool> _confirmReplace(List<String> names) async {
+    final one = names.length == 1;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(one ? 'Replace ${names.first}?' : 'Replace ${names.length} files?'),
+        content: Text(
+          one
+              ? 'This folder on the server already has a file with that name. Uploading replaces it.'
+              : 'This folder on the server already has files with these names: ${names.join(', ')}. Uploading replaces them.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            key: const Key('files-replace-ok'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Replace'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
+  /// One pane only: save a server file on this device. A computer asks
+  /// where; a phone fetches it, then offers the share sheet to save or send.
+  Future<void> _download(FsEntry e) async {
+    final device = ref.read(deviceFilesProvider);
+    if (!device.savesWithDialog) return _downloadThen(e, _Then.share);
+    final String? path;
+    try {
+      path = await device.saveLocation(e.name);
+    } catch (err) {
+      _say(err);
+      return;
+    }
+    if (path == null || !mounted) return;
+    _start((engine, id) => engine.filesDownload(id, e.path, path!));
+  }
+
+  /// Fetch a server file to this device's cache, then share or open it.
+  Future<void> _downloadThen(FsEntry e, _Then then) async {
+    final String path;
+    try {
+      path = await ref.read(deviceFilesProvider).scratchPath(e.name);
+    } catch (err) {
+      _say(err);
+      return;
+    }
+    if (!mounted) return;
+    final tid = _start((engine, id) => engine.filesDownload(id, e.path, path));
+    if (tid == null) return;
+    _after[tid] = (then: then, path: path);
+    // It may have finished already.
+    _refreshTransfers();
+  }
+
+  Future<void> _handOn(_Then then, String path) async {
+    final device = ref.read(deviceFilesProvider);
+    try {
+      switch (then) {
+        case _Then.share:
+          await device.share(path, origin: _origin());
+        case _Then.open:
+          await device.open(path, origin: _origin());
+      }
+    } catch (e) {
+      _say(e);
+    }
+  }
+
+  void _cancel(int transfer) {
+    final id = _browserId;
+    if (id == null) return;
+    _after.remove(transfer);
+    try {
+      ref.read(engineProvider).filesCancelTransfer(id, transfer);
+    } catch (e) {
+      _say(e);
+    }
+    _refreshTransfers();
   }
 
   @override
@@ -170,14 +333,20 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
         child: Text('Opening the file browser…', style: TextStyle(color: t.muted)),
       );
     } else {
+      // One pane: the device's side of a copy is the system picker, a save
+      // dialog or the share sheet instead of a second list.
       final remotePane = _FsPane(
         key: _remotePane,
         fs: _remote!,
         startDir: null,
-        onTransfer: desktop ? (e) => transfer(e, fromRemote: true) : null,
-        onDropped: (d) {
-          if (!d.remote) transfer(d.entry, fromRemote: false);
-        },
+        onTransfer: desktop ? (e) => transfer(e, fromRemote: true) : _download,
+        onUpload: desktop ? null : _upload,
+        onOpenElsewhere: (e) => _downloadThen(e, _Then.open),
+        onDropped: desktop
+            ? (d) {
+                if (!d.remote) transfer(d.entry, fromRemote: false);
+              }
+            : null,
       );
       body = desktop
           ? Row(
@@ -234,6 +403,7 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
         if (_transfers.isNotEmpty)
           _TransfersBar(
             transfers: _transfers,
+            onCancel: _cancel,
             onClear: () {
               final id = _browserId;
               if (id != null) ref.read(engineProvider).filesClearTransfers(id);
@@ -245,16 +415,35 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
   }
 }
 
+/// What to do with a download once it is on this device.
+enum _Then { share, open }
+
 /// One folder listing with its path, toolbar and entry menus.
 class _FsPane extends StatefulWidget {
-  const _FsPane({super.key, required this.fs, required this.startDir, this.onTransfer, this.onDropped});
+  const _FsPane({
+    super.key,
+    required this.fs,
+    required this.startDir,
+    this.onTransfer,
+    this.onDropped,
+    this.onUpload,
+    this.onOpenElsewhere,
+  });
 
   final Fs fs;
   final String? startDir;
 
-  /// "Copy to the other side", when there is another side.
+  /// "Copy to the other side": the other pane, or this device on a phone.
   final void Function(FsEntry entry)? onTransfer;
+
+  /// Files dropped from the other pane; also makes the rows draggable.
   final void Function(FsDrag drag)? onDropped;
+
+  /// Upload files picked on this device into the folder on show.
+  final VoidCallback? onUpload;
+
+  /// Hand a file to whichever app on this device opens it.
+  final void Function(FsEntry entry)? onOpenElsewhere;
 
   @override
   State<_FsPane> createState() => _FsPaneState();
@@ -434,6 +623,8 @@ class _FsPaneState extends State<_FsPane> {
                   _edit(e);
                 case 'copy':
                   widget.onTransfer?.call(e);
+                case 'open-elsewhere':
+                  widget.onOpenElsewhere?.call(e);
                 case 'rename':
                   _rename(e);
                 case 'delete':
@@ -443,9 +634,10 @@ class _FsPaneState extends State<_FsPane> {
               }
             },
             canCopy: widget.onTransfer != null,
+            canOpenElsewhere: widget.onOpenElsewhere != null,
             copyLabel: remote ? 'Download to this device' : 'Upload to the server',
           );
-          if (widget.onTransfer == null) return row;
+          if (widget.onDropped == null) return row;
           return Draggable<FsDrag>(
             data: FsDrag(e, remote: remote),
             feedback: Material(
@@ -513,6 +705,14 @@ class _FsPaneState extends State<_FsPane> {
                 onPressed: refresh,
                 icon: const Icon(Icons.refresh, size: 18),
               ),
+              if (widget.onUpload != null)
+                IconButton(
+                  key: Key('$side-upload'),
+                  tooltip: 'Upload files from this device',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: p == null ? null : widget.onUpload,
+                  icon: const Icon(Icons.upload_file, size: 18),
+                ),
               IconButton(
                 key: Key('$side-new-folder'),
                 tooltip: 'New folder',
@@ -622,6 +822,7 @@ class _EntryRow extends StatelessWidget {
     required this.onOpen,
     required this.onAction,
     required this.canCopy,
+    required this.canOpenElsewhere,
     required this.copyLabel,
   });
 
@@ -629,6 +830,7 @@ class _EntryRow extends StatelessWidget {
   final VoidCallback? onOpen;
   final void Function(String action) onAction;
   final bool canCopy;
+  final bool canOpenElsewhere;
   final String copyLabel;
 
   @override
@@ -681,6 +883,8 @@ class _EntryRow extends StatelessWidget {
                 if (e.isDir) const PopupMenuItem(value: 'open', child: Text('Open')),
                 if (!e.isDir) const PopupMenuItem(value: 'edit', child: Text('Edit')),
                 if (canCopy && !e.isDir) PopupMenuItem(value: 'copy', child: Text(copyLabel)),
+                if (canOpenElsewhere && !e.isDir)
+                  const PopupMenuItem(value: 'open-elsewhere', child: Text('Open in another app')),
                 const PopupMenuItem(value: 'rename', child: Text('Rename')),
                 const PopupMenuItem(value: 'permissions', child: Text('Permissions')),
                 const PopupMenuItem(value: 'delete', child: Text('Delete')),
@@ -763,10 +967,11 @@ class _PermissionsDialogState extends State<_PermissionsDialog> {
 }
 
 class _TransfersBar extends StatelessWidget {
-  const _TransfersBar({required this.transfers, required this.onClear});
+  const _TransfersBar({required this.transfers, required this.onClear, required this.onCancel});
 
   final List<FileTransfer> transfers;
   final VoidCallback onClear;
+  final void Function(int transfer) onCancel;
 
   @override
   Widget build(BuildContext context) {
@@ -781,65 +986,109 @@ class _TransfersBar extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
+          // A Wrap, so the button drops below the heading with large text.
+          Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Expanded(
-                child: Text(
-                  'Transfers',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.6, color: t.muted),
-                ),
+              Text(
+                'Transfers',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.6, color: t.muted),
               ),
               TextButton(onPressed: onClear, child: const Text('Clear finished')),
             ],
           ),
-          for (final tr in shown)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                children: [
-                  Icon(
-                    tr.upload ? Icons.upload : Icons.download,
-                    size: 16,
-                    color: tr.error != null ? t.danger : (tr.finished ? t.accent : t.muted),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 180,
-                    child: Text(
-                      tr.name,
-                      overflow: TextOverflow.ellipsis,
-                      style: monoStyle(context, size: 12, color: t.text),
+          for (final tr in shown) _TransferRow(key: Key('transfer-${tr.id}'), transfer: tr, onCancel: onCancel),
+        ],
+      ),
+    );
+  }
+}
+
+/// One copy: its name and state on a line, the progress under it, and a
+/// cancel button while it runs. Two lines rather than one, so it fits a
+/// phone at large text.
+class _TransferRow extends StatelessWidget {
+  const _TransferRow({super.key, required this.transfer, required this.onCancel});
+
+  final FileTransfer transfer;
+  final void Function(int transfer) onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    final tr = transfer;
+    final status = tr.cancelled
+        ? 'Cancelled'
+        : tr.error != null
+        ? 'Failed'
+        : tr.finished
+        ? 'Done · ${formatBytes(tr.done.toInt())}'
+        : '${formatBytes(tr.done.toInt())} of ${formatBytes(tr.total.toInt())}';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Icon(
+            tr.upload ? Icons.upload : Icons.download,
+            size: 16,
+            color: tr.error != null ? t.danger : (tr.finished && !tr.cancelled ? t.accent : t.muted),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        tr.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: monoStyle(context, size: 12, color: t.text),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: tr.error != null
-                        ? Text(
-                            tr.error!,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 12, color: t.danger),
-                          )
-                        : LinearProgressIndicator(
-                            value: tr.total == BigInt.zero
-                                ? null
-                                : (tr.done.toDouble() / tr.total.toDouble()).clamp(0, 1),
-                            minHeight: 4,
-                            color: t.accent,
-                            backgroundColor: t.border,
-                          ),
-                  ),
-                  const SizedBox(width: 10),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Text(
+                        status,
+                        textAlign: TextAlign.right,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 11, color: t.muted),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                // A cancelled copy can still have an error: its part-copied
+                // file could not be removed, which the person needs to know.
+                if (tr.error != null)
                   Text(
-                    tr.error != null
-                        ? 'Failed'
-                        : tr.finished
-                        ? 'Done · ${formatBytes(tr.done.toInt())}'
-                        : '${formatBytes(tr.done.toInt())} of ${formatBytes(tr.total.toInt())}',
-                    style: TextStyle(fontSize: 11, color: t.muted),
+                    tr.error!,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: t.danger),
+                  )
+                else if (!tr.cancelled)
+                  LinearProgressIndicator(
+                    value: tr.total == BigInt.zero ? null : (tr.done.toDouble() / tr.total.toDouble()).clamp(0, 1),
+                    minHeight: 4,
+                    color: t.accent,
+                    backgroundColor: t.border,
                   ),
-                ],
-              ),
+              ],
             ),
+          ),
+          if (!tr.finished)
+            IconButton(
+              key: Key('transfer-cancel-${tr.id}'),
+              tooltip: 'Cancel ${tr.upload ? 'upload' : 'download'} of ${tr.name}',
+              visualDensity: VisualDensity.compact,
+              onPressed: () => onCancel(tr.id),
+              icon: const Icon(Icons.close, size: 18),
+            )
+          else
+            const SizedBox(width: 8),
         ],
       ),
     );

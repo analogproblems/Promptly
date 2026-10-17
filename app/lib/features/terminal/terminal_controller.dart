@@ -62,19 +62,38 @@ class TerminalController extends ChangeNotifier {
   }
 
   /// Modifiers the keyboard bar holds down for the next key, since a phone
-  /// keyboard has no Ctrl or Alt of its own. One-shot: typing clears them.
+  /// keyboard has no Ctrl or Alt of its own. One-shot: typing clears them,
+  /// unless they are locked, which keeps them down until turned off.
   bool stickyCtrl = false;
   bool stickyAlt = false;
+  bool lockedCtrl = false;
+  bool lockedAlt = false;
 
-  void setSticky({bool? ctrl, bool? alt}) {
+  /// Hold or let go of a modifier. Locking holds it too; letting go of it
+  /// unlocks it.
+  void setSticky({bool? ctrl, bool? alt, bool? lockCtrl, bool? lockAlt}) {
     if (ctrl != null) stickyCtrl = ctrl;
     if (alt != null) stickyAlt = alt;
+    if (lockCtrl != null) lockedCtrl = lockCtrl;
+    if (lockAlt != null) lockedAlt = lockAlt;
+    if (lockedCtrl) stickyCtrl = true;
+    if (lockedAlt) stickyAlt = true;
+    if (!stickyCtrl) lockedCtrl = false;
+    if (!stickyAlt) lockedAlt = false;
+    notifyListeners();
+  }
+
+  /// After a key: one-shot modifiers let go, locked ones stay down.
+  void releaseSticky() {
+    if (stickyCtrl == lockedCtrl && stickyAlt == lockedAlt) return;
+    stickyCtrl = lockedCtrl;
+    stickyAlt = lockedAlt;
     notifyListeners();
   }
 
   /// Typed text as bytes for the program, through the sticky modifiers:
   /// Ctrl turns a letter into its control byte, Alt prefixes Escape. Both
-  /// are released afterwards.
+  /// are released afterwards unless locked.
   List<int> encodeTyped(String text) {
     if (!stickyCtrl && !stickyAlt) return utf8.encode(text);
     final out = <int>[];
@@ -97,9 +116,7 @@ class TerminalController extends ChangeNotifier {
       }
       out.addAll(utf8.encode(String.fromCharCode(rune)));
     }
-    stickyCtrl = false;
-    stickyAlt = false;
-    notifyListeners();
+    releaseSticky();
     return out;
   }
 

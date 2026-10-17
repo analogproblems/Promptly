@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `browser`, `friendly`, `start_transfer`
+// These functions are ignored because they are not marked as `pub`: `browser`, `friendly`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Browser`
 
 /// Open the file browser for a live SSH session. Returns the browser id.
@@ -79,16 +79,26 @@ int filesDownload({
   local: local,
 );
 
-/// Start copying a local file to a remote path, replacing what is there.
+/// Start copying a local file to a remote path. A file already there is
+/// replaced only with `replace`; otherwise the upload fails and leaves it.
 int filesUpload({
   required int id,
   required String local,
   required String remote,
+  required bool replace,
 }) => RustLib.instance.api.crateApiFilesFilesUpload(
   id: id,
   local: local,
   remote: remote,
+  replace: replace,
 );
+
+/// Stop a running upload or download, and remove the half-written copy it
+/// leaves. Nothing happens if it has already finished.
+void filesCancelTransfer({required int id, required int transfer}) => RustLib
+    .instance
+    .api
+    .crateApiFilesFilesCancelTransfer(id: id, transfer: transfer);
 
 /// Every transfer of a browser, oldest first.
 List<FileTransfer> filesTransfers({required int id}) =>
@@ -157,6 +167,9 @@ class FileTransfer {
   final BigInt done;
   final BigInt total;
   final bool finished;
+
+  /// Stopped by the person before it was done.
+  final bool cancelled;
   final String? error;
 
   const FileTransfer({
@@ -166,6 +179,7 @@ class FileTransfer {
     required this.done,
     required this.total,
     required this.finished,
+    required this.cancelled,
     this.error,
   });
 
@@ -177,6 +191,7 @@ class FileTransfer {
       done.hashCode ^
       total.hashCode ^
       finished.hashCode ^
+      cancelled.hashCode ^
       error.hashCode;
 
   @override
@@ -190,5 +205,6 @@ class FileTransfer {
           done == other.done &&
           total == other.total &&
           finished == other.finished &&
+          cancelled == other.cancelled &&
           error == other.error;
 }

@@ -442,8 +442,8 @@ Above the keyboard is a bar with the keys a phone keyboard lacks. Swipe it sidew
 | Key | What it does |
 |---|---|
 | **Esc**, **Tab** | Sends the key. |
-| **Ctrl**, **Alt** | Sticky: tap it, then the next key you type is sent with it. For example, tap **Ctrl** then type `c` to send Ctrl+C. |
-| **← ↓ ↑ →** | Arrow keys. |
+| **Ctrl**, **Alt** | Sticky: tap it, then the next key you type is sent with it. For example, tap **Ctrl** then type `c` to send Ctrl+C. To keep it held for several keys, tap it twice quickly or press and hold it: it shows a padlock and stays on until you tap it again. |
+| **← ↓ ↑ →** | Arrow keys. With **Ctrl** or **Alt** held they send the combination programs expect, so Ctrl+← jumps back a word in most shells. To move further, hold an arrow key for a moment, then slide your finger: the cursor follows it in any direction, like a trackpad. |
 | **- / \| ~ :** | Characters the shell uses often. |
 | **Home**, **End**, **PgUp**, **PgDn**, **Del** | Sends the key. |
 
@@ -451,6 +451,8 @@ Above the keyboard is a bar with the keys a phone keyboard lacks. Swipe it sidew
 <img src="screenshots/m4-phone-shell.png" alt="A session on a phone, with the keyboard bar above the tabs" width="300">
 
 At the right end of the bar, the **‹›** button opens your snippets, and the keyboard button hides the keyboard. Tap the terminal to bring it back.
+
+**To choose the keys on the bar,** go to **Settings › Terminal › Keyboard bar**. Drag a key by its handle to move it, tap **−** to take it off the bar, and tap a key under **More keys** to add it: there are F1 to F12, Insert and more symbols such as `_`, `\`, `*`, `&` and brackets. **Use the usual keys** puts the bar back as it came.
 
 > **Note** Selecting text and scrolling back with your finger aren't available yet on touch screens. To find earlier output, use **Search**.
 
@@ -577,18 +579,30 @@ Each item's **⋮** menu offers:
 |---|---|
 | **Open** | Opens a folder. |
 | **Edit** | Opens a text file in the editor. |
-| **Download to this device** / **Upload to the server** | Copies the file to the other side (on a computer). |
+| **Download to this device** | Saves a copy of the file on your phone or computer (see below). |
+| **Upload to the server** | Copies a file from your computer to the server (on a computer, with two panes). |
+| **Open in another app** | Fetches the file and opens it in the app your device uses for that kind of file. On a phone, pick the app from the share sheet. |
 | **Rename** | Renames the file or folder. |
 | **Permissions** | Sets who can read, write and run it (see below). |
 | **Delete** | Deletes it. Deleting a folder deletes everything inside it. This can't be undone. |
 
 ### Copying files between your computer and the server
 
-On a computer, the file browser shows two panes: your own files on the left and the server's on the right. **Drag** a file from one side to the other to copy it into the folder open there, or use **Download to this device** or **Upload to the server** from its **⋮** menu. A **Transfers** bar at the bottom shows each copy's progress; tap **Clear finished** to tidy it.
+On a computer, the file browser shows two panes: your own files on the left and the server's on the right. **Drag** a file from one side to the other to copy it into the folder open there, or use **Download to this device** or **Upload to the server** from its **⋮** menu. A **Transfers** bar at the bottom shows each copy's progress; tap **✕** beside one to stop it, or **Clear finished** to tidy the list. When you stop a copy, Promptly removes the part it had copied, and tells you if it can't. Until that is done, Promptly won't start another copy to the same place. If you stop a copy at the very moment it opens the file it writes to, that file can be left empty: Promptly leaves it alone rather than risk removing a file that was there before.
 
 <img src="screenshots/m3-files-dual-pane.png" alt="The file browser on a computer: this device's files on the left, the server's on the right, and a finished transfer" width="640">
 
 Folders can't be copied in one go yet. Open the folder and copy its files.
+
+### Copying files on a phone
+
+On a phone (or a narrow window) the browser shows only the server's files.
+
+- **To upload,** open the server folder you want the files in and tap **Upload files from this device** (the upload icon beside the path). Pick one or more files. If the folder already has a file with the same name, Promptly asks before replacing it.
+- **To download,** choose **Download to this device** from a file's **⋮** menu. When the file has arrived, the share sheet opens: choose **Save to Files** (iPhone and iPad) or the app you want to keep it in, such as Files or Drive. In a narrow window on a computer, you're asked where to save it instead.
+- **To open a file in another app,** such as a PDF viewer or a photo editor, choose **Open in another app**.
+
+The **Transfers** bar shows each copy's progress. Tap **✕** to stop one.
 
 ### Setting permissions
 
@@ -790,6 +804,7 @@ If the file holds several themes, save the ones you want. Imported themes appear
 | | **Bell** | Flash the screen (the default), vibrate on a phone or tablet, or do nothing. See [The bell](#the-bell). |
 | | **Text size** | The terminal's text size. Zooming in a session changes it too. |
 | | **Lines to keep for scrolling back** | 1,000, 10,000 (the default), 50,000 or 100,000. Applies to sessions opened after the change. |
+| | **Keyboard bar** | Which keys sit above the keyboard on a phone or tablet, and their order. See [On a phone or tablet](#on-a-phone-or-tablet). |
 | **Updates** | **Check for updates automatically** | Asks GitHub once a day whether a new version is out. Off by default. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |
 | | **Import from a CSV file** | Imports hosts from a CSV file. |
