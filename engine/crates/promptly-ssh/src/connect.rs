@@ -633,6 +633,13 @@ async fn authenticate(
     let user = params.endpoint.user.clone();
     let where_ = format!("{}@{}", user, params.endpoint.host);
 
+    // Some servers let the login in without any credentials (Tailscale SSH
+    // checks who is on the tailnet instead). Ask first, as OpenSSH does, so
+    // nobody is prompted for a password the server would not need.
+    if let AuthResult::Success = handle.authenticate_none(user.clone()).await? {
+        return Ok(());
+    }
+
     match &params.auth {
         AuthMethod::Key {
             private_key,
@@ -1331,5 +1338,139 @@ mod tests {
             .unwrap();
         let msg = err.to_string();
         assert!(msg.contains("could not reach 127.0.0.1 on port 1"), "{msg}");
+    }
+
+    /// A server on a loopback port that lets anyone in without credentials
+    /// when `open`, and otherwise wants the password "pw".
+    fn auth_only_server(open: bool) -> u16 {
+        use russh::server::{self, Auth};
+
+        struct Server {
+            open: bool,
+        }
+        impl server::Handler for Server {
+            type Error = russh::Error;
+            async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
+                Ok(if self.open {
+                    Auth::Accept
+                } else {
+                    Auth::Reject {
+                        proceed_with_methods: Some(MethodSet::from(&[MethodKind::Password][..])),
+                        partial_success: false,
+                    }
+                })
+            }
+            async fn auth_password(&mut self, _user: &str, pw: &str) -> Result<Auth, Self::Error> {
+                Ok(if pw == "pw" {
+                    Auth::Accept
+                } else {
+                    Auth::Reject {
+                        proceed_with_methods: None,
+                        partial_success: false,
+                    }
+                })
+            }
+        }
+
+        let key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let config = Arc::new(server::Config {
+            keys: vec![key],
+            ..Default::default()
+        });
+        let listener = crate::runtime()
+            .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        crate::runtime().spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                if let Ok(session) = server::run_stream(config.clone(), tcp, Server { open }).await
+                {
+                    tokio::spawn(session);
+                }
+            }
+        });
+        port
+    }
+
+    /// Authenticate against `port` and count how often the person was
+    /// asked for a password.
+    fn auth_against(port: u16, auth: AuthMethod) -> (Result<(), ConnectError>, usize) {
+        let endpoint = Endpoint::parse(&format!("me@127.0.0.1:{port}")).unwrap();
+        let params = ConnectParams::new(endpoint, auth, TermSize::default());
+        let prompter = Arc::new(TestPrompter {
+            password: "pw".into(),
+            steps: Mutex::new(vec![]),
+            host_key_asked: Mutex::new(None),
+        });
+        let dir = std::env::temp_dir().join(format!(
+            "promptly-ssh-test-{}-auth-{port}",
+            std::process::id()
+        ));
+        let known = Arc::new(FileKnownHosts::new(vec![], dir.join("known_hosts")));
+        let asks = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counting: Arc<dyn Prompter> = Arc::new(Counting {
+            inner: prompter,
+            asks: asks.clone(),
+        });
+        let result = crate::runtime()
+            .block_on(connect_handle(&params, counting, known))
+            .map(|_| ());
+        let _ = std::fs::remove_dir_all(&dir);
+        (result, asks.load(std::sync::atomic::Ordering::SeqCst))
+    }
+
+    struct Counting {
+        inner: Arc<TestPrompter>,
+        asks: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Prompter for Counting {
+        fn progress(&self, step: ConnectStep) {
+            self.inner.progress(step)
+        }
+        fn confirm_host_key(
+            &self,
+            info: HostKeyInfo,
+            status: HostKeyStatus,
+        ) -> BoxFuture<'_, bool> {
+            self.inner.confirm_host_key(info, status)
+        }
+        fn ask_secret(&self, prompt: String) -> BoxFuture<'_, Option<String>> {
+            self.asks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner.ask_secret(prompt)
+        }
+        fn ask_keyboard_interactive(
+            &self,
+            name: String,
+            instructions: String,
+            prompts: Vec<KeyboardPrompt>,
+        ) -> BoxFuture<'_, Option<Vec<String>>> {
+            self.asks.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.inner
+                .ask_keyboard_interactive(name, instructions, prompts)
+        }
+    }
+
+    #[test]
+    fn a_server_that_needs_no_credentials_is_not_asked_for_any() {
+        let port = auth_only_server(true);
+        for auth in [
+            AuthMethod::Interactive,
+            AuthMethod::Password { password: None },
+        ] {
+            let (result, asks) = auth_against(port, auth.clone());
+            assert!(result.is_ok(), "{auth:?}: {:?}", result.err());
+            assert_eq!(asks, 0, "{auth:?} should not prompt");
+        }
+    }
+
+    #[test]
+    fn a_server_that_wants_a_password_still_gets_asked() {
+        let port = auth_only_server(false);
+        let (result, asks) = auth_against(port, AuthMethod::Password { password: None });
+        assert!(result.is_ok(), "{:?}", result.err());
+        assert_eq!(asks, 1);
     }
 }

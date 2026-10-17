@@ -53,6 +53,10 @@ pub enum Auth {
     },
     Agent,
     Interactive,
+    /// No credentials: the server lets the login in on its own (Tailscale
+    /// SSH, for one). If it asks for something after all, the person is
+    /// prompted as with `Interactive`.
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -321,6 +325,13 @@ mod tests {
         assert_eq!(h.port, 22);
         assert_eq!(h.keepalive_seconds, 30);
         assert_eq!(h.sync, SyncPolicy::Vault);
+    }
+
+    #[test]
+    fn no_auth_has_its_own_wire_name() {
+        let json = serde_json::to_string(&Auth::None).unwrap();
+        assert_eq!(json, r#"{"kind":"none"}"#);
+        assert_eq!(serde_json::from_str::<Auth>(&json).unwrap(), Auth::None);
     }
 
     #[test]

@@ -1269,6 +1269,28 @@ void main() {
     expect(request.privateKey, contains('PRIVATE KEY'));
   });
 
+  testWidgets("a host set to no login keeps it over its group's default key", (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['groups'] = {
+      'g1': '{"id":"g1","label":"Tailnet","parent_id":null,"color":null,"defaults":{"identity_id":"k1"}}',
+    };
+    engine.records['identities'] = {
+      'k1': '{"id":"k1","label":"laptop","key_type":"ed25519","public_key":"ssh-ed25519 AAAA","private_key_secret_id":"s1"}',
+    };
+    engine.secrets['s1'] = '-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----';
+    engine.records['hosts'] = {
+      'h1': hostJson('h1', 'nas', group: 'g1', auth: '{"kind":"none"}'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('no login'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    final request = engine.requests.single;
+    expect(request.auth, SshAuthKind.interactive);
+    expect(request.privateKey, isNull);
+  });
+
   testWidgets('the host editor saves a jump host, tmux persistence and a port forward', (tester) async {
     final engine = FakeEngine();
     engine.records['hosts'] = {'b1': hostJson('b1', 'bastion'), 'a1': hostJson('a1', 'app-1')};
