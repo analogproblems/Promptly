@@ -260,7 +260,8 @@ impl SecretStore for FileSecretStore {
             Err(e) => return Err(SecretError::Platform(e.to_string())),
         };
         let mut out = Vec::new();
-        for entry in read.flatten() {
+        for entry in read {
+            let entry = entry.map_err(|e| SecretError::Platform(e.to_string()))?;
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.starts_with('.') || name.ends_with(".tmp") {
                 continue;
