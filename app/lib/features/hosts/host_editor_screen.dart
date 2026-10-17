@@ -319,6 +319,9 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                   children: [
                     SegmentedButton<_AuthChoice>(
                       showSelectedIcon: false,
+                      // Tighter than the default so "Password" fits on one
+                      // line in a phone-width segment.
+                      style: SegmentedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8)),
                       segments: const [
                         ButtonSegment(value: _AuthChoice.password, label: Text('Password')),
                         ButtonSegment(value: _AuthChoice.key, label: Text('Key')),

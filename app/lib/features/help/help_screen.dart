@@ -42,20 +42,26 @@ class HelpScreen extends ConsumerWidget {
             HelpSection(
               title: 'Keyboard shortcuts',
               children: [
-                for (final s in desktopShortcuts)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 5),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: 215,
-                          child: Text(s.keys, style: monoStyle(context, size: 12.5, color: t.text)),
-                        ),
-                        Expanded(child: Text(s.what, style: TextStyle(fontSize: 14, color: t.muted))),
-                      ],
-                    ),
-                  ),
+                // The keys column is as wide as its longest entry, so a
+                // long chord never runs into its description.
+                Table(
+                  columnWidths: const {0: IntrinsicColumnWidth(), 1: FlexColumnWidth()},
+                  children: [
+                    for (final s in desktopShortcuts)
+                      TableRow(
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 5, bottom: 5, right: 20),
+                            child: Text(s.keys, style: monoStyle(context, size: 12.5, color: t.text)),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 5),
+                            child: Text(s.what, style: TextStyle(fontSize: 14, color: t.muted)),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
