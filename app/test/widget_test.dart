@@ -2004,7 +2004,7 @@ void main() {
     expect(updates.checks, 2);
   });
 
-  testWidgets('Settings says when saved secrets are not encrypted, or locked', (tester) async {
+  testWidgets('Settings says when saved data is not encrypted, or locked', (tester) async {
     final engine = FakeEngine();
     await tester.pumpWidget(appWith(engine));
     await tester.pumpAndSettle();
@@ -2014,7 +2014,7 @@ void main() {
     expect(find.byKey(const Key('secrets-state'), skipOffstage: false), findsNothing);
 
     for (final (state, text) in [
-      (SecretsState.plain, 'Saved passwords and keys are not encrypted'),
+      (SecretsState.plain, 'Your data on this device is not encrypted'),
       (SecretsState.locked, 'Saved passwords and keys are locked'),
     ]) {
       await tester.pumpWidget(appWith(FakeEngine()..secretsKept = state));

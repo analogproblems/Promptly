@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex};
 
 use flutter_rust_bridge::frb;
-use promptly_store::{col_parse, Collection, FileSecretStore, SecretStore, Store};
+use promptly_store::{col_parse, Collection, DbKey, FileSecretStore, SecretStore, Store};
 use promptly_vault::model::{Group, Host, Identity, Snippet};
 use promptly_vault::Dek;
 
@@ -19,39 +19,65 @@ use crate::sync_engine;
 static STORE: Mutex<Option<Arc<Store>>> = Mutex::new(None);
 static SECRETS: Mutex<Option<Arc<FileSecretStore>>> = Mutex::new(None);
 
+/// The local database, opened on first use with a key derived from the
+/// device key. It will not open until the app has said what became of that
+/// key, so it is never opened unencrypted by mistake.
 pub(crate) fn store() -> Result<Arc<Store>, String> {
     let mut guard = STORE.lock().unwrap();
     if let Some(s) = guard.as_ref() {
         return Ok(s.clone());
     }
-    let path = data_dir().join("promptly.db");
-    let s = Arc::new(
-        Store::open(&path)
-            .map_err(|e| format!("could not open the local store at {}: {e}", path.display()))?,
-    );
+    let s = match &*DEVICE_KEY.lock().unwrap() {
+        None => return Err("the local store was used before startup finished".into()),
+        Some(device_key) => Arc::new(open_store(device_key, &data_dir().join("promptly.db"))?),
+    };
     *guard = Some(s.clone());
     Ok(s)
+}
+
+/// Plain on disk only when the system has no secure storage at all. When
+/// the storage refused the key, the file is not touched: the app works from
+/// an empty store kept in memory, so nothing is written unencrypted.
+fn open_store(device_key: &DeviceKey, path: &std::path::Path) -> Result<Store, String> {
+    let opened = match device_key {
+        DeviceKey::Key(key) => Store::open(path, Some(&DbKey::derive(key))),
+        DeviceKey::NoStorage => Store::open(path, None),
+        DeviceKey::Unavailable => Store::open_in_memory(),
+    };
+    opened.map_err(|e| format!("could not open the local store at {}: {e}", path.display()))
 }
 
 static DEVICE_KEY: Mutex<Option<DeviceKey>> = Mutex::new(None);
 
 enum DeviceKey {
     Key(Dek),
+    NoStorage,
     Unavailable,
 }
 
 /// Hand the engine the device key from the platform's secure storage, so
-/// saved secrets are encrypted on disk. Call once at startup, before
-/// anything reads a secret; without it they are stored as plain files.
+/// saved secrets and the local database are encrypted on disk. Call once at
+/// startup, before anything else; the database will not open until this,
+/// [`set_no_device_key`] or [`set_device_key_unavailable`] has been called.
 #[frb(sync)]
 pub fn set_device_key(key: Vec<u8>) -> Result<(), String> {
     let key = Dek::from_slice(&key).ok_or("the device key must be 32 bytes")?;
     set_key(DeviceKey::Key(key))
 }
 
+/// Tell the engine the system has no secure storage to keep a device key
+/// in (a Linux desktop with no keyring). Saved secrets are then plain
+/// owner-only files and the local database is not encrypted.
+#[frb(sync)]
+pub fn set_no_device_key() -> Result<(), String> {
+    set_key(DeviceKey::NoStorage)
+}
+
 /// Tell the engine the platform's secure storage exists but would not give
 /// up the device key (denied, locked or damaged). Saved secrets are then
-/// neither read nor written until the app restarts with the key.
+/// neither read nor written until the app restarts with the key, and the
+/// local database is left alone: hosts and settings start empty and are
+/// kept in memory only, never written unencrypted.
 #[frb(sync)]
 pub fn set_device_key_unavailable() -> Result<(), String> {
     set_key(DeviceKey::Unavailable)
@@ -61,11 +87,16 @@ fn set_key(key: DeviceKey) -> Result<(), String> {
     if SECRETS.lock().unwrap().is_some() {
         return Err("the secret store is already open".into());
     }
+    if STORE.lock().unwrap().is_some() {
+        return Err("the local store is already open".into());
+    }
     *DEVICE_KEY.lock().unwrap() = Some(key);
     Ok(())
 }
 
-/// How saved passwords, keys and the vault key are kept on this device.
+/// How saved passwords, keys and the vault key are kept on this device. The
+/// local database follows the same device key: encrypted when there is one,
+/// plain when there is not.
 pub enum SecretsState {
     /// Encrypted with the device key.
     Encrypted,
@@ -95,8 +126,10 @@ fn secret_store() -> Arc<FileSecretStore> {
     let dir = data_dir().join("secrets");
     let s = Arc::new(match &*DEVICE_KEY.lock().unwrap() {
         Some(DeviceKey::Key(key)) => FileSecretStore::encrypted(dir, key.clone()),
+        Some(DeviceKey::NoStorage) => FileSecretStore::new(dir),
         Some(DeviceKey::Unavailable) => FileSecretStore::locked(dir),
-        None => FileSecretStore::new(dir),
+        // Too early: locked for now, and not kept, so the key can still come.
+        None => return Arc::new(FileSecretStore::locked(dir)),
     });
     *guard = Some(s.clone());
     s
@@ -238,4 +271,36 @@ pub fn secret_delete(id: String) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HOST: &str = r#"{"hostname":"10.0.0.1","id":"h","label":"web"}"#;
+
+    #[test]
+    fn a_refused_key_writes_nothing_to_disk() {
+        let dir = std::env::temp_dir().join(format!("promptly-api-refused-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // No database yet: none is made, and what is saved stays in memory.
+        let path = dir.join("promptly.db");
+        let s = open_store(&DeviceKey::Unavailable, &path).unwrap();
+        s.put(Collection::Hosts, "h", HOST).unwrap();
+        drop(s);
+        assert!(!path.exists());
+
+        // A plain one from before is neither read nor added to.
+        let plain = dir.join("plain.db");
+        drop(open_store(&DeviceKey::NoStorage, &plain).unwrap());
+        let before = std::fs::read(&plain).unwrap();
+        let s = open_store(&DeviceKey::Unavailable, &plain).unwrap();
+        assert!(s.list(Collection::Hosts).unwrap().is_empty());
+        s.put(Collection::Hosts, "h", HOST).unwrap();
+        drop(s);
+        assert_eq!(std::fs::read(&plain).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

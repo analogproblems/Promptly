@@ -5,18 +5,23 @@
 //! sync markers. Everything is kept in memory and written through, so reads
 //! never touch the database. Records go in and out as JSON objects in the
 //! vault's own format.
+//!
+//! With a [`DbKey`] the file is SQLCipher: every page is encrypted, so the
+//! file on disk reads as random bytes. Without one it is plain SQLite.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use hkdf::Hkdf;
 use promptly_vault::model::Collection;
 use promptly_vault::state::{Field, Record as VaultRecord};
 use promptly_vault::{
-    Clock, DeviceId, Op, PullReport, State, SyncError, SyncState, Timestamp, Vault,
+    Clock, Dek, DeviceId, Op, PullReport, State, SyncError, SyncState, Timestamp, Vault,
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde_json::{Map, Value};
+use sha2::Sha256;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -30,6 +35,10 @@ pub enum StoreError {
     InvalidRecord(String),
     #[error("stored data is not valid: {0}")]
     Corrupt(String),
+    #[error("the database is encrypted and its key is not available")]
+    Locked,
+    #[error("the database is open in another copy of Promptly; close it and try again")]
+    Busy,
     #[error(transparent)]
     Sync(#[from] SyncError),
 }
@@ -49,6 +58,9 @@ struct Inner {
 pub struct Store {
     inner: Mutex<Inner>,
     device: DeviceId,
+    /// Held shared while the store is open, so a change to the whole file
+    /// (encrypting it, or setting it aside) can tell nobody else uses it.
+    _lock: Option<std::fs::File>,
 }
 
 const SCHEMA: &str = "
@@ -149,23 +161,292 @@ fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<(), StoreError>
     Ok(())
 }
 
+/// The key that encrypts the database file. It is derived from a longer-lived
+/// key (the device key in the app, the vault key in the CLI) and never is that
+/// key itself, which already seals other files.
+#[derive(Clone)]
+pub struct DbKey([u8; 32]);
+
+impl DbKey {
+    pub fn derive(from: &Dek) -> Self {
+        let mut key = [0u8; 32];
+        Hkdf::<Sha256>::new(None, &from.0)
+            .expand(b"promptly-db", &mut key)
+            .expect("32 bytes is a valid HKDF length");
+        Self(key)
+    }
+
+    /// SQLCipher's form for a raw key, so it skips its own passphrase stretching.
+    fn literal(&self) -> String {
+        let hex: String = self.0.iter().map(|b| format!("{b:02x}")).collect();
+        format!("x'{hex}'")
+    }
+}
+
+impl std::fmt::Debug for DbKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DbKey(…)")
+    }
+}
+
+/// What the start of a database file says about it.
+#[derive(Debug, PartialEq, Eq)]
+enum FileKind {
+    /// No file yet, or an empty one.
+    Missing,
+    Plain,
+    /// Anything else: an encrypted file starts with random bytes.
+    Encrypted,
+}
+
+fn file_kind(path: &Path) -> Result<FileKind, StoreError> {
+    use std::io::Read;
+    let mut head = Vec::with_capacity(16);
+    match std::fs::File::open(path) {
+        Ok(f) => f
+            .take(16)
+            .read_to_end(&mut head)
+            .map_err(|e| StoreError::Io(path.display().to_string(), e))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(FileKind::Missing),
+        Err(e) => return Err(StoreError::Io(path.display().to_string(), e)),
+    };
+    Ok(if head.is_empty() {
+        FileKind::Missing
+    } else if head == b"SQLite format 3\0" {
+        FileKind::Plain
+    } else {
+        FileKind::Encrypted
+    })
+}
+
+/// `path` with `suffix` added to its file name, as SQLite names its
+/// `-wal` and `-shm` files.
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(suffix);
+    PathBuf::from(s)
+}
+
+/// The lock file beside the database. Every open store holds it shared;
+/// rewriting or moving the database needs it alone.
+fn open_lock(path: &Path) -> Result<std::fs::File, StoreError> {
+    let lock_path = with_suffix(path, ".lock");
+    let io = |e| StoreError::Io(lock_path.display().to_string(), e);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path)
+        .map_err(io)?;
+    file.lock_shared().map_err(io)?;
+    Ok(file)
+}
+
+/// The database to this store alone, until dropped: refused with
+/// [`StoreError::Busy`] while any other store has it open.
+struct Alone<'a>(&'a std::fs::File);
+
+impl<'a> Alone<'a> {
+    fn take(lock: &'a std::fs::File, path: &Path) -> Result<Self, StoreError> {
+        let io = |e| StoreError::Io(path.display().to_string(), e);
+        lock.unlock().map_err(io)?;
+        match lock.try_lock() {
+            Ok(()) => Ok(Self(lock)),
+            Err(e) => {
+                lock.lock_shared().map_err(io)?;
+                Err(match e {
+                    std::fs::TryLockError::WouldBlock => StoreError::Busy,
+                    std::fs::TryLockError::Error(e) => io(e),
+                })
+            }
+        }
+    }
+}
+
+impl Drop for Alone<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+        let _ = self.0.lock_shared();
+    }
+}
+
+/// Open `path`, keyed when there is a key, and read from it once so a wrong
+/// key fails here rather than on first use.
+fn connect(path: &Path, key: Option<&DbKey>) -> Result<Connection, rusqlite::Error> {
+    let conn = Connection::open(path)?;
+    if let Some(key) = key {
+        conn.pragma_update(None, "key", key.literal())?;
+    }
+    conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |_| Ok(()))?;
+    Ok(conn)
+}
+
+/// Rewrite a plain database encrypted, replacing it in one rename, so a
+/// crash leaves either the plain file or the encrypted one.
+///
+/// Every SQLite connection to a file in WAL mode, whether a store, an older
+/// Promptly or any other program, holds a lock on it for as long as it is
+/// open, so leaving WAL mode works only for the last one. On the way out
+/// SQLite folds the log into the file and removes it itself. The file is
+/// then held alone until it is replaced. While anyone else has it open,
+/// this is refused with [`StoreError::Busy`] and the file left as it is.
+fn encrypt_in_place(path: &Path, key: &DbKey) -> Result<(), StoreError> {
+    let tmp = with_suffix(path, &format!(".encrypting-{}", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let result = export_encrypted(path, &tmp, key);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn export_encrypted(path: &Path, tmp: &Path, key: &DbKey) -> Result<(), StoreError> {
+    let busy = |e: rusqlite::Error| match e.sqlite_error_code() {
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => StoreError::Busy,
+        _ => e.into(),
+    };
+    let conn = connect(path, None)?;
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode = DELETE", [], |r| r.get(0))
+        .map_err(busy)?;
+    if !mode.eq_ignore_ascii_case("delete") {
+        return Err(StoreError::Busy);
+    }
+    conn.execute_batch("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;")
+        .map_err(busy)?;
+    conn.execute(
+        "ATTACH DATABASE ?1 AS encrypted KEY ?2",
+        params![tmp.to_string_lossy(), key.literal()],
+    )?;
+    conn.query_row("SELECT sqlcipher_export('encrypted')", [], |_| Ok(()))?;
+    conn.execute("DETACH DATABASE encrypted", [])?;
+    let replace =
+        || std::fs::rename(tmp, path).map_err(|e| StoreError::Io(path.display().to_string(), e));
+    // Replaced while still held. Windows cannot replace an open file, so
+    // there it is closed first; a program that opened it since makes the
+    // rename fail, and the plain file stays.
+    if cfg!(windows) {
+        drop(conn);
+        replace()
+    } else {
+        replace()
+    }
+}
+
+/// Keep a database no key here can read under a name nothing has, with its
+/// log, and clear its place so a new one can start. Only while the
+/// database is [`Alone`].
+fn set_aside(path: &Path) -> Result<(), StoreError> {
+    set_aside_with(path, |p| std::fs::remove_file(p))
+}
+
+/// Each file is first linked (or copied) to its kept name, and only then
+/// are the originals removed, the log before the database. A failure or a
+/// crash part way leaves a complete kept set, the originals, or both,
+/// never a database apart from its log; and an error means no new database
+/// starts.
+fn set_aside_with(
+    path: &Path,
+    remove: impl Fn(&Path) -> std::io::Result<()>,
+) -> Result<(), StoreError> {
+    let stamp = OffsetDateTime::now_utc().unix_timestamp();
+    let free = |aside: &Path| {
+        ["", "-wal", "-shm"]
+            .iter()
+            .all(|s| !with_suffix(aside, s).exists())
+    };
+    let aside = (1..)
+        .map(|n| match n {
+            1 => with_suffix(path, &format!(".unreadable-{stamp}")),
+            n => with_suffix(path, &format!(".unreadable-{stamp}-{n}")),
+        })
+        .find(|a| free(a))
+        .expect("some name is free");
+    let io = |p: &Path, e| StoreError::Io(p.display().to_string(), e);
+    let files: Vec<(PathBuf, PathBuf)> = ["", "-wal", "-shm"]
+        .iter()
+        .map(|s| (with_suffix(path, s), with_suffix(&aside, s)))
+        .filter(|(from, _)| from.exists())
+        .collect();
+    for (from, to) in &files {
+        keep_copy(from, to).map_err(|e| io(from, e))?;
+    }
+    for (from, _) in files.iter().rev() {
+        remove(from).map_err(|e| io(from, e))?;
+    }
+    Ok(())
+}
+
+/// `to` as a second name for `from`, or a copy where links are not
+/// possible. Never replaces anything at `to`.
+fn keep_copy(from: &Path, to: &Path) -> std::io::Result<()> {
+    if std::fs::hard_link(from, to).is_ok() {
+        return Ok(());
+    }
+    let mut src = std::fs::File::open(from)?;
+    let mut dst = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)?;
+    std::io::copy(&mut src, &mut dst)?;
+    dst.sync_all()
+}
+
 impl Store {
-    /// Open or create the database at `path`.
-    pub fn open(path: &Path) -> Result<Self, StoreError> {
+    /// Open or create the database at `path`, encrypted with `key` if given.
+    ///
+    /// With a key, a plain file (written before the key existed) is
+    /// encrypted first, and a file the key cannot read (sealed with a key
+    /// that has since been replaced, so nothing can read it) is kept as
+    /// `<name>.unreadable-<time>` and a new database started. Without a
+    /// key, an encrypted file is refused with [`StoreError::Locked`] and
+    /// left as it is, for when the key is back. Encrypting or setting aside
+    /// waits for no one: while another store, or any other program, has
+    /// the file open it is refused with [`StoreError::Busy`] and the file
+    /// left as it is.
+    pub fn open(path: &Path, key: Option<&DbKey>) -> Result<Self, StoreError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| StoreError::Io(parent.display().to_string(), e))?;
         }
-        let conn = Connection::open(path)?;
+        let lock = open_lock(path)?;
+        let unreadable =
+            |e: &rusqlite::Error| e.sqlite_error_code() == Some(ErrorCode::NotADatabase);
+        let kind = file_kind(path)?;
+        let conn = match (key, kind) {
+            (None, FileKind::Encrypted) => return Err(StoreError::Locked),
+            (None, _) => connect(path, None)?,
+            (Some(key), FileKind::Plain) => {
+                let _alone = Alone::take(&lock, path)?;
+                // Another store may have encrypted it while this one waited.
+                if file_kind(path)? == FileKind::Plain {
+                    encrypt_in_place(path, key)?;
+                }
+                connect(path, Some(key))?
+            }
+            (Some(key), _) => match connect(path, Some(key)) {
+                Err(e) if unreadable(&e) => {
+                    let _alone = Alone::take(&lock, path)?;
+                    match connect(path, Some(key)) {
+                        Err(e) if unreadable(&e) => {
+                            set_aside(path)?;
+                            connect(path, Some(key))?
+                        }
+                        other => other?,
+                    }
+                }
+                other => other?,
+            },
+        };
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        Self::init(conn)
+        Self::init(conn, Some(lock))
     }
 
     pub fn open_in_memory() -> Result<Self, StoreError> {
-        Self::init(Connection::open_in_memory()?)
+        Self::init(Connection::open_in_memory()?, None)
     }
 
-    fn init(conn: Connection) -> Result<Self, StoreError> {
+    fn init(conn: Connection, lock: Option<std::fs::File>) -> Result<Self, StoreError> {
         conn.execute_batch(SCHEMA)?;
         let device = match meta_get(&conn, "device_id")? {
             Some(s) => {
@@ -206,6 +487,7 @@ impl Store {
                 clock: Clock::resume(device.clone(), counter),
             }),
             device,
+            _lock: lock,
         };
         store.migrate_legacy()?;
         Ok(store)
@@ -624,7 +906,7 @@ mod tests {
         }
         let device;
         {
-            let s = Store::open(&path).unwrap();
+            let s = Store::open(&path, None).unwrap();
             device = s.device_id().clone();
             assert_eq!(s.list(Collection::Hosts).unwrap().len(), 1, "migrated");
             s.put(
@@ -635,7 +917,7 @@ mod tests {
             .unwrap();
             assert_eq!(s.clock_counter(), 2);
         }
-        let again = Store::open(&path).unwrap();
+        let again = Store::open(&path, None).unwrap();
         assert_eq!(again.device_id(), &device, "the device id is kept");
         assert_eq!(again.clock_counter(), 2);
         assert_eq!(again.list(Collection::Snippets).unwrap().len(), 1);
@@ -699,5 +981,328 @@ mod tests {
         assert_eq!(a.list(Collection::Hosts).unwrap()[0].json, want);
         assert_eq!(b.list(Collection::Hosts).unwrap()[0].json, want);
         assert!(b.clock_counter() >= a.clock_counter() - 1);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("promptly-store-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    const HOST: &str = r#"{"hostname":"10.0.0.1","id":"h","label":"web"}"#;
+
+    fn head(path: &Path) -> Vec<u8> {
+        std::fs::read(path).unwrap()[..16].to_vec()
+    }
+
+    #[test]
+    fn a_keyed_database_is_unreadable_without_its_key() {
+        let dir = temp_dir("keyed");
+        let path = dir.join("promptly.db");
+        let key = DbKey::derive(&Dek::generate());
+        let device;
+        {
+            let s = Store::open(&path, Some(&key)).unwrap();
+            device = s.device_id().clone();
+            s.put(Collection::Hosts, "h", HOST).unwrap();
+        }
+        assert_ne!(head(&path), b"SQLite format 3\0");
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!bytes.windows(8).any(|w| w == b"10.0.0.1"), "no plain text");
+
+        let again = Store::open(&path, Some(&key)).unwrap();
+        assert_eq!(again.device_id(), &device);
+        assert_eq!(again.list(Collection::Hosts).unwrap()[0].json, HOST);
+        drop(again);
+
+        // Plain SQLite cannot read it, and the store will not open it unkeyed.
+        let plain = Connection::open(&path).unwrap();
+        assert!(plain
+            .query_row("SELECT COUNT(*) FROM sqlite_master", [], |_| Ok(()))
+            .is_err());
+        drop(plain);
+        assert!(matches!(Store::open(&path, None), Err(StoreError::Locked)));
+        assert!(connect(&path, Some(&DbKey::derive(&Dek::generate()))).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_wrong_key_sets_the_file_aside_and_starts_again() {
+        let dir = temp_dir("wrong-key");
+        let path = dir.join("promptly.db");
+        Store::open(&path, Some(&DbKey::derive(&Dek::generate())))
+            .unwrap()
+            .put(Collection::Hosts, "h", HOST)
+            .unwrap();
+        let s = Store::open(&path, Some(&DbKey::derive(&Dek::generate()))).unwrap();
+        assert!(s.list(Collection::Hosts).unwrap().is_empty());
+        let aside: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("promptly.db.unreadable-") && !n.contains("-wal"))
+            .collect();
+        assert_eq!(aside.len(), 1, "the old file is kept: {aside:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_a_key_the_database_is_plain_and_a_key_later_encrypts_it() {
+        let dir = temp_dir("plain");
+        let path = dir.join("promptly.db");
+        Store::open(&path, None)
+            .unwrap()
+            .put(Collection::Hosts, "h", HOST)
+            .unwrap();
+        assert_eq!(head(&path), b"SQLite format 3\0");
+        assert_eq!(
+            Store::open(&path, None)
+                .unwrap()
+                .list(Collection::Hosts)
+                .unwrap()[0]
+                .json,
+            HOST
+        );
+
+        // The keyring arrives: the same data, now encrypted.
+        let key = DbKey::derive(&Dek::generate());
+        let s = Store::open(&path, Some(&key)).unwrap();
+        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        drop(s);
+        assert_ne!(head(&path), b"SQLite format 3\0");
+        assert!(no_leftovers(&path));
+        let s = Store::open(&path, Some(&key)).unwrap();
+        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Nothing half-made is left beside the database.
+    fn no_leftovers(path: &Path) -> bool {
+        let dir = path.parent().unwrap();
+        !std::fs::read_dir(dir).unwrap().any(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".encrypting")
+        })
+    }
+
+    #[test]
+    fn a_plain_database_any_program_has_open_is_left_as_it_is() {
+        let dir = temp_dir("busy-raw");
+        let path = dir.join("promptly.db");
+        Store::open(&path, None)
+            .unwrap()
+            .put(Collection::Hosts, "h", HOST)
+            .unwrap();
+        // An older Promptly, or any SQLite program: no lock file of ours.
+        let other = Connection::open(&path).unwrap();
+        other
+            .query_row("SELECT COUNT(*) FROM vault_records", [], |_| Ok(()))
+            .unwrap();
+        let key = DbKey::derive(&Dek::generate());
+        assert!(matches!(
+            Store::open(&path, Some(&key)),
+            Err(StoreError::Busy)
+        ));
+        assert_eq!(head(&path), b"SQLite format 3\0", "untouched");
+        assert!(no_leftovers(&path));
+
+        // It goes on writing, into its log, and nothing it wrote is lost.
+        other
+            .execute(
+                "INSERT INTO meta (key, value) VALUES ('written', 'after')",
+                [],
+            )
+            .unwrap();
+        assert!(with_suffix(&path, "-wal").exists());
+        drop(other);
+        let s = Store::open(&path, Some(&key)).unwrap();
+        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        drop(s);
+        assert_ne!(head(&path), b"SQLite format 3\0");
+        let written: String = connect(&path, Some(&key))
+            .unwrap()
+            .query_row("SELECT value FROM meta WHERE key = 'written'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(written, "after");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_set_aside_never_parts_a_database_from_its_log() {
+        // A database whose newest record is only in its log.
+        let made = temp_dir("aside-made");
+        let old_key = DbKey::derive(&Dek::generate());
+        let live = made.join("promptly.db");
+        let conn = connect(&live, Some(&old_key)).unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;
+             CREATE TABLE t (x); INSERT INTO t VALUES ('in the log');",
+        )
+        .unwrap();
+        let dir = temp_dir("aside-fail");
+        let path = dir.join("promptly.db");
+        for s in ["", "-wal"] {
+            std::fs::copy(with_suffix(&live, s), with_suffix(&path, s)).unwrap();
+        }
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&made);
+        let only_main = dir.join("only-main.db");
+        std::fs::copy(&path, &only_main).unwrap();
+        assert!(
+            connect(&only_main, Some(&old_key))
+                .and_then(|c| c.query_row("SELECT x FROM t", [], |_| Ok(())))
+                .is_err(),
+            "without its log the record is not there"
+        );
+        std::fs::remove_file(&only_main).unwrap();
+
+        // Removing the database itself fails after its log is gone.
+        let err = set_aside_with(&path, |p| {
+            if p == path {
+                Err(std::io::Error::other("injected"))
+            } else {
+                std::fs::remove_file(p)
+            }
+        });
+        assert!(err.is_err());
+        // Opening again sets the rest aside and starts afresh.
+        let s = Store::open(&path, Some(&DbKey::derive(&Dek::generate()))).unwrap();
+        assert!(s.list(Collection::Hosts).unwrap().is_empty());
+
+        // Some kept set still has the record that was only in the log.
+        let found = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                let n = p.file_name().unwrap().to_string_lossy();
+                n.starts_with("promptly.db.unreadable-")
+                    && !n.contains("-wal")
+                    && !n.contains("-shm")
+            })
+            .filter(|p| {
+                connect(p, Some(&old_key))
+                    .and_then(|c| c.query_row("SELECT x FROM t", [], |r| r.get::<_, String>(0)))
+                    .is_ok_and(|x| x == "in the log")
+            })
+            .count();
+        assert!(found >= 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_database_another_store_has_open_is_left_plain_until_it_closes() {
+        let dir = temp_dir("busy");
+        let path = dir.join("promptly.db");
+        let other = Store::open(&path, None).unwrap();
+        other.put(Collection::Hosts, "h", HOST).unwrap();
+        let key = DbKey::derive(&Dek::generate());
+        assert!(matches!(
+            Store::open(&path, Some(&key)),
+            Err(StoreError::Busy)
+        ));
+        assert_eq!(head(&path), b"SQLite format 3\0", "untouched");
+        assert!(no_leftovers(&path));
+
+        // The other store carries on, and what it writes is kept.
+        let later = r#"{"hostname":"10.0.0.2","id":"g","label":"db"}"#;
+        other.put(Collection::Hosts, "g", later).unwrap();
+        drop(other);
+        let s = Store::open(&path, Some(&key)).unwrap();
+        let hosts: Vec<_> = s
+            .list(Collection::Hosts)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.json)
+            .collect();
+        assert_eq!(hosts.len(), 2, "{hosts:?}");
+        assert!(hosts.contains(&HOST.to_string()) && hosts.contains(&later.to_string()));
+        drop(s);
+        assert_ne!(head(&path), b"SQLite format 3\0");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_stores_encrypting_at_once_lose_nothing() {
+        let dir = temp_dir("race");
+        let path = dir.join("promptly.db");
+        Store::open(&path, None)
+            .unwrap()
+            .put(Collection::Hosts, "h", HOST)
+            .unwrap();
+        let key = DbKey::derive(&Dek::generate());
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            let open = || {
+                start.wait();
+                match Store::open(&path, Some(&key)) {
+                    Ok(s) => assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST),
+                    Err(StoreError::Busy) => {}
+                    Err(e) => panic!("{e}"),
+                }
+            };
+            let a = scope.spawn(open);
+            let b = scope.spawn(open);
+            a.join().unwrap();
+            b.join().unwrap();
+        });
+        assert!(no_leftovers(&path));
+        let s = Store::open(&path, Some(&key)).unwrap();
+        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn files_set_aside_in_the_same_second_are_all_kept() {
+        let dir = temp_dir("aside-twice");
+        let path = dir.join("promptly.db");
+        let keys: Vec<_> = (0..3).map(|_| DbKey::derive(&Dek::generate())).collect();
+        for (i, key) in keys.iter().enumerate() {
+            let s = Store::open(&path, Some(key)).unwrap();
+            assert!(s.list(Collection::Hosts).unwrap().is_empty());
+            s.put(Collection::Hosts, &format!("h{i}"), HOST).unwrap();
+        }
+        let mut aside: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                let n = p.file_name().unwrap().to_string_lossy();
+                n.starts_with("promptly.db.unreadable-")
+                    && !n.ends_with("-wal")
+                    && !n.ends_with("-shm")
+                    && !n.ends_with(".lock")
+            })
+            .collect();
+        aside.sort();
+        assert_eq!(aside.len(), 2, "{aside:?}");
+        // Each still opens with the key it was written under.
+        for key in &keys[..2] {
+            let kept = aside
+                .iter()
+                .filter(|p| {
+                    connect(p, Some(key)).is_ok_and(|c| {
+                        c.query_row("SELECT COUNT(*) FROM vault_records", [], |r| {
+                            r.get::<_, i64>(0)
+                        })
+                        .is_ok_and(|n| n == 1)
+                    })
+                })
+                .count();
+            assert_eq!(kept, 1);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_database_key_is_not_the_key_it_comes_from() {
+        let dek = Dek::generate();
+        let a = DbKey::derive(&dek);
+        assert_eq!(a.0, DbKey::derive(&dek).0);
+        assert_ne!(a.0, dek.0);
+        assert_ne!(a.0, DbKey::derive(&Dek::generate()).0);
     }
 }

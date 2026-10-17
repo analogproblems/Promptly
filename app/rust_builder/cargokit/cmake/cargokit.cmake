@@ -25,7 +25,14 @@ function(apply_cargokit target manifest_dir lib_name any_symbol_name)
         set(CARGOKIT_OUTPUT_DIR "${CMAKE_CURRENT_BINARY_DIR}")
         set(OUTPUT_LIB "${CMAKE_CURRENT_BINARY_DIR}/${CARGOKIT_LIB_FULL_NAME}")
     endif()
-    set(CARGOKIT_TEMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/cargokit_build")
+    if(WIN32)
+        # Promptly: kept short on Windows, because OpenSSL, built from source
+        # for the encrypted database, nests its object files deep enough under
+        # here to pass Windows' 260-character path limit otherwise.
+        set(CARGOKIT_TEMP_DIR "${CMAKE_BINARY_DIR}/ck")
+    else()
+        set(CARGOKIT_TEMP_DIR "${CMAKE_CURRENT_BINARY_DIR}/cargokit_build")
+    endif()
 
     if (FLUTTER_TARGET_PLATFORM)
         set(CARGOKIT_TARGET_PLATFORM "${FLUTTER_TARGET_PLATFORM}")
