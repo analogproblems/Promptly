@@ -214,12 +214,13 @@ static TMUX_NAMES: Mutex<std::collections::BTreeMap<TmuxHolder, (String, String)
     Mutex::new(std::collections::BTreeMap::new());
 
 fn tmux_name_for(attempt_id: u32, server: &str, reattach: Option<u32>) -> String {
-    // Read before taking TMUX_NAMES: the connect task holds ATTEMPTS while
-    // it calls claim_tmux_name, so the locks must not nest the other way.
-    let live: std::collections::BTreeSet<u32> = ATTEMPTS.lock().unwrap().keys().copied().collect();
+    // Both held throughout, in the order the connect task takes them, so
+    // an attempt that starts meanwhile is either seen live here or waits
+    // until this one has its name.
+    let live = ATTEMPTS.lock().unwrap();
     let mut names = TMUX_NAMES.lock().unwrap();
     names.retain(|holder, _| match holder {
-        TmuxHolder::Attempt(a) => live.contains(a),
+        TmuxHolder::Attempt(a) => live.contains_key(a),
         TmuxHolder::Session(s) => session_exists(*s),
     });
     let name = reattach

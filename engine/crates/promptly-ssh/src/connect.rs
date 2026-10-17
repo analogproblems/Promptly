@@ -13,6 +13,7 @@ use russh::client::{self, AuthResult, ChannelOpenHandle, KeyboardInteractiveAuth
 use russh::keys::{self, PrivateKeyWithHashAlg, PublicKey};
 use russh::{Channel, ChannelOpenFailure, MethodKind, MethodSet};
 use tokio::net::TcpStream;
+use zeroize::Zeroizing;
 
 use crate::endpoint::Endpoint;
 use crate::forward::{Connection, ForwardSpec};
@@ -122,20 +123,24 @@ impl ConnectParams {
     ///
     /// `startup` is typed into the session only when tmux creates it, so a
     /// reconnect that reattaches never types it into whatever is running
-    /// there (an editor, say). Without tmux it runs before the shell.
+    /// there (an editor, say). Without tmux it runs in the person's own
+    /// shell, set up as an interactive one so their functions and aliases
+    /// work, and the login shell that follows keeps its environment and
+    /// folder.
     pub fn persistent_command(name: &str, startup: Option<&str>) -> String {
         let q = shell_quote;
         let target = q(&format!("={name}"));
         let mut new_session = format!("exec tmux new-session -s {}", q(name));
-        let mut fallback = String::new();
+        let mut fallback = "exec \"${SHELL:-/bin/sh}\" -l".to_string();
         if let Some(cmd) = startup.map(str::trim).filter(|c| !c.is_empty()) {
             new_session.push_str(&format!(" \\; send-keys -l {} \\; send-keys Enter", q(cmd)));
-            fallback = format!("{cmd}\n");
+            let then_shell = format!("{cmd}\nexec \"$SHELL\" -l");
+            fallback = format!("exec \"${{SHELL:-/bin/sh}}\" -i -c {}", q(&then_shell));
         }
         let script = format!(
             "tmux has-session -t {target} 2>/dev/null && exec tmux attach-session -t {target}\n\
              if command -v tmux >/dev/null 2>&1; then {new_session}; fi\n\
-             {fallback}exec \"${{SHELL:-/bin/sh}}\" -l"
+             {fallback}"
         );
         // The server runs this with the user's own shell, which may be fish
         // or csh; sh reads the script the same everywhere.
@@ -930,25 +935,26 @@ async fn load_key(
     passphrase: Option<&str>,
     prompter: &Arc<dyn Prompter>,
 ) -> Result<keys::PrivateKey, ConnectError> {
-    let mut passphrase = passphrase.map(str::to_string);
+    // Typed passphrases are wiped once the key is open or given up on.
+    let mut passphrase = passphrase.map(|p| Zeroizing::new(p.to_string()));
     for _ in 0..3 {
-        match keys::decode_secret_key(private_key, passphrase.as_deref()) {
+        match keys::decode_secret_key(private_key, passphrase.as_ref().map(|p| p.as_str())) {
             Ok(key) => return Ok(key),
             Err(keys::Error::KeyIsEncrypted) => {
-                passphrase = Some(
+                passphrase = Some(Zeroizing::new(
                     prompter
                         .ask_secret("Passphrase for the private key".into())
                         .await
                         .ok_or(ConnectError::Cancelled)?,
-                );
+                ));
             }
             Err(e) if passphrase.is_some() && is_wrong_passphrase(&e) => {
-                passphrase = Some(
+                passphrase = Some(Zeroizing::new(
                     prompter
                         .ask_secret("Wrong passphrase. Passphrase for the private key".into())
                         .await
                         .ok_or(ConnectError::Cancelled)?,
-                );
+                ));
             }
             Err(e) => return Err(ConnectError::BadKey(e.to_string())),
         }
@@ -1185,12 +1191,12 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn persistent_command_without_tmux_runs_startup_then_the_shell() {
+    fn persistent_command_without_tmux_runs_startup_in_the_users_shell() {
         // A PATH with sh but no tmux.
         let dir = std::env::temp_dir().join(format!("promptly-notmux-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        for tool in ["sh", "echo"] {
+        for tool in ["sh", "echo", "bash"] {
             let found = ["/bin", "/usr/bin"]
                 .iter()
                 .map(|d| std::path::Path::new(d).join(tool))
@@ -1198,15 +1204,37 @@ mod tests {
                 .unwrap();
             std::os::unix::fs::symlink(found, dir.join(tool)).unwrap();
         }
-        let cmd = ConnectParams::persistent_command("it's", Some("echo 'started' $((40+2))"));
+        let run = |shell: &str, startup: Option<&str>| {
+            let cmd = ConnectParams::persistent_command("it's", startup);
+            let out = std::process::Command::new(dir.join("sh"))
+                .arg("-c")
+                .arg(&cmd)
+                .env("PATH", &dir)
+                .env("HOME", &dir)
+                .env("SHELL", dir.join(shell))
+                .stdin(std::process::Stdio::null())
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        // No startup command: straight to the login shell.
+        assert_eq!(run("echo", None), "-l\n");
+        // Bash-only syntax, which sh would refuse, runs in the person's
+        // shell, and what it exports reaches the shell that follows.
+        let startup = "[[ -n $BASH_VERSION ]] && export PROJECT=demo && echo \"in bash\"";
+        let cmd = ConnectParams::persistent_command("it's", Some(startup));
         let out = std::process::Command::new(dir.join("sh"))
             .arg("-c")
-            .arg(&cmd)
+            .arg(cmd.replace("exec \"$SHELL\" -l", "echo \"then $PROJECT\""))
             .env("PATH", &dir)
-            .env("SHELL", dir.join("echo"))
+            .env("HOME", &dir)
+            .env("SHELL", dir.join("bash"))
+            .stdin(std::process::Stdio::null())
             .output()
             .unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "started 42\n-l\n");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("in bash"), "{text}");
+        assert!(text.contains("then demo"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

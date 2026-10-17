@@ -89,6 +89,12 @@ pub struct Manifest {
 #[derive(Clone, PartialEq, Eq)]
 pub struct RecoveryCode(String);
 
+impl Drop for RecoveryCode {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 impl RecoveryCode {
@@ -248,10 +254,12 @@ impl Manifest {
         let ct = B64
             .decode(&entry.wrapped_dek)
             .map_err(|e| ManifestError::Invalid(format!("wrapped key: {e}")))?;
-        let plain = unwrap(&key, aad.as_bytes(), &nonce, &ct).map_err(|_| match kind {
-            "recovery" => ManifestError::WrongRecoveryCode,
-            _ => ManifestError::WrongPassphrase,
-        })?;
+        let plain = unwrap(&key, aad.as_bytes(), &nonce, &ct)
+            .map(zeroize::Zeroizing::new)
+            .map_err(|_| match kind {
+                "recovery" => ManifestError::WrongRecoveryCode,
+                _ => ManifestError::WrongPassphrase,
+            })?;
         Dek::from_slice(&plain).ok_or(ManifestError::Invalid("wrapped key length".into()))
     }
 
