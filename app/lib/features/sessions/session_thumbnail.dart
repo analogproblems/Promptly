@@ -1,31 +1,40 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../terminal/terminal_controller.dart';
+import '../terminal/terminal_fonts.dart';
 import '../terminal/terminal_painter.dart';
 
 /// A small live render of a session's screen, for the Sessions list. It is
 /// the same painter as the terminal at a tiny font size, kept in step with
 /// the session but repainted at most a few times a second.
-class SessionThumbnail extends StatefulWidget {
+class SessionThumbnail extends ConsumerStatefulWidget {
   const SessionThumbnail({super.key, required this.controller, this.height = 96});
 
   final TerminalController controller;
   final double height;
 
   @override
-  State<SessionThumbnail> createState() => _SessionThumbnailState();
+  ConsumerState<SessionThumbnail> createState() => _SessionThumbnailState();
 }
 
-class _SessionThumbnailState extends State<SessionThumbnail> {
-  /// Metrics and glyphs per font size, shared by every thumbnail on screen.
-  static final Map<double, (CellMetrics, GlyphCache)> _shared = {};
+class _SessionThumbnailState extends ConsumerState<SessionThumbnail> {
+  /// Metrics and glyphs per font and size, shared by every thumbnail on
+  /// screen.
+  static final Map<(double, TerminalFont), (CellMetrics, GlyphCache)> _shared = {};
 
-  static (CellMetrics, GlyphCache) _for(double fontSize) => _shared.putIfAbsent(fontSize, () {
-        final m = CellMetrics.measure(fontSize);
-        return (m, GlyphCache(m));
-      });
+  static (CellMetrics, GlyphCache) _for(double fontSize, TerminalFont font) {
+    if (_shared.keys.any((k) => k.$2 != font)) _shared.clear();
+    return _shared.putIfAbsent((fontSize, font), () {
+      final m = CellMetrics.measure(fontSize, font);
+      return (m, GlyphCache(m));
+    });
+  }
+
+  /// This thumbnail's rows, drawn again only when they change.
+  final RowPictures _rows = RowPictures();
 
   static const _minGap = Duration(milliseconds: 250);
 
@@ -50,6 +59,7 @@ class _SessionThumbnailState extends State<SessionThumbnail> {
   @override
   void dispose() {
     _throttle?.cancel();
+    _rows.dispose();
     widget.controller.removeListener(_onFrame);
     super.dispose();
   }
@@ -74,6 +84,7 @@ class _SessionThumbnailState extends State<SessionThumbnail> {
   Widget build(BuildContext context) {
     final grid = widget.controller.grid;
     final bg = Color(0xFF000000 | grid.defaultBg);
+    final font = ref.watch(terminalFontProvider);
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
@@ -82,11 +93,11 @@ class _SessionThumbnailState extends State<SessionThumbnail> {
         }
         // Pick the font size at which the whole width fits, in half-point
         // steps so the shared caches stay small.
-        final (base, _) = _for(6);
+        final (base, _) = _for(6, font);
         final perPoint = base.width / 6;
         final fit = width / (grid.cols * perPoint);
         final fontSize = ((fit * 2).floor() / 2).clamp(3.0, 9.0);
-        final (metrics, glyphs) = _for(fontSize);
+        final (metrics, glyphs) = _for(fontSize, font);
         // Keep the cursor's row in view: that is where things are happening.
         final full = grid.rows * metrics.height;
         final cursorBottom = (grid.cursor.line + 1) * metrics.height;
@@ -110,6 +121,7 @@ class _SessionThumbnailState extends State<SessionThumbnail> {
                     cursorVisible: true,
                     focused: true,
                     generation: grid.generation,
+                    rows: _rows,
                   ),
                 ),
               ),

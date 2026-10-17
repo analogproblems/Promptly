@@ -12,6 +12,7 @@ import '../workspace/app_shortcuts.dart';
 import 'key_mapper.dart';
 import 'link_kind.dart';
 import 'terminal_controller.dart';
+import 'terminal_fonts.dart';
 import 'terminal_grid.dart';
 import 'terminal_painter.dart';
 
@@ -28,6 +29,8 @@ class TerminalView extends StatefulWidget {
     this.confirmPaste,
     this.onSwitchSession,
     this.keys = const KeyOptions(),
+    this.font = TerminalFont.standard,
+    this.autocorrect = false,
   });
 
   /// The view that last took focus, so the keyboard bar can show or hide
@@ -51,8 +54,10 @@ class TerminalView extends StatefulWidget {
   /// link" in the menu. [linkKind] tells which it is.
   final void Function(String uri)? onOpenLink;
 
-  /// Take typed text from the platform's soft keyboard (the IME) as well
-  /// as from hardware key events. On by default on phones and tablets.
+  /// Take typed text from the platform's text input (the IME) as well as
+  /// from key events: the soft keyboard on a phone or tablet, and an input
+  /// method on a computer (Chinese, Japanese, Korean, accents). On by
+  /// default.
   final bool? imeInput;
 
   /// Look at clipboard text before it is pasted. Returns the text to paste,
@@ -65,6 +70,12 @@ class TerminalView extends StatefulWidget {
 
   /// Caps Lock as Escape and Cmd as Ctrl, from Settings.
   final KeyOptions keys;
+
+  /// The font to draw with.
+  final TerminalFont font;
+
+  /// Let a phone or tablet keyboard suggest and correct words.
+  final bool autocorrect;
 
   @override
   State<TerminalView> createState() => _TerminalViewState();
@@ -95,11 +106,24 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   /// Trim the buffer once it holds this much, between compositions.
   static const _imeBufferLimit = 64;
 
-  bool get _useIme => widget.imeInput ?? isTouchPlatform;
+  bool get _useIme => widget.imeInput ?? true;
+
+  /// On a computer, what an input method is composing is shown at the
+  /// cursor and typed only once committed, so the program never sees the
+  /// pinyin or kana on the way. A phone keyboard composes ordinary words,
+  /// which are typed as they go, so the keys on the bar act on them.
+  bool get _holdComposing => !isTouchPlatform;
+
+  /// The input method's buffer has text it is still composing.
+  bool get _composing => _imeValue.composing.isValid && !_imeValue.composing.isCollapsed;
+
+  /// What the input method is composing, as shown at the cursor.
+  String _preedit = '';
 
   late final FocusNode _focus = FocusNode(debugLabel: 'terminal');
-  late CellMetrics _metrics = CellMetrics.measure(widget.controller.fontSize);
+  late CellMetrics _metrics = CellMetrics.measure(widget.controller.fontSize, widget.font);
   late GlyphCache _glyphs = GlyphCache(_metrics);
+  final RowPictures _rows = RowPictures();
   Timer? _blink;
   bool _cursorOn = true;
   double _scrollRemainder = 0;
@@ -134,11 +158,14 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     }
     // A pane that just became the focused one takes the keyboard.
     if (widget.autofocus && !old.autofocus) _focus.requestFocus();
+    if (old.font != widget.font) _measure();
+    if (old.autocorrect != widget.autocorrect) _ime?.updateConfig(_imeConfig());
   }
 
   @override
   void dispose() {
     _closeIme();
+    _rows.dispose();
     if (TerminalView._active == this) TerminalView._active = null;
     _blink?.cancel();
     widget.controller.removeListener(_onController);
@@ -149,14 +176,17 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
 
   void _onController() {
     if (!mounted) return;
-    if (widget.controller.fontSize != _metrics.fontSize) {
-      _metrics = CellMetrics.measure(widget.controller.fontSize);
-      _glyphs = GlyphCache(_metrics);
-    }
+    if (widget.controller.fontSize != _metrics.fontSize) _measure();
     // Any output resets the blink so the cursor is solid while typing.
     _cursorOn = true;
     _restartBlink();
     setState(() {});
+  }
+
+  /// Measure the cells again for a new text size or font.
+  void _measure() {
+    _metrics = CellMetrics.measure(widget.controller.fontSize, widget.font);
+    _glyphs = GlyphCache(_metrics);
   }
 
   void _onFocus() {
@@ -170,21 +200,21 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     setState(() {});
   }
 
-  // ---- The soft keyboard --------------------------------------------------
+  // ---- Text input: the soft keyboard, or an input method -----------------
+
+  TextInputConfiguration _imeConfig() => TextInputConfiguration(
+    inputType: TextInputType.multiline,
+    inputAction: TextInputAction.newline,
+    autocorrect: widget.autocorrect,
+    enableSuggestions: widget.autocorrect,
+    enableDeltaModel: true,
+    keyboardAppearance: widget.controller.grid.defaultBg < 0x808080 ? Brightness.dark : Brightness.light,
+  );
 
   void _openIme() {
     if (!_useIme) return;
-    _ime ??= TextInput.attach(
-      this,
-      TextInputConfiguration(
-        inputType: TextInputType.multiline,
-        inputAction: TextInputAction.newline,
-        autocorrect: false,
-        enableSuggestions: false,
-        enableDeltaModel: true,
-        keyboardAppearance: widget.controller.grid.defaultBg < 0x808080 ? Brightness.dark : Brightness.light,
-      ),
-    )..setEditingState(_imeValue);
+    _ime ??= TextInput.attach(this, _imeConfig())..setEditingState(_imeValue);
+    _imePlaced = null;
     _ime!.show();
   }
 
@@ -192,6 +222,38 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     _ime?.close();
     _ime = null;
     _imeValue = _imeBase;
+    _preedit = '';
+  }
+
+  /// Where the input method was last told the cursor is.
+  (Size, Matrix4, Rect)? _imePlaced;
+  bool _placing = false;
+
+  /// After a frame, tell the input method where the cursor is, so its list
+  /// of candidates opens beside it.
+  void _placeImeSoon() {
+    if (_ime == null || _placing) return;
+    _placing = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _placing = false;
+      final ime = _ime;
+      final box = mounted ? context.findRenderObject() : null;
+      if (ime == null || !ime.attached || box is! RenderBox || !box.hasSize) return;
+      final c = widget.controller.grid.cursor;
+      final cell = Rect.fromLTWH(
+        _inset + c.col * _metrics.width,
+        c.line * _metrics.height,
+        _metrics.width,
+        _metrics.height,
+      );
+      final placed = (box.size, box.getTransformTo(null), cell);
+      if (placed == _imePlaced) return;
+      _imePlaced = placed;
+      ime
+        ..setEditableSizeAndTransform(placed.$1, placed.$2)
+        ..setComposingRect(cell)
+        ..setCaretRect(cell);
+    });
   }
 
   /// Send typed text to the program, through the sticky modifiers.
@@ -249,6 +311,10 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
 
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> deltas) {
+    if (_holdComposing && (_composing || deltas.any(_startsComposing))) {
+      _composeDeltas(deltas);
+      return;
+    }
     if (deltas.length > 1 && deltas.any(_isPaste)) {
       // A paste can arrive as several edits (Android deletes the selection,
       // then inserts the clipboard). Take the batch as one change, so its
@@ -288,9 +354,53 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   /// what changed since last time is what was typed or erased.
   @override
   void updateEditingValue(TextEditingValue value) {
-    _imeDiff(_imeValue.text, value.text);
-    _imeValue = value;
+    if (_holdComposing && (_composing || _hasComposing(value))) {
+      _imeDiff(_committed(_imeValue), _committed(value));
+      _imeValue = value;
+      _showComposing();
+    } else {
+      _imeDiff(_imeValue.text, value.text);
+      _imeValue = value;
+    }
     _trimImeBuffer();
+  }
+
+  // ---- Input methods on a computer ----------------------------------------
+  //
+  // An input method builds up text before it is typed: pinyin or kana
+  // becoming Chinese or Japanese, Hangul syllables, an accent waiting for
+  // its letter. The buffer then holds a composing range. Here only the text
+  // outside that range counts as typed; the range itself is drawn at the
+  // cursor until the input method commits it.
+
+  static bool _hasComposing(TextEditingValue v) =>
+      v.composing.isValid && !v.composing.isCollapsed && v.composing.end <= v.text.length;
+
+  static bool _startsComposing(TextEditingDelta d) => d.composing.isValid && !d.composing.isCollapsed;
+
+  /// The buffer's text without what is still being composed.
+  static String _committed(TextEditingValue v) =>
+      _hasComposing(v) ? v.text.replaceRange(v.composing.start, v.composing.end, '') : v.text;
+
+  void _composeDeltas(List<TextEditingDelta> deltas) {
+    final first = deltas.first;
+    final start = first.oldText == _imeValue.text ? _imeValue : TextEditingValue(text: first.oldText);
+    var value = start;
+    for (final d in deltas) {
+      value = d.apply(d.oldText == value.text ? value : TextEditingValue(text: d.oldText));
+    }
+    // What was committed is typed, through the same paste check as the
+    // soft keyboard's edits.
+    _imeDiff(_committed(start), _committed(value));
+    _imeValue = value;
+    _showComposing();
+    _trimImeBuffer();
+  }
+
+  void _showComposing() {
+    final v = _imeValue;
+    final text = _hasComposing(v) ? v.composing.textInside(v.text) : '';
+    if (text != _preedit && mounted) setState(() => _preedit = text);
   }
 
   static int _editStart(TextEditingDelta d) => switch (d) {
@@ -373,6 +483,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   void connectionClosed() {
     _ime = null;
     _imeValue = _imeBase;
+    if (_preedit.isNotEmpty && mounted) setState(() => _preedit = '');
   }
 
   void _restartBlink() {
@@ -399,13 +510,19 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     if (event is KeyUpEvent) return KeyEventResult.ignored;
     // The window's own shortcuts (tabs, panes, the palette) pass through.
     if (AppShortcuts.isReserved(event)) return KeyEventResult.ignored;
+    // While a computer's input method composes, every key is its own:
+    // Backspace, Enter, the arrows and Escape work on what it is composing.
+    if (_holdComposing && _composing) return KeyEventResult.skipRemainingHandlers;
     // With Caps Lock as Escape and the system's Caps Lock on, letters are
     // put right here rather than taken from the soft keyboard as typed.
     final caseFix = keys.capsLockAsEscape && capsLocked && KeyMapper.isLetter(event.character ?? '');
-    // With the soft keyboard attached, printable characters come through
-    // it (a hardware keyboard on a phone feeds the IME too); only keys it
-    // does not carry are taken from here.
-    if (_ime != null && !ctrl && !alt && !meta && !caseFix && _isPrintable(event)) return KeyEventResult.ignored;
+    // With the text input attached, printable characters come through it
+    // (a hardware keyboard on a phone feeds the IME too, and on a computer
+    // the input method gets to compose them); only keys it does not carry
+    // are taken from here. The platform gets them, and nothing on the way.
+    if (_ime != null && !ctrl && !alt && !meta && !caseFix && _isPrintable(event)) {
+      return KeyEventResult.skipRemainingHandlers;
+    }
 
     // App shortcuts first.
     final key = event.logicalKey;
@@ -840,6 +957,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   @override
   Widget build(BuildContext context) {
     final c = widget.controller;
+    _placeImeSoon();
     return LayoutBuilder(
       builder: (context, constraints) {
         final cols = _metrics.colsFor(constraints.maxWidth - _inset);
@@ -875,6 +993,8 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
                       focused: _focus.hasFocus,
                       generation: c.grid.generation,
                       inset: _inset,
+                      rows: _rows,
+                      composing: _preedit,
                     ),
                   ),
                 ),

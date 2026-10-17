@@ -15,6 +15,7 @@ import '../terminal/keyboard_bar.dart';
 import '../terminal/link_kind.dart';
 import '../terminal/paste_guard.dart';
 import '../terminal/terminal_bell.dart';
+import '../terminal/terminal_fonts.dart';
 import '../terminal/terminal_view.dart';
 import '../workspace/workspace.dart' show findRequestProvider;
 import 'connecting_view.dart';
@@ -342,6 +343,8 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                                       capsLockAsEscape: ref.watch(capsLockEscapeProvider),
                                       cmdAsCtrl: isApplePlatform && ref.watch(cmdAsCtrlProvider),
                                     ),
+                                    font: ref.watch(terminalFontProvider),
+                                    autocorrect: ref.watch(autocorrectProvider),
                                   ),
                                 ),
                                 if (entry.reconnecting)

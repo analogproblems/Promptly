@@ -1,14 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/core/engine/engine.dart';
+import 'package:promptly/core/platform.dart';
 import 'package:promptly/core/theme/theme.dart';
 import 'package:promptly/features/terminal/key_mapper.dart';
 import 'package:promptly/features/terminal/terminal_controller.dart';
 import 'package:promptly/features/terminal/terminal_grid.dart';
+import 'package:promptly/features/terminal/terminal_painter.dart';
 import 'package:promptly/features/terminal/terminal_view.dart';
 
 /// Records what the view asks of the engine.
@@ -392,7 +395,11 @@ void main() {
     expect(copied, 'hello');
     expect(engine.calls.where((c) => c.startsWith('write')), isEmpty, reason: 'the shortcut is not typed');
 
+    // A letter key goes on to the system's text input, which types it.
     await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(text: ' a', selection: TextSelection.collapsed(offset: 2)),
+    );
     await tester.pump();
     expect(engine.calls, contains('clear'));
     expect(engine.calls.last, 'write 1');
@@ -801,6 +808,205 @@ void main() {
     ]);
     expect(engine.written.last, [3]);
     expect(controller.stickyCtrl, isFalse, reason: 'sticky modifiers are one-shot');
+    controller.dispose();
+  });
+
+  testWidgets('on a computer, an input method composes at the cursor and only what it commits is typed', (
+    tester,
+  ) async {
+    touchPlatformOverride = false;
+    addTearDown(() => touchPlatformOverride = null);
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    final asked = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(
+          body: TerminalView(
+            controller: controller,
+            confirmPaste: (text) async {
+              asked.add(text);
+              return null;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.testTextInput.hasAnyClients, isTrue, reason: 'a computer attaches its input method too');
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+    String composing() => (tester
+            .widget<CustomPaint>(find.descendant(of: find.byType(TerminalView), matching: find.byType(CustomPaint)))
+            .painter! as TerminalPainter)
+        .composing;
+
+    // Pinyin: "ni" is being composed; the program sees nothing of it, and
+    // it shows at the cursor.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' ',
+        textInserted: 'n',
+        insertionOffset: 1,
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange(start: 1, end: 2),
+      ),
+    ]);
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' n',
+        textInserted: 'i',
+        insertionOffset: 2,
+        selection: TextSelection.collapsed(offset: 3),
+        composing: TextRange(start: 1, end: 3),
+      ),
+    ]);
+    await tester.pump();
+    expect(engine.written, isEmpty);
+    expect(composing(), 'ni');
+
+    // Meanwhile keys are the input method's: Backspace and the arrows work
+    // on the composition, not on the command line.
+    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(engine.written, isEmpty);
+
+    // Its list of candidates opens at the cursor: the first cell, after
+    // the inset.
+    final placed = tester.testTextInput.log.where((c) => c.method == 'TextInput.setMarkedTextRect').toList();
+    expect(placed, isNotEmpty);
+    expect((placed.last.arguments as Map)['x'], 8.0);
+    expect((placed.last.arguments as Map)['y'], 0.0);
+    expect(tester.testTextInput.log.map((c) => c.method), contains('TextInput.setEditableSizeAndTransform'));
+
+    // Committed: the characters are typed, once.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaReplacement(
+        oldText: ' ni',
+        replacementText: '你',
+        replacedRange: TextRange(start: 1, end: 3),
+        selection: TextSelection.collapsed(offset: 2),
+        composing: TextRange.empty,
+      ),
+    ]);
+    await tester.pump();
+    expect(engine.written, [utf8.encode('你')]);
+    expect(composing(), isEmpty);
+
+    // An accent waiting for its letter (a dead key) goes the same way.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' 你',
+        textInserted: '´',
+        insertionOffset: 2,
+        selection: TextSelection.collapsed(offset: 3),
+        composing: TextRange(start: 2, end: 3),
+      ),
+    ]);
+    expect(engine.written, hasLength(1));
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaReplacement(
+        oldText: ' 你´',
+        replacementText: 'é',
+        replacedRange: TextRange(start: 2, end: 3),
+        selection: TextSelection.collapsed(offset: 3),
+        composing: TextRange.empty,
+      ),
+    ]);
+    expect(engine.written.last, utf8.encode('é'));
+
+    // Plain keys work as before: Enter and the arrows straight from the
+    // key, a letter through the text input, typed at once.
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(engine.written.last, [13]);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    expect(engine.written.last, [0x1b, 0x5b, 0x41]);
+    final typed = engine.written.length;
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+    expect(engine.written.length, typed, reason: 'left to the input method');
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' 你é',
+        textInserted: 'a',
+        insertionOffset: 3,
+        selection: TextSelection.collapsed(offset: 4),
+        composing: TextRange.empty,
+      ),
+    ]);
+    expect(engine.written.last, 'a'.codeUnits);
+
+    // A commit with line breaks in it is a paste, and is checked first.
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' 你éa',
+        textInserted: 'x',
+        insertionOffset: 4,
+        selection: TextSelection.collapsed(offset: 5),
+        composing: TextRange(start: 4, end: 5),
+      ),
+    ]);
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaReplacement(
+        oldText: ' 你éax',
+        replacementText: 'one\ntwo',
+        replacedRange: TextRange(start: 4, end: 5),
+        selection: TextSelection.collapsed(offset: 11),
+        composing: TextRange.empty,
+      ),
+    ]);
+    await tester.pump();
+    expect(asked, ['one\ntwo']);
+    expect(engine.pasted, isEmpty, reason: 'cancelled');
+    expect(engine.written.last, 'a'.codeUnits);
+    controller.dispose();
+  });
+
+  testWidgets('a phone keyboard suggests and corrects words only when Settings says so', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    Widget view({required bool autocorrect}) => MaterialApp(
+      theme: buildPromptlyTheme(Brightness.dark),
+      home: Scaffold(body: TerminalView(controller: controller, imeInput: true, autocorrect: autocorrect)),
+    );
+    await tester.pumpWidget(view(autocorrect: false));
+    await tester.pump();
+    expect(tester.testTextInput.setClientArgs!['autocorrect'], isFalse);
+    expect(tester.testTextInput.setClientArgs!['enableSuggestions'], isFalse);
+
+    await tester.pumpWidget(view(autocorrect: true));
+    await tester.pump();
+    expect(tester.testTextInput.setClientArgs!['autocorrect'], isTrue);
+    expect(tester.testTextInput.setClientArgs!['enableSuggestions'], isTrue);
+
+    // On a phone a word is typed as it is composed, and a correction
+    // erases it and types the corrected one.
+    touchPlatformOverride = true;
+    addTearDown(() => touchPlatformOverride = null);
+    final client = tester.state(find.byType(TerminalView)) as DeltaTextInputClient;
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaInsertion(
+        oldText: ' ',
+        textInserted: 'teh',
+        insertionOffset: 1,
+        selection: TextSelection.collapsed(offset: 4),
+        composing: TextRange(start: 1, end: 4),
+      ),
+    ]);
+    expect(engine.written.last, 'teh'.codeUnits);
+    client.updateEditingValueWithDeltas([
+      const TextEditingDeltaReplacement(
+        oldText: ' teh',
+        replacementText: 'the',
+        replacedRange: TextRange(start: 1, end: 4),
+        selection: TextSelection.collapsed(offset: 4),
+        composing: TextRange.empty,
+      ),
+    ]);
+    expect(engine.written.sublist(engine.written.length - 2), [
+      [0x7f, 0x7f, 0x7f],
+      'the'.codeUnits,
+    ]);
     controller.dispose();
   });
 

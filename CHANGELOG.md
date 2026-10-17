@@ -68,6 +68,12 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 - On a Mac, Promptly's menus are in the menu bar at the top of the screen, with the usual Promptly, Window and Help menus. Windows and Linux keep the menu bar in the window.
 - About, *Licences* now includes the notices for OpenSSL and SQLCipher, which the engine is built with.
 - On a narrow phone with large text, the session bar puts Snippets and Port forwards under a *More* button, and the sync set-up buttons and the card shown when a session ends no longer run off the screen. A host's last-connected time sits beside its name.
+- On a computer you can type with an input method: Chinese, Japanese and Korean input, and accents from dead keys or a compose key (ibus and fcitx on Linux, and the macOS and Windows input methods). What you're composing shows underlined at the cursor, with the list of choices beside it, and is typed once you pick it. Ordinary typing works as before.
+- On a phone or tablet, *Keyboard suggestions and autocorrect* in Settings, Terminal lets the keyboard suggest and correct words. It's off by default, as before.
+- Settings, Terminal, *Font* picks the terminal's font: the built-in JetBrains Mono, a monospaced font installed on your computer or Android phone, or a font file you add, which Promptly copies into its data folder.
+- Nerd Font icons in prompts and editors show up: from the font itself if it's a Nerd Font, or else from the symbols-only Nerd Font if it's installed, or from a Nerd Font you added.
+- *Ligatures* in Settings, Terminal draws pairs such as `->` and `!=` as one symbol in fonts that have them. It's off by default.
+- The terminal draws again only the lines that changed, instead of the whole screen each time, and a line that just moved up as the screen scrolled isn't laid out again. What you see is the same.
 
 ## 1.0.1
 

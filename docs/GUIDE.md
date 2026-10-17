@@ -405,6 +405,8 @@ Everything you type goes to the program in the terminal. Promptly keeps only a f
 - **Caps Lock types Escape.** Handy in `vim`. Letters then follow Shift alone, even if the Caps Lock light comes on.
 - **Cmd works as Ctrl** (iPad and Mac). In the terminal, Cmd+C stops a program as Ctrl+C does. Copy and paste with Cmd+Shift+C and Cmd+Shift+V instead.
 
+On a computer you can type with an input method, such as Chinese pinyin, Japanese or Korean, or accents made with a dead key or a compose key (ibus and fcitx on Linux, and the input methods built into macOS and Windows). While you compose, the text shows underlined at the cursor, the input method's list of choices opens beside it, and keys such as Backspace, Enter and the arrows work on what you're composing. Nothing reaches the program until you pick the text, and then it's typed in one go. If what you pick has more than one line, it's treated as a paste and shown first, as below.
+
 ### Selecting and copying text
 
 With a mouse:
@@ -454,7 +456,7 @@ Some programs, such as `tmux` and `vim`, can copy text to your clipboard directl
 
 ### On a phone or tablet
 
-Tap the terminal to bring up the keyboard. Promptly takes what you type exactly as the keyboard sends it, including autocorrected words and emoji.
+Tap the terminal to bring up the keyboard. Promptly takes what you type exactly as the keyboard sends it, including emoji. The keyboard's word suggestions and autocorrect are off, because commands are rarely dictionary words; to have them, turn on **Keyboard suggestions and autocorrect** in Settings, Terminal. A corrected word is then erased and typed again as corrected.
 
 With your fingers on the terminal:
 
@@ -694,7 +696,7 @@ How often, in seconds, Promptly pings the server so an idle connection isn't dro
 
 Sync keeps the same hosts, groups, keys, saved passwords, snippets, trusted host keys, imported themes and settings on all your devices. It's free, because it uses storage you already have.
 
-The settings that sync are the app look, the terminal theme, the bell, the lines kept for scrolling back, **Show text before pasting several lines**, **Let programs copy to the clipboard** and **Show which hosts are up**. Settings that belong to one device stay on it: the text size, the keyboard bar, the **Security** settings and **Check for updates automatically**.
+The settings that sync are the app look, the terminal theme, the bell, the lines kept for scrolling back, **Show text before pasting several lines**, **Let programs copy to the clipboard** and **Show which hosts are up**. Settings that belong to one device stay on it: the text size, the font and **Ligatures** (a font on one device may not be on another), **Keyboard suggestions and autocorrect**, the keyboard bar, the **Security** settings and **Check for updates automatically**. Font files you add stay on the device you added them on.
 
 ### How it works
 
@@ -819,24 +821,42 @@ Tap **Import** on the terminal theme screen and choose a theme file. Promptly re
 
 If the file holds several themes, save the ones you want. Imported themes appear under **Your themes** and sync like everything else. To remove one, tap its delete button; sessions using it switch to Promptly's own theme.
 
+### Terminal font
+
+The terminal uses JetBrains Mono, which comes with Promptly. To use another font, go to **Settings › Terminal › Font**. The screen shows a line of sample text in the font as it stands, and lists:
+
+- **Built in**: JetBrains Mono.
+- **Your fonts**: font files you've added. Tap **Add a font file** and choose a `.ttf` or `.otf` file (or a `.ttc` collection). Promptly keeps its own copy in its data folder, so you can move or delete the original, and switches to it straight away. To remove one, tap its delete button; if it was in use, the terminal goes back to JetBrains Mono.
+- **On this device**: the monospaced fonts installed on your computer or Android phone. (On an iPhone or iPad, apps can't see the installed fonts, so add a font file instead.)
+
+Open sessions change as you tap. Choose a monospaced font: in any other, the columns won't line up, and Promptly says so under the name of a font you added.
+
+**Nerd Font symbols.** Prompts such as Powerline, Starship and oh-my-posh, and editor plugins, draw icons from the Nerd Fonts. Choose a Nerd Font (such as "JetBrainsMono Nerd Font") to get them with your font. With any other font, Promptly draws them from the symbols-only Nerd Font (`Symbols Nerd Font Mono`) when it's installed, and from any Nerd Font you've added under **Your fonts**.
+
+**Ligatures.** Some programming fonts, such as Fira Code, Cascadia Code and JetBrains Mono, can draw pairs like `->`, `=>` and `!=` as one joined symbol. Turn on **Settings › Terminal › Ligatures** to see them. It's off by default, and each character still takes its own column, so the cursor and selection line up as before.
+
 ## 16. Settings reference
 
 | Section | Setting | What it does |
 |---|---|---|
 | **Appearance** | **App look** | Light, dark, or follow the system. |
 | | **Terminal theme** | The terminal's colours. See [chapter 15](#15-themes-and-appearance). |
-| **Terminal** | **Let programs copy to the clipboard** | Lets programs such as `tmux` and `vim` set your clipboard, even over SSH. Off by default. |
-| **Security** | **Unlock SSH keys before use** | Asks for your fingerprint, face, device PIN or Windows Hello before connecting with a key, testing a connection, or setting up sync with a host that uses one. Once sync is set up, it uses the host's key in the background without asking. On by default. |
-| | **Lock Promptly** | Asks the same when Promptly opens, and when you come back to it after the time below. Off by default. If the device's screen lock is later turned off, Promptly stays locked until it's back. |
-| | **Ask again** | How long a check lasts before keys ask again, and how long Promptly can be away before it locks: every time, or after 1, 5, 15 or 60 minutes. 5 minutes by default. |
-| | | Turning either lock off, asking less often, or removing the app passcode asks first, so someone holding your unlocked device can't simply switch them off. |
-| | **App passcode** | Only on computers with no fingerprint or PIN check that apps can use (Linux). Sets a passcode Promptly asks for instead. It's stored only as a hash, on that computer. |
+| **Terminal** | **Show text before pasting several lines** | Shows a paste with more than one line, and how many lines it has, before it runs. On by default. |
+| | **Let programs copy to the clipboard** | Lets programs such as `tmux` and `vim` set your clipboard, even over SSH. Off by default. |
+| | **Font** | The terminal's font: the built-in JetBrains Mono, a font file you add, or a monospaced font installed on the device. See [Terminal font](#terminal-font). |
+| | **Ligatures** | Draws pairs such as `->` and `!=` as one symbol, in fonts that have them. Off by default. |
+| | **Keyboard suggestions and autocorrect** | Phones and tablets only. Lets the keyboard suggest and correct words as you type. Off by default. |
 | | **Bell** | Flash the screen (the default), vibrate on a phone or tablet, or do nothing. See [The bell](#the-bell). |
 | | **Text size** | The terminal's text size. Zooming in a session changes it too. |
 | | **Lines to keep for scrolling back** | 1,000, 10,000 (the default), 50,000 or 100,000. Applies to sessions opened after the change. |
 | | **Keyboard bar** | Which keys sit above the keyboard on a phone or tablet, and their order. See [On a phone or tablet](#on-a-phone-or-tablet). |
 | **Hardware keyboard** | **Caps Lock types Escape** | Caps Lock sends Escape, and letters follow Shift alone. Off by default. See [Typing](#typing). |
 | | **Cmd works as Ctrl** | iPad and Mac only. In the terminal, Cmd acts as Ctrl. Off by default. |
+| **Security** | **Unlock SSH keys before use** | Asks for your fingerprint, face, device PIN or Windows Hello before connecting with a key, testing a connection, or setting up sync with a host that uses one. Once sync is set up, it uses the host's key in the background without asking. On by default. |
+| | **Lock Promptly** | Asks the same when Promptly opens, and when you come back to it after the time below. Off by default. If the device's screen lock is later turned off, Promptly stays locked until it's back. |
+| | **Ask again** | How long a check lasts before keys ask again, and how long Promptly can be away before it locks: every time, or after 1, 5, 15 or 60 minutes. 5 minutes by default. |
+| | | Turning either lock off, asking less often, or removing the app passcode asks first, so someone holding your unlocked device can't simply switch them off. |
+| | **App passcode** | Only on computers with no fingerprint or PIN check that apps can use (Linux). Sets a passcode Promptly asks for instead. It's stored only as a hash, on that computer. |
 | **Updates** | **Check for updates automatically** | Asks GitHub once a day whether a new version is out. Off by default. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |
 | | **Import from a CSV file** | Imports hosts from a CSV file. |

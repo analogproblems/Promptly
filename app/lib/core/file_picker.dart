@@ -1,5 +1,6 @@
 import 'dart:io' show File, FileSystemException, Platform, Process, ProcessResult;
 import 'dart:math' show Random;
+import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -29,6 +30,30 @@ Future<PickedTextFile?> _pickWithPlatform({required String label, required List<
 
 /// The file picker, swapped for a fake in tests.
 final filePickerProvider = Provider<PickTextFile>((ref) => _pickWithPlatform);
+
+/// A file the person chose, such as a font: its name and its bytes.
+class PickedBinaryFile {
+  const PickedBinaryFile({required this.name, required this.bytes});
+
+  final String name;
+  final Uint8List bytes;
+}
+
+typedef PickBinaryFile = Future<PickedBinaryFile?> Function({required String label, required List<String> extensions});
+
+Future<PickedBinaryFile?> _pickBinaryWithPlatform({required String label, required List<String> extensions}) async {
+  final file = await openFile(
+    acceptedTypeGroups: [
+      XTypeGroup(label: label, extensions: extensions),
+      const XTypeGroup(label: 'All files'),
+    ],
+  );
+  if (file == null) return null;
+  return PickedBinaryFile(name: file.name, bytes: await file.readAsBytes());
+}
+
+/// The picker for files read as bytes, swapped for a fake in tests.
+final binaryFilePickerProvider = Provider<PickBinaryFile>((ref) => _pickBinaryWithPlatform);
 
 /// Ask where to save a text file and write it there, readable only by its
 /// owner where the system has such modes. Returns the path, or null when
