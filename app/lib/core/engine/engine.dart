@@ -15,7 +15,7 @@ export '../../src/rust/api/files.dart' show FileEntry, FileTransfer;
 export '../../src/rust/api/hosts.dart' show ReachTarget, Reachability;
 export '../../src/rust/api/import.dart' show CsvHost, ImportReport, SshConfigHost;
 export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
-export '../../src/rust/api/store.dart' show StoreRecord;
+export '../../src/rust/api/store.dart' show SecretsState, StoreRecord;
 export '../../src/rust/api/sync.dart' show SyncBackendKind, SyncDevice, SyncSetupResult, SyncStatus;
 export '../../src/rust/api/themes.dart' show ThemeInfo;
 export '../../src/rust/api/ssh.dart'
@@ -107,6 +107,10 @@ abstract class Engine {
 
   /// Where the engine keeps its files. Called once at startup.
   void setDataDir(String path);
+
+  /// How saved passwords, keys and the vault key are kept: encrypted, plain
+  /// (no secure storage on the system) or locked (the storage refused).
+  rust_store.SecretsState secretsState();
 
   /// The built-in terminal themes, Promptly's own first.
   List<rust_themes.ThemeInfo> themesList();
@@ -328,6 +332,9 @@ class RustEngine implements Engine {
 
   @override
   void setDataDir(String path) => rust.setDataDir(path: path);
+
+  @override
+  rust_store.SecretsState secretsState() => rust_store.secretsState();
 
   @override
   List<rust_themes.ThemeInfo> themesList() => rust_themes.themesList();

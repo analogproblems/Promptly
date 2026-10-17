@@ -220,6 +220,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Reachability dco_decode_reachability(dynamic raw);
 
   @protected
+  SecretsState dco_decode_secrets_state(dynamic raw);
+
+  @protected
   SessionInfo dco_decode_session_info(dynamic raw);
 
   @protected
@@ -551,6 +554,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   Reachability sse_decode_reachability(SseDeserializer deserializer);
+
+  @protected
+  SecretsState sse_decode_secrets_state(SseDeserializer deserializer);
 
   @protected
   SessionInfo sse_decode_session_info(SseDeserializer deserializer);
@@ -979,6 +985,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_reachability(Reachability self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_secrets_state(SecretsState self, SseSerializer serializer);
 
   @protected
   void sse_encode_session_info(SessionInfo self, SseSerializer serializer);

@@ -675,7 +675,7 @@ class _ConfiguredView extends ConsumerWidget {
       builder: (ctx) => AlertDialog(
         title: Text('Remove ${d.name}?'),
         content: const Text(
-          'Its folder in the vault is deleted after everything it had is kept in a snapshot from this device. If the device was stolen, also change the passphrase.',
+          'Its folder in the vault is deleted after everything it had is kept in a snapshot from this device. This does not lock the device out: it keeps the key to the vault, even if you change the passphrase. If it was lost or stolen, cut off its access to where the vault lives, and change the passwords and keys it had.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),

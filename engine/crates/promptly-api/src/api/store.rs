@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use flutter_rust_bridge::frb;
 use promptly_store::{col_parse, Collection, FileSecretStore, SecretStore, Store};
 use promptly_vault::model::{Group, Host, Identity, Snippet};
+use promptly_vault::Dek;
 
 use crate::api::engine::data_dir;
 use crate::sync_engine;
@@ -32,14 +33,77 @@ pub(crate) fn store() -> Result<Arc<Store>, String> {
     Ok(s)
 }
 
-pub(crate) fn secrets() -> Arc<dyn SecretStore> {
+static DEVICE_KEY: Mutex<Option<DeviceKey>> = Mutex::new(None);
+
+enum DeviceKey {
+    Key(Dek),
+    Unavailable,
+}
+
+/// Hand the engine the device key from the platform's secure storage, so
+/// saved secrets are encrypted on disk. Call once at startup, before
+/// anything reads a secret; without it they are stored as plain files.
+#[frb(sync)]
+pub fn set_device_key(key: Vec<u8>) -> Result<(), String> {
+    let key = Dek::from_slice(&key).ok_or("the device key must be 32 bytes")?;
+    set_key(DeviceKey::Key(key))
+}
+
+/// Tell the engine the platform's secure storage exists but would not give
+/// up the device key (denied, locked or damaged). Saved secrets are then
+/// neither read nor written until the app restarts with the key.
+#[frb(sync)]
+pub fn set_device_key_unavailable() -> Result<(), String> {
+    set_key(DeviceKey::Unavailable)
+}
+
+fn set_key(key: DeviceKey) -> Result<(), String> {
+    if SECRETS.lock().unwrap().is_some() {
+        return Err("the secret store is already open".into());
+    }
+    *DEVICE_KEY.lock().unwrap() = Some(key);
+    Ok(())
+}
+
+/// How saved passwords, keys and the vault key are kept on this device.
+pub enum SecretsState {
+    /// Encrypted with the device key.
+    Encrypted,
+    /// Plain owner-only files: the system has no secure storage.
+    Plain,
+    /// Neither read nor written: the secure storage refused the key.
+    Locked,
+}
+
+#[frb(sync)]
+pub fn secrets_state() -> SecretsState {
+    let s = secret_store();
+    if s.is_locked() {
+        SecretsState::Locked
+    } else if s.is_encrypted() {
+        SecretsState::Encrypted
+    } else {
+        SecretsState::Plain
+    }
+}
+
+fn secret_store() -> Arc<FileSecretStore> {
     let mut guard = SECRETS.lock().unwrap();
     if let Some(s) = guard.as_ref() {
         return s.clone();
     }
-    let s = Arc::new(FileSecretStore::new(data_dir().join("secrets")));
+    let dir = data_dir().join("secrets");
+    let s = Arc::new(match &*DEVICE_KEY.lock().unwrap() {
+        Some(DeviceKey::Key(key)) => FileSecretStore::encrypted(dir, key.clone()),
+        Some(DeviceKey::Unavailable) => FileSecretStore::locked(dir),
+        None => FileSecretStore::new(dir),
+    });
     *guard = Some(s.clone());
     s
+}
+
+pub(crate) fn secrets() -> Arc<dyn SecretStore> {
+    secret_store()
 }
 
 fn collection(name: &str) -> Result<Collection, String> {

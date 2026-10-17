@@ -45,6 +45,7 @@ dependencies:
   url_launcher: ^6.3.3
   file_selector: ^1.1.0
   crypto: ^3.0.6
+  flutter_secure_storage: ^11.2.0
 
 dev_dependencies:
   flutter_test:

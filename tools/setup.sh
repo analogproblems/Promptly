@@ -28,7 +28,7 @@ if command -v apt-get >/dev/null; then
   SUDO=""; [[ $EUID -ne 0 ]] && SUDO="sudo"
   $SUDO apt-get update -q
   $SUDO apt-get install -y -q curl git unzip xz-utils zip clang cmake ninja-build \
-    pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev
+    pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev libstdc++-12-dev
 else
   echo "No apt-get found; install clang, cmake, ninja, pkg-config and GTK 3 dev headers yourself." >&2
 fi
