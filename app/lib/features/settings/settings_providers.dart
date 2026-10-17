@@ -13,6 +13,7 @@ abstract final class SettingKeys {
   static const programClipboard = 'program_clipboard';
   static const reachability = 'reachability_check';
   static const onboardingDone = 'onboarding_done';
+  static const updateCheck = 'update_check';
 }
 
 String? _readString(Engine engine, String key) {
