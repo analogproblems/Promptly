@@ -360,8 +360,9 @@ impl FileKnownHosts {
     /// one key for each host named outright, of the kind the handshake asks
     /// for first. A hashed name cannot be read back and a wildcard or
     /// negated pattern names no one host, so those lines stay where they
-    /// are and are read live as before; so do `@revoked` lines, and a key
-    /// revoked for a host is never carried for it.
+    /// are and are read live as before; so do `@revoked` lines. A key
+    /// revoked for a host is never carried for it, nor is a host that a
+    /// negation on its own line leaves out.
     pub fn user_trusts(&self) -> Vec<Trust> {
         let texts: Vec<String> = self
             .user_paths
@@ -387,6 +388,10 @@ impl FileKnownHosts {
                     continue;
                 };
                 let entry = Self::entry(&host, port);
+                // A negation anywhere on the line excludes the host from it.
+                if !hosts_match(field, &entry) {
+                    continue;
+                }
                 let revoked_here = lines.iter().any(|(f, k, r)| {
                     *r && k.key_data() == key.key_data() && hosts_match(f, &entry)
                 });
@@ -856,7 +861,9 @@ mod tests {
                  gone.test {other_line}\n\
                  @revoked gone.test {other_line}\n\
                  @cert-authority *.test {ed}\n\
-                 [bad.test]:port {ed}\n"
+                 [bad.test]:port {ed}\n\
+                 excl.test,[excl.test]:2200,ok.test,!excl.test {ed}\n\
+                 w1.neg.test,w2.other,!*.neg.test {ed}\n"
             ),
         )
         .unwrap();
@@ -872,6 +879,10 @@ mod tests {
             [
                 ("10.0.0.1".to_string(), 22, ecdsa.clone()),
                 ("db.test".to_string(), 2222, ed.clone()),
+                // A negation leaves out what it matches, on that port only.
+                ("excl.test".to_string(), 2200, ed.clone()),
+                ("ok.test".to_string(), 22, ed.clone()),
+                ("w2.other".to_string(), 22, ed.clone()),
                 // Two kinds for one host: the one the handshake asks for first.
                 ("web.test".to_string(), 22, ed.clone()),
             ]
