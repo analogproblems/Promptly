@@ -305,7 +305,9 @@ Tap a host to connect. While Promptly connects, the session shows each step as i
 Every SSH server has its own **host key**, which proves the server is the one you meant to reach. The first time you connect, Promptly shows you the key's fingerprint (a long string of letters and numbers) and a small picture made from it, and asks whether to trust it.
 
 - **First time connecting to this server.** If you have the fingerprint from a trusted source, such as your server administrator or your hosting provider's console, compare them. If they match, tap **Trust this key and connect**. Promptly remembers the key and checks it on every later connection.
-- **This server's key has changed.** Promptly will always stop and warn you if a server's key is different from the one you trusted. That can mean the server was reinstalled, or that something between you and the server is pretending to be it. Don't continue unless you know why the key changed. If you do, tap **Trust the new key anyway**.
+- **This server's key has changed.** Promptly will always stop and warn you, on a page of its own, if a server's key is different from the one you trusted. That can mean the server was reinstalled, or that something between you and the server is pretending to be it. **Disconnect** is the main button. If you know why the key changed, check the new fingerprint with whoever runs the server, then tap **I know why it changed**, tick the box to say the fingerprint matches, and tap **Trust the new key and connect**. The new key replaces the old one on all your devices, so you're only asked once.
+
+Promptly also reads the trusted keys in your own `~/.ssh/known_hosts` on a desktop, including hashed entries and `@revoked` lines. A key you revoke there is never trusted, and a server that suddenly offers a different kind of key counts as a changed key, not a new server.
 
 If you use sync, a server you trust on one device is trusted on all of them.
 
@@ -772,7 +774,7 @@ Promptly is open source, so anyone can check what it does. To report a security 
 
 **"The key for this host is missing."** The host points at a key that was deleted. Edit the host and pick another key.
 
-**Promptly warns that a server's key has changed.** Don't continue until you know why. If the server was rebuilt or its SSH keys were replaced, check the new fingerprint with whoever runs it, then tap **Trust the new key anyway**.
+**Promptly warns that a server's key has changed.** Don't continue until you know why. If the server was rebuilt or its SSH keys were replaced, check the new fingerprint with whoever runs it, then tap **I know why it changed**, tick the box and tap **Trust the new key and connect**. Snippets run on several hosts and SFTP sync stop with a warning instead of connecting to such a server, until you've trusted the new key in the terminal.
 
 **The connection keeps dropping when idle.** Lower the host's **Keep-alive** (for example to 15 seconds). For work that must survive a drop, turn on **Persistent session**.
 

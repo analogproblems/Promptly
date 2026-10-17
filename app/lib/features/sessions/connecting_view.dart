@@ -4,6 +4,7 @@ import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import 'connect_flow.dart';
+import 'host_key_warning.dart';
 
 /// What fills the terminal area while a connection is being made: the steps
 /// so far, and whichever question is waiting. Lives in the terminal's own
@@ -33,7 +34,9 @@ class ConnectingView extends StatelessWidget {
                 children: [
                   _Steps(flow: flow),
                   const SizedBox(height: 20),
-                  if (flow.hostKey != null)
+                  if (flow.hostKey != null && flow.hostKey!.status == SshHostKeyStatus.changed)
+                    ChangedHostKeyPanel(hostKey: flow.hostKey!, onAnswer: flow.answerHostKey)
+                  else if (flow.hostKey != null)
                     _HostKeyPanel(key_: flow.hostKey!, onAnswer: flow.answerHostKey)
                   else if (flow.secretPrompt != null)
                     _SecretPanel(prompt: flow.secretPrompt!, onAnswer: flow.answerSecret)
@@ -132,6 +135,8 @@ class _Panel extends StatelessWidget {
   }
 }
 
+/// A server seen for the first time. A changed key gets
+/// [ChangedHostKeyPanel] instead.
 class _HostKeyPanel extends StatelessWidget {
   const _HostKeyPanel({required this.key_, required this.onAnswer});
   final SshHostKey key_;
@@ -140,20 +145,17 @@ class _HostKeyPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
-    final changed = key_.status == SshHostKeyStatus.changed;
     return _Panel(
-      accent: changed ? t.danger : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(changed ? Icons.warning_amber_rounded : Icons.shield_outlined,
-                  color: changed ? t.danger : t.accent),
+              Icon(Icons.shield_outlined, color: t.accent),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  changed ? 'This server\'s key has changed' : 'First time connecting to this server',
+                  'First time connecting to this server',
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: t.text),
                 ),
               ),
@@ -161,9 +163,7 @@ class _HostKeyPanel extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            changed
-                ? 'The key for ${key_.host} is different from the one trusted before. That can mean the server was reinstalled, or that something between you and it is pretending to be the server. Do not continue unless you know why it changed.'
-                : 'Promptly has not seen ${key_.host} before. Check the fingerprint against one you trust, for example from whoever set the server up. Once trusted, any change to this key will always warn you.',
+            'Promptly has not seen ${key_.host} before. Check the fingerprint against one you trust, for example from whoever set the server up. Once trusted, any change to this key will always warn you.',
             style: TextStyle(fontSize: 13, height: 1.45, color: t.muted),
           ),
           const SizedBox(height: 14),
@@ -184,9 +184,8 @@ class _HostKeyPanel extends StatelessWidget {
           Row(
             children: [
               FilledButton(
-                style: changed ? FilledButton.styleFrom(backgroundColor: t.danger) : null,
                 onPressed: () => onAnswer(true),
-                child: Text(changed ? 'Trust the new key anyway' : 'Trust this key and connect'),
+                child: const Text('Trust this key and connect'),
               ),
               const SizedBox(width: 8),
               OutlinedButton(onPressed: () => onAnswer(false), child: const Text('Cancel')),

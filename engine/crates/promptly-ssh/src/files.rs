@@ -278,6 +278,9 @@ mod tests {
         fn remember(&self, _: &str, _: u16, _: &russh::keys::PublicKey) -> std::io::Result<()> {
             Ok(())
         }
+        fn known_algorithms(&self, _: &str, _: u16) -> Vec<russh::keys::Algorithm> {
+            Vec::new()
+        }
     }
 
     #[test]
