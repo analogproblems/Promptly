@@ -455,17 +455,23 @@ pub fn dek() -> Result<Dek, String> {
 /// The join code another device can enrol with (VAULT.md section 11): the
 /// vault, where it is here, its data key (`dek`, base64 as kept on this
 /// device) and the manifest's keys when this device last looked, as JSON.
-/// The QR code shows the same text.
-pub fn join_code(config: &VaultConfig, dek: &str) -> String {
-    serde_json::json!({
+/// The QR code shows the same text. Not until this device has read the
+/// manifest: without its keys, the other device could not tell whether the
+/// code is still current.
+pub fn join_code(config: &VaultConfig, dek: &str) -> Result<String, String> {
+    let keys = config
+        .manifest_keys
+        .as_deref()
+        .ok_or("Sync once first, so the code can say which vault key is current.")?;
+    Ok(serde_json::json!({
         "v": 1,
         "vault_id": config.vault_id,
         "kind": config.kind,
         "path": config.path,
         "dek": dek,
-        "keys": config.manifest_keys,
+        "keys": keys,
     })
-    .to_string()
+    .to_string())
 }
 
 /// Open the vault in `backend`, whose manifest is `manifest`, to join it:
@@ -494,7 +500,8 @@ pub fn open_to_join<'a>(
     const NOT_A_CODE: &str = "That is not a join code. On a device already in the vault, open Settings, Sync, Add another device, Show code, and copy the code as text.";
     let code: serde_json::Value = serde_json::from_str(join.trim()).map_err(|_| NOT_A_CODE)?;
     let field = |name: &str| code.get(name).and_then(serde_json::Value::as_str);
-    let (Some(vault_id), Some(dek)) = (field("vault_id"), field("dek")) else {
+    let (Some(vault_id), Some(dek), Some(keys)) = (field("vault_id"), field("dek"), field("keys"))
+    else {
         return Err(NOT_A_CODE.into());
     };
     let dek = B64
@@ -507,7 +514,7 @@ pub fn open_to_join<'a>(
     }
     // A code from before a passphrase change or a new key: the key in it
     // may not open anything written since.
-    if field("keys").is_some_and(|k| k != manifest.keys_fingerprint()) {
+    if keys != manifest.keys_fingerprint() {
         return Err("That join code is out of date: the vault's passphrase or key has changed since it was shown. Show a new code on the other device.".into());
     }
     Ok(Vault::with_dek(
@@ -1438,7 +1445,7 @@ mod tests {
             manifest_keys: Some(manifest.keys_fingerprint()),
             snapshot_due: false,
         };
-        let code = join_code(&config, &B64.encode(vault.dek().0));
+        let code = join_code(&config, &B64.encode(vault.dek().0)).unwrap();
         let join = |code: &str, manifest: &Manifest| {
             open_to_join(
                 &backend,
@@ -1478,6 +1485,25 @@ mod tests {
         let mut changed = manifest.clone();
         changed.change_passphrase(vault.dek(), "a newer passphrase");
         assert!(join(&code, &changed).err().unwrap().contains("out of date"));
+
+        // A code that does not say which keys it is from can't be
+        // checked, so it is not taken; nor is one shown before this
+        // device knew the keys.
+        let mut unchecked: serde_json::Value = serde_json::from_str(&code).unwrap();
+        unchecked.as_object_mut().unwrap().remove("keys");
+        assert!(join(&unchecked.to_string(), &manifest)
+            .err()
+            .unwrap()
+            .contains("not a join code"));
+        unchecked["keys"] = serde_json::Value::Null;
+        assert!(join(&unchecked.to_string(), &manifest).is_err());
+        let unknown = VaultConfig {
+            manifest_keys: None,
+            ..config.clone()
+        };
+        assert!(join_code(&unknown, &B64.encode(vault.dek().0))
+            .unwrap_err()
+            .contains("Sync once first"));
 
         // Nothing given at all.
         assert!(open_to_join(&backend, DeviceId::generate(), &manifest, None, None, None).is_err());

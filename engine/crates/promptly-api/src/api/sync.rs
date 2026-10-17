@@ -386,5 +386,5 @@ pub fn sync_qr_payload() -> Result<Option<String>, String> {
         .map_err(|e| e.to_string())?
         .ok_or("the vault key is missing")?;
     let dek = String::from_utf8(bytes).map_err(|_| "the vault key is not valid")?;
-    Ok(Some(sync_engine::join_code(&config, &dek)))
+    sync_engine::join_code(&config, &dek).map(Some)
 }

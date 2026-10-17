@@ -690,7 +690,7 @@ To join without typing the passphrase, use a **join code**:
 2. Tap **Copy as text**, and get the text to the new device.
 3. On the new device, at the join step, tap **Use a join code instead**, paste it, and tap **Join the vault**.
 
-Scanning the QR code isn't available in the apps yet, so copy it as text. Show or send the code only to your own devices: anyone who photographs or copies it can read your vault. A join code stops working once the vault's passphrase is changed or the vault is re-keyed.
+Scanning the QR code isn't available in the apps yet, so copy it as text. Show or send the code only to your own devices: anyone who photographs or copies it can read your vault. A join code stops working once the vault's passphrase is changed or the vault is re-keyed. If a code may have been seen by someone else, re-key the vault (**Settings › Sync › Re-key the vault**): changing the passphrase stops the code being accepted, but the key inside it would still read everything written from then on.
 
 ### Checking sync status
 

@@ -8,6 +8,7 @@ import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
+import '../lock/app_lock.dart';
 import '../shell/empty_state.dart';
 import 'key_actions.dart';
 
@@ -56,6 +57,16 @@ class KeysScreen extends ConsumerWidget {
       ),
     );
     if (ok == true) ref.read(identitiesProvider.notifier).delete(identity.id);
+  }
+
+  /// The private key is shown only after the same check as using it.
+  Future<void> _export(BuildContext context, WidgetRef ref, Identity identity) async {
+    if (!await ref.read(appLockProvider.notifier).unlockKeys()) {
+      if (context.mounted) notYet(context, 'The key stays locked, so it was not exported.');
+      return;
+    }
+    if (!context.mounted) return;
+    await showDialog<void>(context: context, builder: (_) => ExportKeyDialog(identity: identity));
   }
 
   void _forgetPassphrase(BuildContext context, WidgetRef ref, Identity identity) {
@@ -160,7 +171,7 @@ class KeysScreen extends ConsumerWidget {
                               case 'install':
                                 showDialog<void>(context: context, builder: (_) => InstallKeyDialog(identity: id));
                               case 'export':
-                                showDialog<void>(context: context, builder: (_) => ExportKeyDialog(identity: id));
+                                _export(context, ref, id);
                               case 'forget':
                                 _forgetPassphrase(context, ref, id);
                               case 'local':

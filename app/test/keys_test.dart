@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import 'app_lock_test.dart' show FakeAuthenticator;
 import 'widget_test.dart' show FakeEngine, app, appWith, hostJson, scrollTap, tapVisible;
 
 /// A key whose text is locked behind FakeEngine.lockedPassphrase, used by
@@ -100,6 +101,29 @@ void main() {
     expect(identity(engine, 'k1')['passphrase_secret_id'], isNull);
     expect(engine.secrets.containsKey(secretId), isFalse);
     expect(find.textContaining('is forgotten'), findsOneWidget);
+  });
+
+  testWidgets('a remembered passphrase goes to the key the host uses, not another copy of it', (tester) async {
+    final engine = lockedKeyEngine()..askKeyPassphrase = true;
+    // The same key imported twice: a copy listed first, kept in the vault,
+    // and the host's own, kept on this device only.
+    engine.secrets['pk0'] = engine.secrets['pk1']!;
+    engine.records['identities']!['k0'] = jsonEncode({
+      ...identity(engine, 'k1'),
+      'id': 'k0',
+      'label': 'a shared copy',
+      'private_key_secret_id': 'pk0',
+    });
+    engine.records['identities']!['k1'] = jsonEncode({...identity(engine, 'k1'), 'sync': 'local_only'});
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await asking(tester);
+    await tester.enterText(find.byKey(const Key('secret-input')), FakeEngine.lockedPassphrase);
+    await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
+    await tester.pumpAndSettle();
+    expect(identity(engine, 'k1')['passphrase_secret_id'], isNotNull);
+    expect(identity(engine, 'k0')['passphrase_secret_id'], isNull);
   });
 
   testWidgets('with Remember passphrase off nothing is saved, but a reconnect does not ask again', (tester) async {
@@ -238,6 +262,54 @@ void main() {
     await tester.tap(find.byKey(const Key('install-go')));
     await tester.pumpAndSettle();
     expect(engine.installCalls.last, 'nas.example password s3cret ssh-ed25519 AAAAfake1 promptly');
+  });
+
+  testWidgets('installing with a key login and exporting a key both wait for the key check', (tester) async {
+    final engine = lockedKeyEngine(savedPassphrase: FakeEngine.lockedPassphrase);
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    final auth = FakeAuthenticator(answer: false);
+    await tester.pumpWidget(appWith(engine, authenticator: auth));
+    await tester.pumpAndSettle();
+
+    // h1 logs in with the locked key: refused, so it never connects.
+    await openKeyMenu(tester, 'Install on a host…');
+    await tester.tap(find.byKey(const Key('install-host')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('web-1 · ops@web-1.example').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('install-go')));
+    await tester.pumpAndSettle();
+    expect(auth.asked, ['Unlock your SSH key']);
+    expect(engine.installCalls, isEmpty);
+    expect(find.text('The SSH key for web-1 stays locked, so nothing was installed.'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    // Refused: the private key is not shown at all.
+    await openKeyMenu(tester, 'Export private key…');
+    expect(find.textContaining('log in as you'), findsNothing);
+    expect(find.text('The key stays locked, so it was not exported.'), findsOneWidget);
+    expect(copied, isNull);
+
+    // Passed: both go ahead.
+    auth.answer = true;
+    await openKeyMenu(tester, 'Export private key…');
+    expect(find.textContaining('log in as you'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await openKeyMenu(tester, 'Install on a host…');
+    await tester.tap(find.byKey(const Key('install-host')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('web-1 · ops@web-1.example').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('install-go')));
+    await tester.pumpAndSettle();
+    expect(engine.installCalls, hasLength(1));
   });
 
   testWidgets('exporting the private key waits for the warning to be ticked, and can lock it anew', (tester) async {

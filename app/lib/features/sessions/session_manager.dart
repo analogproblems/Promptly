@@ -374,62 +374,85 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       engine: engine,
       request: request,
       unlock: () => ref.read(appLockProvider.notifier).unlockKeys(),
-    )
-      // Saved hosts use saved keys, which can keep their passphrase.
-      ..canRememberPassphrase = entry.hostId != null;
-    flow.onKeyPassphrase = (passphrase, remember) => _keyPassphraseTyped(engine, flow, passphrase, remember);
+    );
+    // Saved hosts use saved keys, which can keep their passphrase.
+    final host = entry.hostId == null ? null : ref.read(hostsProvider.notifier).byId(entry.hostId!);
+    final owners = host == null ? null : _keyOwners(host);
+    flow.canRememberPassphrase = owners != null;
+    flow.onKeyPassphrase = (passphrase, remember) => _keyPassphraseTyped(engine, flow, owners, passphrase, remember);
     entry.setFlow(flow);
     flow.addListener(() => _onFlow(entry, engine, flow));
     flow.start();
+  }
+
+  /// The saved keys a saved host's connection uses, in the order the
+  /// request uses them: its jump hosts nearest this device first, then the
+  /// host. Null where a step logs in some other way.
+  List<String?> _keyOwners(Host host) {
+    String? keyOf(Host h) {
+      final auth = _inherited(h).auth;
+      return auth.kind == AuthKind.identity ? auth.identityId : null;
+    }
+
+    final owners = <String?>[keyOf(host)];
+    final seen = <String>{host.id};
+    var next = _jumpHostIdFor(host);
+    while (next != null && seen.add(next)) {
+      final hop = ref.read(hostsProvider.notifier).byId(next);
+      if (hop == null) break;
+      owners.insert(0, keyOf(hop));
+      next = _jumpHostIdFor(hop);
+    }
+    return owners;
   }
 
   /// A passphrase typed for a locked key. The keys are unlocked in the
   /// order they are used (jump hosts first, nearest first, then the
   /// host), so the one asking is the first it opens that does not have it
   /// yet. It goes into the request, so a reconnect does not ask again,
-  /// and, with [remember], is saved with that key. A wrong one is left
-  /// alone: the engine asks again.
-  void _keyPassphraseTyped(Engine engine, ConnectFlow flow, String passphrase, bool remember) {
+  /// and, with [remember], is saved with the key that step logs in with
+  /// ([owners], one per step). A wrong one is left alone: the engine asks
+  /// again.
+  void _keyPassphraseTyped(
+    Engine engine,
+    ConnectFlow flow,
+    List<String?>? owners,
+    String passphrase,
+    bool remember,
+  ) {
     final r = flow.request;
-    String? publicOf(String? key, String? known) {
-      if (key == null || known == passphrase) return null;
+    bool opens(String? key, String? known) {
+      if (key == null || known == passphrase) return false;
       try {
-        if (!engine.keyInspect(key, null).encrypted) return null;
-        return engine.keyInspect(key, passphrase).publicOpenssh;
+        if (!engine.keyInspect(key, null).encrypted) return false;
+        engine.keyInspect(key, passphrase);
+        return true;
       } catch (_) {
-        return null; // not this key's passphrase
+        return false; // not this key's passphrase
       }
     }
 
-    String? opened;
+    int? opened;
     final jumps = <SshHop>[];
-    for (final h in r.jumps) {
-      final public = opened == null ? publicOf(h.privateKey, h.passphrase) : null;
-      if (public != null) opened = public;
-      jumps.add(public == null ? h : _hopWithPassphrase(h, passphrase));
+    for (final (i, h) in r.jumps.indexed) {
+      final here = opened == null && opens(h.privateKey, h.passphrase);
+      if (here) opened = i;
+      jumps.add(here ? _hopWithPassphrase(h, passphrase) : h);
     }
-    final targetPublic = opened == null ? publicOf(r.privateKey, r.passphrase) : null;
-    opened ??= targetPublic;
+    final target = opened == null && opens(r.privateKey, r.passphrase);
+    if (target) opened = r.jumps.length;
     if (opened == null) return;
-    flow.request = _withKeyPassphrases(r, jumps, targetPublic == null ? r.passphrase : passphrase);
+    flow.request = _withKeyPassphrases(r, jumps, target ? passphrase : r.passphrase);
     if (!remember || !flow.canRememberPassphrase) return;
-    final keys = ref.read(identitiesProvider.notifier);
-    for (final identity in ref.read(identitiesProvider)) {
-      if (_sameKey(identity.publicKey, opened)) {
-        try {
-          keys.savePassphrase(identity.id, passphrase);
-        } catch (_) {
-          // Not saved: it is asked for next time, as before.
-        }
-        return;
-      }
+    // The steps are the request's own: a host changed since it was made
+    // no longer lines up, and nothing is saved.
+    final owner = owners != null && owners.length == r.jumps.length + 1 ? owners[opened] : null;
+    if (owner == null) return;
+    try {
+      ref.read(identitiesProvider.notifier).savePassphrase(owner, passphrase);
+    } catch (_) {
+      // Not saved: it is asked for next time, as before.
     }
-  }
-
-  /// Two OpenSSH public keys are the same key whatever their comments.
-  static bool _sameKey(String a, String b) {
-    List<String> core(String k) => k.trim().split(RegExp(r'\s+')).take(2).toList();
-    return listEquals(core(a), core(b));
   }
 
   static SshHop _hopWithPassphrase(SshHop h, String passphrase) => SshHop(

@@ -11,6 +11,7 @@ import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
+import '../lock/app_lock.dart';
 import '../sessions/session_manager.dart';
 import '../settings/settings_providers.dart';
 import '../shell/empty_state.dart';
@@ -120,8 +121,20 @@ class _InstallKeyDialogState extends ConsumerState<InstallKeyDialog> {
       _error = null;
       _done = null;
     });
+    final engine = ref.read(engineProvider);
+    // Logging in with a saved key is using it: the same check as connecting.
+    final usesKey = request.privateKey != null || request.jumps.any((j) => j.privateKey != null);
+    if (usesKey && !await ref.read(appLockProvider.notifier).unlockKeys()) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = 'The SSH key for ${host.label} stays locked, so nothing was installed.';
+        });
+      }
+      return;
+    }
     try {
-      final message = await ref.read(engineProvider).sshInstallPublicKey(request, widget.identity.publicKey);
+      final message = await engine.sshInstallPublicKey(request, widget.identity.publicKey);
       if (mounted) setState(() => _done = message);
     } catch (e) {
       if (mounted) setState(() => _error = e is String ? e : e.toString());

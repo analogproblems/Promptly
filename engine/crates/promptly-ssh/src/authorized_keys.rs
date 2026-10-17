@@ -8,6 +8,10 @@ use russh::keys::PublicKey;
 const ADDED: &str = "promptly-key-added";
 /// Printed by the command when the key was there already.
 const PRESENT: &str = "promptly-key-present";
+/// Whether the file already lists the key: on a line that is not a comment,
+/// the first word that names a key type (anything before it is options)
+/// and the key after it. Text later on the line is its comment.
+const FIND: &str = "/^[ \\t]*#/{next} {for(i=1;i<NF;i++)if($i~/^(ssh-|ecdsa-|sk-)/){if($i==t&&$(i+1)==k)f=1;break}} END{exit f?0:1}";
 
 /// The one-line command that installs `public_key` (OpenSSH one-line
 /// form) for the login it runs as. A missing `~/.ssh` is made with mode
@@ -44,7 +48,7 @@ pub fn command(public_key: &str) -> Result<String, String> {
             "if awk -v t={} -v k={} {} \"$f\"; then echo {PRESENT}; else {}; {} >> \"$f\" && echo {ADDED}; fi",
             quote(kind),
             quote(body),
-            quote("{for(i=1;i<NF;i++)if($i==t&&$(i+1)==k)f=1}END{exit f?0:1}"),
+            quote(FIND),
             // A last line without its newline would run into the new one.
             r#"if [ -s "$f" ] && [ -n "$(tail -c 1 "$f")" ]; then echo >> "$f"; fi"#,
             append,
@@ -165,6 +169,22 @@ mod tests {
         std::fs::write(&file, format!("from=\"10.0.0.0/8\" {bare} old name\n")).unwrap();
         let (out, code) = run(&home, &command(&key.public_openssh).unwrap());
         assert_eq!(outcome(&out, code), Ok(false), "{out}");
+
+        // Turned off with a #, or only quoted in another key's comment:
+        // not there, so it is added.
+        std::fs::write(
+            &file,
+            format!(
+                "# {bare} disabled\n  #{bare}\n{} see {bare}\n",
+                other.public_openssh
+            ),
+        )
+        .unwrap();
+        let (out, code) = run(&home, &command(&key.public_openssh).unwrap());
+        assert_eq!(outcome(&out, code), Ok(true), "{out}");
+        assert!(std::fs::read_to_string(&file)
+            .unwrap()
+            .ends_with(&format!("\n{}\n", key.public_openssh)));
         std::fs::remove_dir_all(home).unwrap();
     }
 
