@@ -76,13 +76,16 @@ pub trait FolderPath {
     fn folder_path(&self) -> &Path;
 }
 
-/// Where this tool keeps its own device state. One store per vault,
-/// encrypted with a key derived from the vault key, so it opens only for
-/// someone who could unlock the vault anyway. Beside it is a copy of the
-/// vault settings that key came from: when the key is changed on another
-/// device, that copy and the passphrase from before open the store, which
-/// is then locked with the new key. Nothing is set aside or started again.
-fn cli_store(folder: &Path, unlocked: &Unlocked) -> Result<Store> {
+/// Where this tool keeps its own device state for one vault: the store,
+/// and copies of the vault settings its key came from (the current one and
+/// the one before).
+struct DataPaths {
+    db: PathBuf,
+    manifest: PathBuf,
+    previous: PathBuf,
+}
+
+fn data_paths(folder: &Path, vault_id: &str) -> DataPaths {
     let base = std::env::var_os("PROMPTLY_CLI_DATA_DIR")
         .map(PathBuf::from)
         .or_else(|| {
@@ -94,56 +97,96 @@ fn cli_store(folder: &Path, unlocked: &Unlocked) -> Result<Store> {
                 .map(|d| d.join("promptly-cli"))
         })
         .unwrap_or_else(|| folder.join(".promptly-cli"));
-    let id = &unlocked.manifest.vault_id;
-    let path = base.join(format!("{id}.db"));
-    let saved = base.join(format!("{id}.manifest.json"));
+    DataPaths {
+        db: base.join(format!("{vault_id}.db")),
+        manifest: base.join(format!("{vault_id}.manifest.json")),
+        previous: base.join(format!("{vault_id}.manifest.previous.json")),
+    }
+}
+
+/// Keep `manifest` as the settings this tool's key comes from, and the
+/// one it replaces as the one before, so a store left under either key
+/// can still be opened.
+fn save_manifest(paths: &DataPaths, manifest: &Manifest) -> Result<()> {
+    let json = manifest.to_json();
+    let current = std::fs::read_to_string(&paths.manifest).ok();
+    if current.as_deref() == Some(json.as_str()) {
+        return Ok(());
+    }
+    if let Some(dir) = paths.manifest.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    if current.is_some() {
+        std::fs::rename(&paths.manifest, &paths.previous)?;
+    }
+    let tmp = paths.manifest.with_extension("json.new");
+    std::fs::write(&tmp, &json)?;
+    std::fs::rename(&tmp, &paths.manifest)?;
+    Ok(())
+}
+
+/// This tool's own device state: one store per vault, encrypted with a key
+/// derived from the vault key, so it opens only for someone who could
+/// unlock the vault anyway. When the key was changed on another device,
+/// the passphrase from before brings it over (see [`bring_over`]): nothing
+/// is set aside or started again.
+fn cli_store(folder: &Path, unlocked: &Unlocked) -> Result<Store> {
+    let paths = data_paths(folder, &unlocked.manifest.vault_id);
     let key = DbKey::derive(&unlocked.dek);
-    if !Store::key_fits(&path, &key)? {
-        bring_over(&path, &saved, &key)?;
+    if !Store::key_fits(&paths.db, &key)? {
+        bring_over(&paths, &key)?;
     }
-    let store = Store::open(&path, Some(&key))?;
-    let json = unlocked.manifest.to_json();
-    if std::fs::read_to_string(&saved).ok().as_deref() != Some(json.as_str()) {
-        let tmp = base.join(format!("{id}.manifest.json.new"));
-        std::fs::write(&tmp, &json)?;
-        std::fs::rename(&tmp, &saved)?;
-    }
+    let store = Store::open(&paths.db, Some(&key))?;
+    finish_reseal(&store, &unlocked.dek)?;
+    save_manifest(&paths, &unlocked.manifest)?;
     Ok(store)
 }
 
-/// The store at `path` is locked with a key the vault no longer has: open
-/// it with the key from the settings saved beside it, unlocked with the
-/// passphrase from before, and lock it with `key`. Stops with a way out
-/// rather than lose anything.
-fn bring_over(path: &Path, saved: &Path, key: &DbKey) -> Result<()> {
+/// The store is locked with a key the vault no longer has: find it among
+/// the settings saved beside it with the passphrase from before, open the
+/// store with it, lock it with `key`, and lock its secrets again under the
+/// new vault key. Stops with a way out rather than lose anything.
+fn bring_over(paths: &DataPaths, key: &DbKey) -> Result<()> {
     let start_afresh = format!(
         "To start afresh instead, delete {}: everything but what this tool kept on this device only comes back from the vault.",
-        path.display()
+        paths.db.display()
     );
-    let manifest = std::fs::read(saved)
-        .ok()
-        .and_then(|json| Manifest::from_json(&json).ok())
-        .ok_or_else(|| {
-            anyhow!(
-                "this tool's records are locked with a key the vault no longer has. {start_afresh}"
-            )
-        })?;
+    let saved: Vec<Manifest> = [&paths.manifest, &paths.previous]
+        .into_iter()
+        .filter_map(|p| Manifest::from_json(&std::fs::read(p).ok()?).ok())
+        .collect();
+    anyhow::ensure!(
+        !saved.is_empty(),
+        "this tool's records are locked with a key the vault no longer has. {start_afresh}"
+    );
     let passphrase = previous_passphrase().ok_or_else(|| {
         anyhow!(
-            "the vault's key was changed on another device. To bring this tool's records over, give the passphrase from before the change in PROMPTLY_PREVIOUS_PASSPHRASE, or run it in a terminal to be asked. {start_afresh}"
+            "the vault's key was changed on another device. To bring this tool's records over, give the passphrase it last used in PROMPTLY_PREVIOUS_PASSPHRASE, or run it in a terminal to be asked. {start_afresh}"
         )
     })?;
-    let old = DbKey::derive(
-        &manifest
-            .unlock(&passphrase)
-            .map_err(|_| anyhow!("that is not the passphrase from before the key change"))?,
-    );
-    anyhow::ensure!(
-        Store::key_fits(path, &old)?,
-        "this tool's records are locked with a key older than the one saved beside them. {start_afresh}"
-    );
-    Store::open(path, Some(&old))?.rekey(key)?;
-    Ok(())
+    let mut opened = false;
+    for manifest in saved {
+        let Ok(old) = manifest.unlock(&passphrase) else {
+            continue;
+        };
+        opened = true;
+        let old_key = DbKey::derive(&old);
+        if !Store::key_fits(&paths.db, &old_key)? {
+            continue;
+        }
+        // The old key goes in first, so a run that stops after the store
+        // is locked with the new key still locks its secrets again.
+        let store = Store::open(&paths.db, Some(&old_key))?;
+        add_reseal_from(&store, &old)?;
+        store.meta_set(META_SNAPSHOT_DUE, "true")?;
+        store.rekey(key)?;
+        return Ok(());
+    }
+    anyhow::bail!(if opened {
+        format!("this tool's records are locked with a key from before that passphrase: give the one before it. {start_afresh}")
+    } else {
+        "that is not the passphrase this tool last used".to_string()
+    })
 }
 
 fn previous_passphrase() -> Option<zeroize::Zeroizing<String>> {
@@ -163,9 +206,39 @@ fn previous_passphrase() -> Option<zeroize::Zeroizing<String>> {
 const META_KEPT: &str = "kept_on_device";
 /// Set while a snapshot under a new key is still to be written.
 const META_SNAPSHOT_DUE: &str = "snapshot_due";
-/// The data key from before a key change, kept while the secrets sealed
-/// under it are still to be locked again under the new one.
+/// The data keys from before a key change, kept while secrets sealed
+/// under them are still to be locked again under the new one.
 const META_RESEAL_FROM: &str = "reseal_from";
+
+fn reseal_from(store: &Store) -> Result<Vec<Dek>> {
+    Ok(store
+        .meta_get(META_RESEAL_FROM)?
+        .and_then(|json| serde_json::from_str::<Vec<[u8; 32]>>(&json).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(Dek)
+        .collect())
+}
+
+fn add_reseal_from(store: &Store, old: &Dek) -> Result<()> {
+    let mut keys: Vec<[u8; 32]> = reseal_from(store)?.into_iter().map(|k| k.0).collect();
+    if !keys.contains(&old.0) {
+        keys.push(old.0);
+    }
+    store.meta_set(META_RESEAL_FROM, &json!(keys).to_string())?;
+    Ok(())
+}
+
+/// Lock again under `new` whatever secrets a key change left under an old
+/// key, then forget the old keys.
+fn finish_reseal(store: &Store, new: &Dek) -> Result<()> {
+    let olds = reseal_from(store)?;
+    if !olds.is_empty() {
+        reseal(store, &olds, new)?;
+        store.meta_delete(META_RESEAL_FROM)?;
+    }
+    Ok(())
+}
 
 fn open_vault<'a>(backend: &'a LocalFolder, store: &Store, unlocked: &Unlocked) -> Vault<'a> {
     let kept = store
@@ -202,12 +275,7 @@ fn ensure_not_removed(store: &Store) -> Result<()> {
 /// tombstone), then a snapshot when one is due or the folder has grown.
 fn push_all<'a>(store: &Store, vault: Vault<'a>) -> Result<(Vault<'a>, Option<u64>)> {
     ensure_not_removed(store)?;
-    if let Some(old) = store.meta_get(META_RESEAL_FROM)? {
-        if let Ok(old) = serde_json::from_str::<[u8; 32]>(&old) {
-            reseal(store, &Dek(old), vault.dek())?;
-        }
-        store.meta_delete(META_RESEAL_FROM)?;
-    }
+    finish_reseal(store, vault.dek())?;
     let previous: Kept = vault.kept().clone();
     let plan = store.with_state(|state| policy::plan_kept(state, &previous));
     for (col, id) in &plan.back {
@@ -645,9 +713,9 @@ pub fn rotate_dek(folder: &Path, unlocked: &Unlocked, new_passphrase: &str) -> R
     // leaves the next one what it needs to finish: the old key to lock the
     // secrets again with, and a snapshot owed. Should the key not change
     // after all, both cost only a snapshot.
-    store.meta_set(META_RESEAL_FROM, &json!(unlocked.dek.0).to_string())?;
+    add_reseal_from(&store, &unlocked.dek)?;
     store.meta_set(META_SNAPSHOT_DUE, "true")?;
-    let (vault, _manifest, code) = vault
+    let (vault, manifest, code) = vault
         .rotate(&known, new_passphrase, params)
         .map_err(|e| anyhow!("{e}"))?;
     // The vault has the new key from here, so the new code must reach the
@@ -655,8 +723,15 @@ pub fn rotate_dek(folder: &Path, unlocked: &Unlocked, new_passphrase: &str) -> R
     // with the new passphrase finishes it.
     let mut trouble = Vec::new();
     // This tool's own records are locked with a key made from the vault's.
-    // Left under the old one, the next run brings them over (see
-    // [`cli_store`]).
+    // The new settings are kept first, with the old ones as the ones
+    // before, so whichever key the store is left under, the next run can
+    // bring it over (see [`bring_over`]).
+    let paths = data_paths(folder, &unlocked.manifest.vault_id);
+    if let Err(e) = save_manifest(&paths, &manifest) {
+        trouble.push(format!(
+            "the new vault settings could not be kept beside this tool's records ({e})"
+        ));
+    }
     if let Err(e) = store.rekey(&DbKey::derive(vault.dek())) {
         trouble.push(format!(
             "this tool's records could not be locked with the new key ({e}); the next run asks for the passphrase from before to do it"
@@ -674,10 +749,10 @@ pub fn rotate_dek(folder: &Path, unlocked: &Unlocked, new_passphrase: &str) -> R
     Ok(code.as_str().to_string())
 }
 
-/// Lock every secret record sealed under `old` again under `new`. Records
-/// `new` opens already are left as they are, so this can run again after
-/// stopping part way.
-fn reseal(store: &Store, old: &Dek, new: &Dek) -> Result<()> {
+/// Lock every secret record sealed under one of `olds` again under `new`.
+/// Records `new` opens already are left as they are, so this can run again
+/// after stopping part way.
+fn reseal(store: &Store, olds: &[Dek], new: &Dek) -> Result<()> {
     for r in store.list(Col::Secrets)? {
         let Ok(mut fields) = serde_json::from_str::<Value>(&r.json) else {
             continue;
@@ -692,7 +767,10 @@ fn reseal(store: &Store, old: &Dek, new: &Dek) -> Result<()> {
         if crypto::open(new, aad.as_bytes(), &ct).is_ok() {
             continue;
         }
-        let Ok(plain) = crypto::open(old, aad.as_bytes(), &ct) else {
+        let Some(plain) = olds
+            .iter()
+            .find_map(|old| crypto::open(old, aad.as_bytes(), &ct).ok())
+        else {
             eprintln!(
                 "warning: secret {} could not be read to lock it again",
                 r.id
@@ -1069,9 +1147,7 @@ mod tests {
                     .to_string(),
             )
             .unwrap();
-        again
-            .meta_set(META_RESEAL_FROM, &json!(unlocked.dek.0).to_string())
-            .unwrap();
+        add_reseal_from(&again, &unlocked.dek).unwrap();
         drop(again);
         import(&vault_dir, &renewed, "{}").unwrap();
         fresh_store.pull(&fresh_vault).unwrap();
@@ -1105,6 +1181,31 @@ mod tests {
                 &json!({"id": snippet, "label": "ls", "command": "ls"}).to_string(),
             )
             .unwrap();
+        // And a password this tool keeps to itself.
+        let mine_only = "0192f3a0-0000-7000-8000-00000000000b";
+        let own_secret = |store: &Store, dek: &Dek, value: &[u8], sync: &str| {
+            let ct = crypto::seal(dek, format!("secret/{mine_only}").as_bytes(), value).unwrap();
+            store
+                .put(
+                    Collection::Secrets,
+                    mine_only,
+                    &json!({"id": mine_only, "kind": "password", "ciphertext": ct, "sync": sync})
+                        .to_string(),
+                )
+                .unwrap();
+        };
+        let read_own = |store: &Store, dek: &Dek| {
+            let record: Value = serde_json::from_str(
+                &store
+                    .get(Collection::Secrets, mine_only)
+                    .unwrap()
+                    .unwrap()
+                    .json,
+            )
+            .unwrap();
+            decrypt_secret(dek, mine_only, &record)
+        };
+        own_secret(&pending, &renewed.dek, b"kept here", "local_only");
         let waiting = pending.pending_count().unwrap();
         assert!(waiting > 0);
         drop(pending);
@@ -1146,10 +1247,61 @@ mod tests {
         let moved = moved.unwrap();
         assert_eq!(moved.device_id(), &me);
         assert!(moved.get(Collection::Hosts, local).unwrap().is_some());
-        assert_eq!(moved.pending_count().unwrap(), waiting);
+        assert!(
+            moved.pending_count().unwrap() >= waiting,
+            "nothing unwritten lost"
+        );
         assert_eq!(set_aside(), 0);
+        assert_eq!(
+            read_own(&moved, &third.dek).as_deref(),
+            Some("kept here"),
+            "its secrets are locked again under the new key too"
+        );
         drop(moved);
         assert_eq!(cli_store(&vault_dir, &third).unwrap().device_id(), &me);
+
+        // A new key made here, then straight away another on the laptop,
+        // with no run of this tool between: the passphrase this tool last
+        // used still brings everything over.
+        rotate_dek(&vault_dir, &third, "fourth pass").unwrap();
+        let laptop_vault =
+            Vault::open(&backend, laptop.device_id().clone(), "fourth pass").unwrap();
+        laptop.pull(&laptop_vault).unwrap();
+        let known = laptop_vault.check_manifest(None).unwrap();
+        laptop_vault
+            .rotate(&known, "fifth pass", KdfParams::fast_for_tests())
+            .unwrap();
+        let creds = Creds {
+            folder: &vault_dir,
+            pass: "fifth pass",
+        };
+        let fifth = unlock(&creds).unwrap().unwrap();
+        std::env::set_var("PROMPTLY_PREVIOUS_PASSPHRASE", "fourth pass");
+        let moved = cli_store(&vault_dir, &fifth);
+        std::env::remove_var("PROMPTLY_PREVIOUS_PASSPHRASE");
+        let moved = moved.unwrap();
+        assert_eq!(moved.device_id(), &me);
+        assert_eq!(read_own(&moved, &fifth.dek).as_deref(), Some("kept here"));
+
+        // Shared later, it reaches other devices readable.
+        let record = moved.get(Collection::Secrets, mine_only).unwrap().unwrap();
+        let mut fields: Value = serde_json::from_str(&record.json).unwrap();
+        fields["sync"] = json!("vault");
+        moved
+            .put(Collection::Secrets, mine_only, &fields.to_string())
+            .unwrap();
+        drop(moved);
+        import(&vault_dir, &fifth, "{}").unwrap();
+        let reader = Store::open(&dir.join("reader.db"), None).unwrap();
+        let reader_vault = Vault::with_dek(
+            &backend,
+            reader.device_id().clone(),
+            vault.vault_id().to_string(),
+            fifth.dek.clone(),
+        );
+        reader.pull(&reader_vault).unwrap();
+        assert_eq!(read_own(&reader, &fifth.dek).as_deref(), Some("kept here"));
+        assert_eq!(set_aside(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

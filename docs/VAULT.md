@@ -272,7 +272,7 @@ A shared vault is just a second vault in a folder that several people can access
 - `devices remove <id or name>`, with `--rekey` to run `rotate-dek` straight after: mark a device removed, as in section 11.
 - `ssh-config`: emit an OpenSSH `config` file from the vault, so the same hosts work in a plain terminal.
 
-Its own records are encrypted with a key made from the `dek`. When another device gives the vault a new `dek`, its next run asks for the passphrase from before the change (or reads it from `PROMPTLY_PREVIOUS_PASSPHRASE`), opens its records with the copy of the manifest it keeps beside them, and encrypts them again under the new key, so nothing it kept to itself is lost.
+Its own records are encrypted with a key made from the `dek`. When another device gives the vault a new `dek`, its next run asks for the passphrase it last used (or reads it from `PROMPTLY_PREVIOUS_PASSPHRASE`), opens its records with the copies of the manifest it keeps beside them (the current one and the one before), and encrypts them, and the secrets in them, again under the new key, so nothing it kept to itself is lost.
 
 The JSON export format is the natural one: the data model from DESIGN.md section 6, one array per collection. It is also how Promptly imports from other apps.
 
