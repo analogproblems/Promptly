@@ -9,8 +9,18 @@ rust-version.workspace = true
 
 [dependencies]
 promptly-vault = { workspace = true }
-rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
+hkdf = "0.13"
+sha2 = "0.11"
+
+# The database is SQLCipher, built from source. Apple platforms use the
+# system's own crypto library; everywhere else OpenSSL is built from source
+# too, so no platform needs it installed.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher"] }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }

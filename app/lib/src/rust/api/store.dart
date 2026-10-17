@@ -11,14 +11,22 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `DeviceKey`
 
 /// Hand the engine the device key from the platform's secure storage, so
-/// saved secrets are encrypted on disk. Call once at startup, before
-/// anything reads a secret; without it they are stored as plain files.
+/// saved secrets and the local database are encrypted on disk. Call once at
+/// startup, before anything else; the database will not open until this,
+/// [`set_no_device_key`] or [`set_device_key_unavailable`] has been called.
 void setDeviceKey({required List<int> key}) =>
     RustLib.instance.api.crateApiStoreSetDeviceKey(key: key);
 
+/// Tell the engine the system has no secure storage to keep a device key
+/// in (a Linux desktop with no keyring). Saved secrets are then plain
+/// owner-only files and the local database is not encrypted.
+void setNoDeviceKey() => RustLib.instance.api.crateApiStoreSetNoDeviceKey();
+
 /// Tell the engine the platform's secure storage exists but would not give
 /// up the device key (denied, locked or damaged). Saved secrets are then
-/// neither read nor written until the app restarts with the key.
+/// neither read nor written until the app restarts with the key; the local
+/// database opens unencrypted if it is not encrypted already, and fails to
+/// open if it is.
 void setDeviceKeyUnavailable() =>
     RustLib.instance.api.crateApiStoreSetDeviceKeyUnavailable();
 
@@ -78,7 +86,9 @@ String? secretGet({required String id}) =>
 void secretDelete({required String id}) =>
     RustLib.instance.api.crateApiStoreSecretDelete(id: id);
 
-/// How saved passwords, keys and the vault key are kept on this device.
+/// How saved passwords, keys and the vault key are kept on this device. The
+/// local database follows the same device key: encrypted when there is one,
+/// plain when there is not.
 enum SecretsState {
   /// Encrypted with the device key.
   encrypted,

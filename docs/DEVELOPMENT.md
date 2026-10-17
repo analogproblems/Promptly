@@ -31,6 +31,15 @@ Flutter builds, so there is no separate step to build the engine for the app.
 
 On Ubuntu, `tools/setup.sh` installs all of this and is safe to re-run.
 
+The local database is SQLCipher, built from source with the engine. On
+macOS and iOS it uses the system's crypto library; everywhere else the build
+also compiles OpenSSL from source, which needs Perl and `make` (on Windows, a
+native Perl such as Strawberry Perl rather than Git Bash's, and Visual
+Studio's `nmake`). The first engine build takes a few minutes longer for it.
+OpenSSL's build nests deep, so on Windows keep the checkout's path short
+(50 characters or fewer, such as `C:\src\Promptly`); `cargokit.cmake`
+already builds the engine in a short folder there for the same reason.
+
 The codegen version, the `flutter_rust_bridge` Dart package and the
 `flutter_rust_bridge` Rust crate must all be the same version. If they drift,
 the generated code refuses to load with a clear message; fix by matching them

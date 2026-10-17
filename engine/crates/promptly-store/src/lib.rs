@@ -14,4 +14,4 @@ pub mod store;
 
 pub use promptly_vault::model::Collection;
 pub use secrets::{FileSecretStore, MemorySecretStore, SecretError, SecretStore};
-pub use store::{col_name, col_parse, Record, Store, StoreError};
+pub use store::{col_name, col_parse, DbKey, Record, Store, StoreError};

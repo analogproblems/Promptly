@@ -217,7 +217,7 @@ promptly/
 
 **promptly-vault.** The heart of sync: data model types, the operation log, merge rules, encryption, the `Backend` trait and its implementations, and the sync scheduler. Pure Rust with no platform dependencies beyond what each backend needs (an HTTP client for cloud APIs, the filesystem for local, `russh-sftp` for SFTP). Fully specified in [VAULT.md](VAULT.md).
 
-**promptly-store.** The materialised local state in SQLite (`rusqlite`, bundled, with SQLCipher for encryption at rest). Secrets such as the vault key are never in SQLite; they go through a `SecretStore` trait. Its file implementation seals each secret with a per-device key that the app keeps in the platform's secure storage (Keychain, Android Keystore, Windows Credential Manager, libsecret) and hands to the engine at startup.
+**promptly-store.** The materialised local state in SQLite (`rusqlite`, bundled, with SQLCipher for encryption at rest). Secrets such as the vault key are never in SQLite; they go through a `SecretStore` trait. Its file implementation seals each secret with a per-device key that the app keeps in the platform's secure storage (Keychain, Android Keystore, Windows Credential Manager, libsecret) and hands to the engine at startup. The database key is derived from that same device key (HKDF-SHA256, labelled `promptly-db`), never the device key itself; the CLI derives its copy's key from the vault key the same way. With no secure storage (a Linux desktop without a keyring) both stay plain and Settings says so; a plain database is encrypted in place once a key is available.
 
 **promptly-api.** A flat set of async functions and streams for the bridge: `connect(host_id)`, `write(session, bytes)`, `frames(session)`, `hosts()`, `sync_now()` and so on. No business logic here; it only adapts.
 
@@ -381,7 +381,7 @@ Done in M4 (the desktop pass; phones get checked with TalkBack on the Play test)
 ### 8.3 Platform storage
 
 - iOS: Keychain with the "when unlocked, this device only" accessibility class; files under Data Protection.
-- Android: Keystore (StrongBox when present) wraps the vault key; EncryptedFile for the database.
+- Android: Keystore (StrongBox when present) protects the device key, which seals the vault key and encrypts the database.
 - macOS: Keychain. Windows: Credential Manager plus DPAPI. Linux: libsecret with a file fallback that warns.
 
 ### 8.4 Supply chain

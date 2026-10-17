@@ -43,7 +43,7 @@ class DeviceKeyReady extends DeviceKey {
 }
 
 /// No secure storage to keep a key in: a Linux desktop with no keyring.
-/// Secrets stay owner-only plain files.
+/// Secrets stay owner-only plain files and the database is not encrypted.
 class DeviceKeyNoStorage extends DeviceKey {
   const DeviceKeyNoStorage();
 }
@@ -54,8 +54,8 @@ class DeviceKeyRefused extends DeviceKey {
   const DeviceKeyRefused();
 }
 
-/// The key that encrypts saved passwords, private keys and the vault key on
-/// disk, made once per device and kept in [slot].
+/// The key that encrypts saved passwords, private keys, the vault key and
+/// the local database on disk, made once per device and kept in [slot].
 ///
 /// Only on Linux does a failure mean there is no secure storage at all;
 /// anywhere else, and for a stored key that is not a key, it means the

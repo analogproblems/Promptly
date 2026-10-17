@@ -25,6 +25,8 @@ Future<void> main() async {
   } catch (_) {
     // The engine falls back to a per-platform default.
   }
+  // Before anything touches the local database or saved secrets: the
+  // engine will not open the database until it has heard one of these.
   try {
     switch (await loadDeviceKey()) {
       case DeviceKeyReady(:final bytes):
@@ -32,10 +34,11 @@ Future<void> main() async {
       case DeviceKeyRefused():
         rust_store.setDeviceKeyUnavailable();
       case DeviceKeyNoStorage():
-      // Secrets stay owner-only plain files, and Settings says so.
+        // Secrets and the database stay unencrypted, and Settings says so.
+        rust_store.setNoDeviceKey();
     }
   } catch (_) {
-    // The engine opened its secret store already; nothing to change.
+    // The engine opened its stores already; nothing to change.
   }
   runApp(const ProviderScope(child: PromptlyApp()));
 }

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
-use promptly_store::{col_name, col_parse, Collection, Store};
+use promptly_store::{col_name, col_parse, Collection, DbKey, Store};
 use promptly_vault::model::{Collection as Col, Host};
 use promptly_vault::{crypto, Backend, Dek, LocalFolder, Manifest, RecoveryCode, Vault};
 use serde_json::{json, Map, Value};
@@ -59,8 +59,10 @@ pub trait FolderPath {
     fn folder_path(&self) -> &Path;
 }
 
-/// Where this tool keeps its own device state. One store per vault.
-fn cli_store(folder: &Path, vault_id: &str) -> Result<Store> {
+/// Where this tool keeps its own device state. One store per vault,
+/// encrypted with a key derived from the vault key, so it opens only for
+/// someone who could unlock the vault anyway.
+fn cli_store(folder: &Path, unlocked: &Unlocked) -> Result<Store> {
     let base = std::env::var_os("PROMPTLY_CLI_DATA_DIR")
         .map(PathBuf::from)
         .or_else(|| {
@@ -72,7 +74,8 @@ fn cli_store(folder: &Path, vault_id: &str) -> Result<Store> {
                 .map(|d| d.join("promptly-cli"))
         })
         .unwrap_or_else(|| folder.join(".promptly-cli"));
-    Ok(Store::open(&base.join(format!("{vault_id}.db")))?)
+    let path = base.join(format!("{}.db", unlocked.manifest.vault_id));
+    Ok(Store::open(&path, Some(&DbKey::derive(&unlocked.dek)))?)
 }
 
 fn open_vault<'a>(backend: &'a LocalFolder, store: &Store, unlocked: &Unlocked) -> Vault<'a> {
@@ -90,7 +93,7 @@ fn fresh<'a>(
     folder: &Path,
     unlocked: &Unlocked,
 ) -> Result<(Store, Vault<'a>)> {
-    let store = cli_store(folder, &unlocked.manifest.vault_id)?;
+    let store = cli_store(folder, unlocked)?;
     let vault = open_vault(backend, &store, unlocked);
     let report = store.pull(&vault)?;
     for w in report.warnings {
@@ -263,7 +266,7 @@ pub fn import(folder: &Path, unlocked: &Unlocked, text: &str) -> Result<usize> {
 
 pub fn sync(folder: &Path, unlocked: &Unlocked) -> Result<String> {
     let backend = LocalFolder::new(folder);
-    let store = cli_store(folder, &unlocked.manifest.vault_id)?;
+    let store = cli_store(folder, unlocked)?;
     let vault = open_vault(&backend, &store, unlocked);
     let report = store.pull(&vault)?;
     let pushed = store.push(&vault)?;
@@ -507,7 +510,7 @@ mod tests {
 
         // An app device makes the vault and adds a host with a key.
         let backend = LocalFolder::new(&vault_dir);
-        let app = Store::open(&dir.join("app.db")).unwrap();
+        let app = Store::open(&dir.join("app.db"), None).unwrap();
         let (vault, _code) = Vault::create(
             &backend,
             app.device_id().clone(),
@@ -623,16 +626,23 @@ mod tests {
         .unwrap()
         .is_some());
         // The device id of the CLI is stable across runs.
-        let a = cli_store(&vault_dir, &unlocked.manifest.vault_id)
+        let a = cli_store(&vault_dir, &unlocked)
             .unwrap()
             .device_id()
             .clone();
-        let b = cli_store(&vault_dir, &unlocked.manifest.vault_id)
+        let b = cli_store(&vault_dir, &unlocked)
             .unwrap()
             .device_id()
             .clone();
         assert_eq!(a, b);
         let _ = DeviceId::parse(a.as_str()).unwrap();
+        // The CLI's copy is encrypted, not plain SQLite.
+        let db = std::fs::read(
+            dir.join("cli-data")
+                .join(format!("{}.db", unlocked.manifest.vault_id)),
+        )
+        .unwrap();
+        assert!(!db.starts_with(b"SQLite format 3\0"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

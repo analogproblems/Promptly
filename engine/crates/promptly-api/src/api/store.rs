@@ -9,7 +9,7 @@
 use std::sync::{Arc, Mutex};
 
 use flutter_rust_bridge::frb;
-use promptly_store::{col_parse, Collection, FileSecretStore, SecretStore, Store};
+use promptly_store::{col_parse, Collection, DbKey, FileSecretStore, SecretStore, Store};
 use promptly_vault::model::{Group, Host, Identity, Snippet};
 use promptly_vault::Dek;
 
@@ -19,14 +19,22 @@ use crate::sync_engine;
 static STORE: Mutex<Option<Arc<Store>>> = Mutex::new(None);
 static SECRETS: Mutex<Option<Arc<FileSecretStore>>> = Mutex::new(None);
 
+/// The local database, opened on first use with a key derived from the
+/// device key. It will not open until the app has said what became of that
+/// key, so it is never opened unencrypted by mistake.
 pub(crate) fn store() -> Result<Arc<Store>, String> {
     let mut guard = STORE.lock().unwrap();
     if let Some(s) = guard.as_ref() {
         return Ok(s.clone());
     }
+    let key = match &*DEVICE_KEY.lock().unwrap() {
+        None => return Err("the local store was used before startup finished".into()),
+        Some(DeviceKey::Key(key)) => Some(DbKey::derive(key)),
+        Some(DeviceKey::NoStorage | DeviceKey::Unavailable) => None,
+    };
     let path = data_dir().join("promptly.db");
     let s = Arc::new(
-        Store::open(&path)
+        Store::open(&path, key.as_ref())
             .map_err(|e| format!("could not open the local store at {}: {e}", path.display()))?,
     );
     *guard = Some(s.clone());
@@ -37,21 +45,33 @@ static DEVICE_KEY: Mutex<Option<DeviceKey>> = Mutex::new(None);
 
 enum DeviceKey {
     Key(Dek),
+    NoStorage,
     Unavailable,
 }
 
 /// Hand the engine the device key from the platform's secure storage, so
-/// saved secrets are encrypted on disk. Call once at startup, before
-/// anything reads a secret; without it they are stored as plain files.
+/// saved secrets and the local database are encrypted on disk. Call once at
+/// startup, before anything else; the database will not open until this,
+/// [`set_no_device_key`] or [`set_device_key_unavailable`] has been called.
 #[frb(sync)]
 pub fn set_device_key(key: Vec<u8>) -> Result<(), String> {
     let key = Dek::from_slice(&key).ok_or("the device key must be 32 bytes")?;
     set_key(DeviceKey::Key(key))
 }
 
+/// Tell the engine the system has no secure storage to keep a device key
+/// in (a Linux desktop with no keyring). Saved secrets are then plain
+/// owner-only files and the local database is not encrypted.
+#[frb(sync)]
+pub fn set_no_device_key() -> Result<(), String> {
+    set_key(DeviceKey::NoStorage)
+}
+
 /// Tell the engine the platform's secure storage exists but would not give
 /// up the device key (denied, locked or damaged). Saved secrets are then
-/// neither read nor written until the app restarts with the key.
+/// neither read nor written until the app restarts with the key; the local
+/// database opens unencrypted if it is not encrypted already, and fails to
+/// open if it is.
 #[frb(sync)]
 pub fn set_device_key_unavailable() -> Result<(), String> {
     set_key(DeviceKey::Unavailable)
@@ -61,11 +81,16 @@ fn set_key(key: DeviceKey) -> Result<(), String> {
     if SECRETS.lock().unwrap().is_some() {
         return Err("the secret store is already open".into());
     }
+    if STORE.lock().unwrap().is_some() {
+        return Err("the local store is already open".into());
+    }
     *DEVICE_KEY.lock().unwrap() = Some(key);
     Ok(())
 }
 
-/// How saved passwords, keys and the vault key are kept on this device.
+/// How saved passwords, keys and the vault key are kept on this device. The
+/// local database follows the same device key: encrypted when there is one,
+/// plain when there is not.
 pub enum SecretsState {
     /// Encrypted with the device key.
     Encrypted,
@@ -95,8 +120,10 @@ fn secret_store() -> Arc<FileSecretStore> {
     let dir = data_dir().join("secrets");
     let s = Arc::new(match &*DEVICE_KEY.lock().unwrap() {
         Some(DeviceKey::Key(key)) => FileSecretStore::encrypted(dir, key.clone()),
+        Some(DeviceKey::NoStorage) => FileSecretStore::new(dir),
         Some(DeviceKey::Unavailable) => FileSecretStore::locked(dir),
-        None => FileSecretStore::new(dir),
+        // Too early: locked for now, and not kept, so the key can still come.
+        None => return Arc::new(FileSecretStore::locked(dir)),
     });
     *guard = Some(s.clone());
     s

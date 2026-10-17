@@ -5,18 +5,23 @@
 //! sync markers. Everything is kept in memory and written through, so reads
 //! never touch the database. Records go in and out as JSON objects in the
 //! vault's own format.
+//!
+//! With a [`DbKey`] the file is SQLCipher: every page is encrypted, so the
+//! file on disk reads as random bytes. Without one it is plain SQLite.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use hkdf::Hkdf;
 use promptly_vault::model::Collection;
 use promptly_vault::state::{Field, Record as VaultRecord};
 use promptly_vault::{
-    Clock, DeviceId, Op, PullReport, State, SyncError, SyncState, Timestamp, Vault,
+    Clock, Dek, DeviceId, Op, PullReport, State, SyncError, SyncState, Timestamp, Vault,
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, ErrorCode, OptionalExtension};
 use serde_json::{Map, Value};
+use sha2::Sha256;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
@@ -30,6 +35,8 @@ pub enum StoreError {
     InvalidRecord(String),
     #[error("stored data is not valid: {0}")]
     Corrupt(String),
+    #[error("the database is encrypted and its key is not available")]
+    Locked,
     #[error(transparent)]
     Sync(#[from] SyncError),
 }
@@ -149,14 +156,149 @@ fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<(), StoreError>
     Ok(())
 }
 
+/// The key that encrypts the database file. It is derived from a longer-lived
+/// key (the device key in the app, the vault key in the CLI) and never is that
+/// key itself, which already seals other files.
+#[derive(Clone)]
+pub struct DbKey([u8; 32]);
+
+impl DbKey {
+    pub fn derive(from: &Dek) -> Self {
+        let mut key = [0u8; 32];
+        Hkdf::<Sha256>::new(None, &from.0)
+            .expand(b"promptly-db", &mut key)
+            .expect("32 bytes is a valid HKDF length");
+        Self(key)
+    }
+
+    /// SQLCipher's form for a raw key, so it skips its own passphrase stretching.
+    fn literal(&self) -> String {
+        let hex: String = self.0.iter().map(|b| format!("{b:02x}")).collect();
+        format!("x'{hex}'")
+    }
+}
+
+impl std::fmt::Debug for DbKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DbKey(…)")
+    }
+}
+
+/// What the start of a database file says about it.
+#[derive(Debug, PartialEq, Eq)]
+enum FileKind {
+    /// No file yet, or an empty one.
+    Missing,
+    Plain,
+    /// Anything else: an encrypted file starts with random bytes.
+    Encrypted,
+}
+
+fn file_kind(path: &Path) -> Result<FileKind, StoreError> {
+    use std::io::Read;
+    let mut head = Vec::with_capacity(16);
+    match std::fs::File::open(path) {
+        Ok(f) => f
+            .take(16)
+            .read_to_end(&mut head)
+            .map_err(|e| StoreError::Io(path.display().to_string(), e))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(FileKind::Missing),
+        Err(e) => return Err(StoreError::Io(path.display().to_string(), e)),
+    };
+    Ok(if head.is_empty() {
+        FileKind::Missing
+    } else if head == b"SQLite format 3\0" {
+        FileKind::Plain
+    } else {
+        FileKind::Encrypted
+    })
+}
+
+/// `path` with `suffix` added to its file name, as SQLite names its
+/// `-wal` and `-shm` files.
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut s = path.as_os_str().to_owned();
+    s.push(suffix);
+    PathBuf::from(s)
+}
+
+/// Open `path`, keyed when there is a key, and read from it once so a wrong
+/// key fails here rather than on first use.
+fn connect(path: &Path, key: Option<&DbKey>) -> Result<Connection, rusqlite::Error> {
+    let conn = Connection::open(path)?;
+    if let Some(key) = key {
+        conn.pragma_update(None, "key", key.literal())?;
+    }
+    conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |_| Ok(()))?;
+    Ok(conn)
+}
+
+/// Rewrite a plain database encrypted, replacing it in one rename, so a
+/// crash leaves either the plain file or the encrypted one.
+fn encrypt_in_place(path: &Path, key: &DbKey) -> Result<(), StoreError> {
+    let tmp = with_suffix(path, ".encrypting");
+    let _ = std::fs::remove_file(&tmp);
+    {
+        let conn = connect(path, None)?;
+        conn.execute(
+            "ATTACH DATABASE ?1 AS encrypted KEY ?2",
+            params![tmp.to_string_lossy(), key.literal()],
+        )?;
+        conn.query_row("SELECT sqlcipher_export('encrypted')", [], |_| Ok(()))?;
+        conn.execute("DETACH DATABASE encrypted", [])?;
+    }
+    // Closing checkpointed the plain log into the copy; what is left of it
+    // must not sit beside the encrypted file.
+    for suffix in ["-wal", "-shm"] {
+        let _ = std::fs::remove_file(with_suffix(path, suffix));
+    }
+    std::fs::rename(&tmp, path).map_err(|e| StoreError::Io(path.display().to_string(), e))
+}
+
+/// Move a database no key here can read out of the way, with its log, so a
+/// new one can start. Nothing is deleted.
+fn set_aside(path: &Path) -> Result<(), StoreError> {
+    let stamp = OffsetDateTime::now_utc().unix_timestamp();
+    let aside = with_suffix(path, &format!(".unreadable-{stamp}"));
+    for suffix in ["-wal", "-shm"] {
+        let from = with_suffix(path, suffix);
+        if from.exists() {
+            let _ = std::fs::rename(&from, with_suffix(&aside, suffix));
+        }
+    }
+    std::fs::rename(path, &aside).map_err(|e| StoreError::Io(path.display().to_string(), e))
+}
+
 impl Store {
-    /// Open or create the database at `path`.
-    pub fn open(path: &Path) -> Result<Self, StoreError> {
+    /// Open or create the database at `path`, encrypted with `key` if given.
+    ///
+    /// With a key, a plain file (written before the key existed) is
+    /// encrypted first, and a file the key cannot read (sealed with a key
+    /// that has since been replaced, so nothing can read it) is renamed
+    /// `<name>.unreadable-<time>` and a new database started. Without a
+    /// key, an encrypted file is refused with [`StoreError::Locked`] and
+    /// left as it is, for when the key is back.
+    pub fn open(path: &Path, key: Option<&DbKey>) -> Result<Self, StoreError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| StoreError::Io(parent.display().to_string(), e))?;
         }
-        let conn = Connection::open(path)?;
+        let kind = file_kind(path)?;
+        let conn = match (key, kind) {
+            (None, FileKind::Encrypted) => return Err(StoreError::Locked),
+            (None, _) => connect(path, None)?,
+            (Some(key), FileKind::Plain) => {
+                encrypt_in_place(path, key)?;
+                connect(path, Some(key))?
+            }
+            (Some(key), _) => match connect(path, Some(key)) {
+                Err(e) if e.sqlite_error_code() == Some(ErrorCode::NotADatabase) => {
+                    set_aside(path)?;
+                    connect(path, Some(key))?
+                }
+                other => other?,
+            },
+        };
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         Self::init(conn)
     }
@@ -624,7 +766,7 @@ mod tests {
         }
         let device;
         {
-            let s = Store::open(&path).unwrap();
+            let s = Store::open(&path, None).unwrap();
             device = s.device_id().clone();
             assert_eq!(s.list(Collection::Hosts).unwrap().len(), 1, "migrated");
             s.put(
@@ -635,7 +777,7 @@ mod tests {
             .unwrap();
             assert_eq!(s.clock_counter(), 2);
         }
-        let again = Store::open(&path).unwrap();
+        let again = Store::open(&path, None).unwrap();
         assert_eq!(again.device_id(), &device, "the device id is kept");
         assert_eq!(again.clock_counter(), 2);
         assert_eq!(again.list(Collection::Snippets).unwrap().len(), 1);
@@ -699,5 +841,108 @@ mod tests {
         assert_eq!(a.list(Collection::Hosts).unwrap()[0].json, want);
         assert_eq!(b.list(Collection::Hosts).unwrap()[0].json, want);
         assert!(b.clock_counter() >= a.clock_counter() - 1);
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("promptly-store-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    const HOST: &str = r#"{"hostname":"10.0.0.1","id":"h","label":"web"}"#;
+
+    fn head(path: &Path) -> Vec<u8> {
+        std::fs::read(path).unwrap()[..16].to_vec()
+    }
+
+    #[test]
+    fn a_keyed_database_is_unreadable_without_its_key() {
+        let dir = temp_dir("keyed");
+        let path = dir.join("promptly.db");
+        let key = DbKey::derive(&Dek::generate());
+        let device;
+        {
+            let s = Store::open(&path, Some(&key)).unwrap();
+            device = s.device_id().clone();
+            s.put(Collection::Hosts, "h", HOST).unwrap();
+        }
+        assert_ne!(head(&path), b"SQLite format 3\0");
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(!bytes.windows(8).any(|w| w == b"10.0.0.1"), "no plain text");
+
+        let again = Store::open(&path, Some(&key)).unwrap();
+        assert_eq!(again.device_id(), &device);
+        assert_eq!(again.list(Collection::Hosts).unwrap()[0].json, HOST);
+        drop(again);
+
+        // Plain SQLite cannot read it, and the store will not open it unkeyed.
+        let plain = Connection::open(&path).unwrap();
+        assert!(plain
+            .query_row("SELECT COUNT(*) FROM sqlite_master", [], |_| Ok(()))
+            .is_err());
+        drop(plain);
+        assert!(matches!(Store::open(&path, None), Err(StoreError::Locked)));
+        assert!(connect(&path, Some(&DbKey::derive(&Dek::generate()))).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_wrong_key_sets_the_file_aside_and_starts_again() {
+        let dir = temp_dir("wrong-key");
+        let path = dir.join("promptly.db");
+        Store::open(&path, Some(&DbKey::derive(&Dek::generate())))
+            .unwrap()
+            .put(Collection::Hosts, "h", HOST)
+            .unwrap();
+        let s = Store::open(&path, Some(&DbKey::derive(&Dek::generate()))).unwrap();
+        assert!(s.list(Collection::Hosts).unwrap().is_empty());
+        let aside: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("promptly.db.unreadable-") && !n.contains("-wal"))
+            .collect();
+        assert_eq!(aside.len(), 1, "the old file is kept: {aside:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_a_key_the_database_is_plain_and_a_key_later_encrypts_it() {
+        let dir = temp_dir("plain");
+        let path = dir.join("promptly.db");
+        Store::open(&path, None)
+            .unwrap()
+            .put(Collection::Hosts, "h", HOST)
+            .unwrap();
+        assert_eq!(head(&path), b"SQLite format 3\0");
+        assert_eq!(
+            Store::open(&path, None)
+                .unwrap()
+                .list(Collection::Hosts)
+                .unwrap()[0]
+                .json,
+            HOST
+        );
+
+        // The keyring arrives: the same data, now encrypted.
+        let key = DbKey::derive(&Dek::generate());
+        let s = Store::open(&path, Some(&key)).unwrap();
+        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        drop(s);
+        assert_ne!(head(&path), b"SQLite format 3\0");
+        assert!(!with_suffix(&path, ".encrypting").exists());
+        let s = Store::open(&path, Some(&key)).unwrap();
+        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_database_key_is_not_the_key_it_comes_from() {
+        let dek = Dek::generate();
+        let a = DbKey::derive(&dek);
+        assert_eq!(a.0, DbKey::derive(&dek).0);
+        assert_ne!(a.0, dek.0);
+        assert_ne!(a.0, DbKey::derive(&Dek::generate()).0);
     }
 }
