@@ -783,8 +783,9 @@ pub fn recreate(passphrase: &str, params: promptly_vault::KdfParams) -> Result<S
                     other => other.to_string(),
                 })?;
         // The new manifest is written, so from here on the code must reach
-        // the person: what follows is best effort, and anything that fails
-        // shows up in the next sync's status instead of losing the code.
+        // the person: what follows is best effort. The snapshot that brings
+        // the records back stays owed until it is written, so a failure
+        // here is retried, and reported, by the next sync.
         let _ = store.push(&vault);
         let _ = store.compact(&vault, true);
         (manifest, code)

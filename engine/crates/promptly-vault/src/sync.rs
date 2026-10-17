@@ -66,6 +66,10 @@ pub struct SyncState {
     /// The number of the last snapshot this device wrote.
     pub my_snap: u64,
     pub markers: BTreeMap<DeviceId, Marker>,
+    /// A full snapshot is owed and is written at the next chance: kept
+    /// until one is written, so a failure is made up on a later sync.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub snapshot_due: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -398,7 +402,6 @@ impl<'a> Vault<'a> {
     pub fn push(&self, sync: &mut SyncState, ops: &[Op]) -> Result<u64, SyncError> {
         self.resume_numbering(sync)?;
         let mut seq = sync.my_seq + 1;
-        let mut rewritten = false;
         loop {
             let segment = Segment::new(self.device.clone(), seq, ops.to_vec());
             match self.write_file(&seg_name(seq), &segment) {
@@ -411,12 +414,13 @@ impl<'a> Vault<'a> {
                         Ok(existing) if existing.ops == ops => break,
                         Ok(_) => seq += 1,
                         // Cut short by a crash where files are written in place
-                        // (no hard links): only this device writes here and no
-                        // one could read it, so it is written again whole.
-                        Err(SyncError::Crypto(_) | SyncError::Corrupt(..)) if !rewritten => {
-                            rewritten = true;
-                            let dir = Self::device_dir(&self.device);
-                            self.backend.delete(&format!("{dir}/{}", seg_name(seq)))?;
+                        // (no hard links), or damaged since. Another device may
+                        // have read it whole before, so its number stays used:
+                        // these go in the next, and a snapshot owed now carries
+                        // everything to those that could not read it.
+                        Err(SyncError::Crypto(_) | SyncError::Corrupt(..)) => {
+                            sync.snapshot_due = true;
+                            seq += 1;
                         }
                         Err(e) => return Err(e),
                     }
@@ -450,6 +454,7 @@ impl<'a> Vault<'a> {
         }
         sync.my_seq = seq;
         sync.my_snap = seq;
+        sync.snapshot_due = false;
         let dir = Self::device_dir(&self.device);
         for e in self.backend.list(&dir)? {
             if let Some((n, is_snap)) = parse_name(&e.name) {
@@ -462,7 +467,8 @@ impl<'a> Vault<'a> {
         Ok(())
     }
 
-    /// Write a snapshot if this device's folder has grown past the limits.
+    /// Write a snapshot if one is owed or this device's folder has grown
+    /// past the limits.
     pub fn maybe_compact(
         &self,
         sync: &mut SyncState,
@@ -477,7 +483,7 @@ impl<'a> Vault<'a> {
             .filter(|e| matches!(parse_name(&e.name), Some((_, false))))
             .collect();
         let bytes: u64 = segs.iter().map(|e| e.size).sum();
-        if segs.len() > COMPACT_AFTER_SEGMENTS || bytes > COMPACT_AFTER_BYTES {
+        if sync.snapshot_due || segs.len() > COMPACT_AFTER_SEGMENTS || bytes > COMPACT_AFTER_BYTES {
             self.write_snapshot(sync, state, clock)?;
             return Ok(true);
         }
@@ -751,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn a_segment_cut_short_by_a_crash_is_written_again() {
+    fn a_damaged_segment_keeps_its_number_and_a_snapshot_carries_it() {
         let backend = MemoryBackend::default();
         let mut a = Device::new();
         let (va, _) = Vault::create(&backend, a.id.clone(), "pw", fast()).unwrap();
@@ -759,23 +765,39 @@ mod tests {
             a.put(Collection::Hosts, &format!("h{i}"), json!({"label": i}));
             a.sync(&va);
         }
-        assert_eq!(a.sync.my_seq, 2);
-        // The app died while writing the next segment in place.
-        let dir = format!("devices/{}", a.id);
-        let some = backend.get(&format!("{dir}/000002.seg")).unwrap();
-        backend
-            .put_new(&format!("{dir}/000003.seg"), &some[..some.len() / 2])
-            .unwrap();
-
-        a.put(Collection::Hosts, "h3", json!({"label": 3}));
-        a.sync(&va);
-        assert_eq!(a.sync.my_seq, 3, "the same number, written whole");
-
         let mut b = Device::new();
         let vb = Vault::open(&backend, b.id.clone(), "pw").unwrap();
+        b.sync(&vb);
+
+        // A writes segment 3 but dies before it records that, so h3 is
+        // still queued. B reads segment 3 meanwhile.
+        a.put(Collection::Hosts, "h3", json!({"label": 3}));
+        let mut unsaved = a.sync.clone();
+        va.push(&mut unsaved, &a.pending).unwrap();
+        b.sync(&vb);
+        assert_eq!(b.hosts().len(), 3);
+        assert_eq!(b.sync.markers[&a.id].seq, 3);
+
+        // Then the file is damaged, as a crash mid-write or a mirror can
+        // leave it, and A queues more before it tries again.
+        let path = format!("devices/{}/000003.seg", a.id);
+        let whole = backend.get(&path).unwrap();
+        backend.delete(&path).unwrap();
+        backend.put_new(&path, &whole[..whole.len() / 2]).unwrap();
+        a.put(Collection::Hosts, "h4", json!({"label": 4}));
+        a.sync(&va);
+        assert_eq!(a.sync.my_seq, 4, "number 3 stays used");
+        assert!(!a.sync.snapshot_due, "the owed snapshot was written");
+
+        // B, which read the old 3, still gets h4; a new device gets it all.
         let report = b.sync(&vb);
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
-        assert_eq!(b.hosts().len(), 3);
+        assert_eq!(b.hosts().len(), 4);
+        let mut c = Device::new();
+        let vc = Vault::open(&backend, c.id.clone(), "pw").unwrap();
+        let report = c.sync(&vc);
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(c.hosts().len(), 4);
     }
 
     #[test]
