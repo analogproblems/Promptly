@@ -280,6 +280,9 @@ mod tests {
             self.0.lock().unwrap().push(host.to_string());
             Ok(())
         }
+        fn known_algorithms(&self, _: &str, _: u16) -> Vec<russh::keys::Algorithm> {
+            Vec::new()
+        }
     }
 
     fn test_params() -> Option<ConnectParams> {

@@ -17,12 +17,20 @@ const _key = SshHostKey(
 );
 
 void main() {
-  Future<List<bool>> pump(WidgetTester tester) async {
+  Future<List<bool>> pump(WidgetTester tester, {double textScale = 1}) async {
     final answers = <bool>[];
-    await tester.pumpWidget(MaterialApp(
-      theme: buildPromptlyTheme(Brightness.dark),
-      home: Scaffold(body: ChangedHostKeyPanel(hostKey: _key, onAnswer: answers.add)),
-    ));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
+        home: Scaffold(
+          body: ChangedHostKeyPanel(hostKey: _key, onAnswer: answers.add),
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     return answers;
   }
@@ -60,5 +68,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(answers, [false]);
     expect(find.byType(HostKeyChangedPage), findsNothing);
+  });
+
+  testWidgets('Escape means disconnect', (tester) async {
+    final answers = await pump(tester);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(answers, [false]);
+    expect(find.byType(HostKeyChangedPage), findsNothing);
+  });
+
+  testWidgets('the warning fits a phone at double text size, override included', (tester) async {
+    tester.view.physicalSize = const Size(360, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final answers = await pump(tester, textScale: 2);
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.byKey(const Key('hostkey-override')));
+    await tester.tap(find.byKey(const Key('hostkey-override')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.byKey(const Key('hostkey-checked')));
+    await tester.tap(find.byKey(const Key('hostkey-checked')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const Key('hostkey-trust')));
+    await tester.tap(find.byKey(const Key('hostkey-trust')));
+    await tester.pumpAndSettle();
+    expect(answers, [true]);
   });
 }

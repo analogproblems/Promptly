@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine;
 use promptly_ssh::{
-    AuthMethod, ConnectError, ConnectParams, Endpoint, FileKnownHosts, HostKeyInfo, HostKeyStatus,
-    KnownHosts, PublicKey, QuietPrompter, SftpBackend, SftpError,
+    Algorithm, AuthMethod, ConnectError, ConnectParams, Endpoint, FileKnownHosts, HostKeyInfo,
+    HostKeyStatus, KnownHosts, PublicKey, QuietPrompter, SftpBackend, SftpError,
 };
 use promptly_store::{Collection, SecretStore, Store};
 use promptly_term::TermSize;
@@ -58,6 +58,10 @@ impl Default for VaultKnownHosts {
 impl KnownHosts for VaultKnownHosts {
     fn check(&self, host: &str, port: u16, key: &PublicKey) -> HostKeyStatus {
         self.files.check(host, port, key)
+    }
+
+    fn known_algorithms(&self, host: &str, port: u16) -> Vec<Algorithm> {
+        self.files.known_algorithms(host, port)
     }
 
     fn remember(&self, host: &str, port: u16, key: &PublicKey) -> std::io::Result<()> {
@@ -348,6 +352,9 @@ pub fn connect_sftp(host_id: &str, remote_dir: &str) -> Result<Arc<SftpBackend>,
         }
         SftpError::Connect(ConnectError::HostKeyRejected { changed: true }) => format!(
             "{label} showed a different host key from the one trusted before, so sync stopped. This can mean someone is intercepting the connection. Check with whoever runs the server before connecting to it in the terminal."
+        ),
+        SftpError::Connect(ConnectError::HostKeyRevoked) => format!(
+            "{label}'s host key is marked as revoked in a known_hosts file, so sync stopped."
         ),
         SftpError::Connect(ConnectError::Cancelled)
         | SftpError::Connect(ConnectError::AuthFailed(_)) => format!(
@@ -796,4 +803,28 @@ pub fn status() -> Result<SyncStatus, String> {
         recovery_hint: config.and_then(|c| c.recovery_hint),
         changes: st.changes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_vault_store_passes_on_the_kinds_of_key_it_trusts() {
+        let dir = std::env::temp_dir().join(format!("promptly-vkh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = VaultKnownHosts {
+            files: FileKnownHosts::new(vec![], dir.join("known_hosts")),
+        };
+        let generated = promptly_ssh::generate_key(promptly_ssh::KeyKind::EcdsaP256, "").unwrap();
+        let key = PublicKey::from_openssh(&generated.public_openssh).unwrap();
+        // Through the file, so the test needs no store.
+        store.files.remember("example.test", 22, &key).unwrap();
+        assert_eq!(
+            store.known_algorithms("example.test", 22),
+            vec![key.algorithm()],
+            "the handshake asks for the trusted ECDSA key first"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

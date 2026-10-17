@@ -38,7 +38,7 @@ pub use keys::{
     KeyKind,
 };
 pub use reach::{reach, reach_all};
-pub use russh::keys::PublicKey;
+pub use russh::keys::{Algorithm, PublicKey};
 pub use sftp::{QuietPrompter, SftpBackend, SftpError};
 pub use ssh_config::{
     load_default as load_ssh_config, parse as parse_ssh_config, ConfigForward, ConfigForwardKind,

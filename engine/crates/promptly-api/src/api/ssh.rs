@@ -418,6 +418,9 @@ pub fn ssh_exec(
                 ConnectError::HostKeyRejected { changed: true } => format!(
                     "{label} showed a different host key from the one trusted before, so nothing was run. This can mean someone is intercepting the connection. Check with whoever runs the server before connecting to it in the terminal."
                 ),
+                ConnectError::HostKeyRevoked => format!(
+                    "{label}'s host key is marked as revoked in a known_hosts file, so nothing was run."
+                ),
                 ConnectError::Cancelled => format!(
                     "{label} asks for a login each time. Save a password or pick a key to run snippets on it."
                 ),

@@ -79,6 +79,8 @@ pub enum HostKeyStatus {
     Unknown,
     /// Seen before with a different key: warn loudly and ask.
     Changed,
+    /// Marked `@revoked` in a known_hosts file: never trusted, never asked.
+    Revoked,
 }
 
 /// Where trusted host keys live. The app's implementation also keeps them
@@ -90,9 +92,9 @@ pub trait KnownHosts: Send + Sync {
     /// The kinds of key already trusted for this host, so the handshake can
     /// ask the server for one of those first, as OpenSSH does. A server that
     /// has the trusted key then never shows a different one by accident.
-    fn known_algorithms(&self, _host: &str, _port: u16) -> Vec<Algorithm> {
-        Vec::new()
-    }
+    /// No default: a store that wraps another must pass this on, or a
+    /// server with several keys shows the wrong one and looks changed.
+    fn known_algorithms(&self, host: &str, port: u16) -> Vec<Algorithm>;
 }
 
 /// The kind of key, ignoring the signature hash an RSA key is used with.
@@ -274,12 +276,16 @@ impl FileKnownHosts {
     }
 }
 
+/// Held while a known_hosts file is rewritten.
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static TMP_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 impl KnownHosts for FileKnownHosts {
     fn check(&self, host: &str, port: u16, key: &PublicKey) -> HostKeyStatus {
         let recorded = self.deciding(host, port);
         let same = |k: &PublicKey| k.key_data() == key.key_data();
         if recorded.iter().any(|(k, revoked)| *revoked && same(k)) {
-            HostKeyStatus::Changed
+            HostKeyStatus::Revoked
         } else if recorded.iter().all(|(_, revoked)| *revoked) {
             HostKeyStatus::Unknown
         } else if recorded.iter().any(|(k, _)| same(k)) {
@@ -293,6 +299,10 @@ impl KnownHosts for FileKnownHosts {
     }
 
     fn remember(&self, host: &str, port: u16, key: &PublicKey) -> io::Result<()> {
+        // Two handshakes, or a handshake and a sync, can remember keys at
+        // once. Reading, editing and replacing the file is one step, or one
+        // of them loses the other's key.
+        let _writing = WRITING.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(parent) = self.write_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -320,9 +330,15 @@ impl KnownHosts for FileKnownHosts {
             out.push('\n');
         }
         out.push_str(&format!("{entry} {key_line}\n"));
-        let tmp = self.write_path.with_extension("tmp");
+        let tmp = self.write_path.with_extension(format!(
+            "tmp-{}-{}",
+            std::process::id(),
+            TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         std::fs::write(&tmp, out)?;
-        std::fs::rename(&tmp, &self.write_path)
+        std::fs::rename(&tmp, &self.write_path).inspect_err(|_| {
+            let _ = std::fs::remove_file(&tmp);
+        })
     }
 
     fn known_algorithms(&self, host: &str, port: u16) -> Vec<Algorithm> {
@@ -474,14 +490,46 @@ mod tests {
         std::fs::write(&user, format!("@revoked example.test {k}\n")).unwrap();
         assert_eq!(
             store.check("example.test", 22, &key()),
-            HostKeyStatus::Changed
+            HostKeyStatus::Revoked
         );
         store.remember("example.test", 22, &key()).unwrap();
         assert_eq!(
             store.check("example.test", 22, &key()),
-            HostKeyStatus::Changed,
+            HostKeyStatus::Revoked,
             "a revoked key stays revoked"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn keys_remembered_at_once_by_separate_stores_all_survive() {
+        let dir = std::env::temp_dir().join(format!("promptly-kh5-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("known_hosts");
+        let threads: Vec<_> = (0..16)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || {
+                    let store = FileKnownHosts::new(vec![], path);
+                    store
+                        .remember(&format!("host{i}.test"), 22, &key())
+                        .unwrap();
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let store = FileKnownHosts::new(vec![], path);
+        for i in 0..16 {
+            assert_eq!(
+                store.check(&format!("host{i}.test"), 22, &key()),
+                HostKeyStatus::Known,
+                "host{i} kept"
+            );
+        }
+        let leftovers = std::fs::read_dir(&dir).unwrap().count();
+        assert_eq!(leftovers, 1, "no temporary files left behind");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

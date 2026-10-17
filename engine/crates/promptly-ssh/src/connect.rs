@@ -156,6 +156,8 @@ pub enum ConnectError {
         /// rather than one never seen.
         changed: bool,
     },
+    #[error("this server's host key is marked as revoked in a known_hosts file, so Promptly will not connect to it")]
+    HostKeyRevoked,
     #[error("{0}")]
     AuthFailed(String),
     #[error("cancelled")]
@@ -174,8 +176,8 @@ pub struct Handler {
     host: String,
     port: u16,
     remote_targets: Arc<Mutex<HashMap<u32, (String, u16)>>>,
-    /// Set when the server's key was refused, and whether it had changed.
-    refused: Arc<Mutex<Option<bool>>>,
+    /// Set when the server's key was refused, to how it was refused.
+    refused: Arc<Mutex<Option<HostKeyStatus>>>,
     agent_forward: bool,
 }
 
@@ -251,10 +253,15 @@ impl client::Handler for Handler {
         if status == HostKeyStatus::Known {
             return Ok(true);
         }
+        if status == HostKeyStatus::Revoked {
+            // Revoked means never: there is nothing to ask.
+            *self.refused.lock().unwrap() = Some(status);
+            return Ok(false);
+        }
         let info = HostKeyInfo::from_key(&self.host, self.port, &key);
         let trusted = self.prompter.confirm_host_key(info, status).await;
         if !trusted {
-            *self.refused.lock().unwrap() = Some(status == HostKeyStatus::Changed);
+            *self.refused.lock().unwrap() = Some(status);
         }
         if trusted {
             if let Err(e) = self.known_hosts.remember(&self.host, self.port, &key) {
@@ -361,8 +368,12 @@ pub async fn connect_handle(
     let (mut handle, hops) = match timeout_excluding(&waits, timeout, opening).await {
         Ok(Ok(h)) => h,
         Ok(Err(ConnectError::Ssh(russh::Error::UnknownKey))) => {
-            let changed = refused.lock().unwrap().unwrap_or(false);
-            return Err(ConnectError::HostKeyRejected { changed });
+            return Err(match *refused.lock().unwrap() {
+                Some(HostKeyStatus::Revoked) => ConnectError::HostKeyRevoked,
+                status => ConnectError::HostKeyRejected {
+                    changed: status == Some(HostKeyStatus::Changed),
+                },
+            });
         }
         Ok(Err(ConnectError::Ssh(russh::Error::IO(e)))) => {
             return Err(ConnectError::Connect {
@@ -1363,6 +1374,14 @@ mod tests {
     /// A server on a loopback port that lets anyone in without credentials
     /// when `open`, and otherwise wants the password "pw".
     fn auth_only_server(open: bool) -> u16 {
+        let key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        server_with_keys(open, vec![key])
+    }
+
+    /// The same, with the host keys given.
+    fn server_with_keys(open: bool, keys: Vec<russh::keys::PrivateKey>) -> u16 {
         use russh::server::{self, Auth};
 
         struct Server {
@@ -1392,11 +1411,8 @@ mod tests {
             }
         }
 
-        let key =
-            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
-                .unwrap();
         let config = Arc::new(server::Config {
-            keys: vec![key],
+            keys,
             ..Default::default()
         });
         let listener = crate::runtime()
@@ -1492,5 +1508,85 @@ mod tests {
         let (result, asks) = auth_against(port, AuthMethod::Password { password: None });
         assert!(result.is_ok(), "{:?}", result.err());
         assert_eq!(asks, 1);
+    }
+
+    /// A server holding an Ed25519 key and an ECDSA one, which a client
+    /// with no preference would be shown the Ed25519 key of.
+    fn two_key_server() -> (u16, PublicKey, PublicKey) {
+        let ed = russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+            .unwrap();
+        let ec = russh::keys::PrivateKey::random(
+            &mut rand::rng(),
+            russh::keys::Algorithm::Ecdsa {
+                curve: russh::keys::EcdsaCurve::NistP256,
+            },
+        )
+        .unwrap();
+        let (ed_pub, ec_pub) = (ed.public_key().clone(), ec.public_key().clone());
+        (server_with_keys(true, vec![ed, ec]), ed_pub, ec_pub)
+    }
+
+    fn connect_with_store(
+        port: u16,
+        known: Arc<dyn KnownHosts>,
+    ) -> (Result<(), ConnectError>, Option<HostKeyStatus>) {
+        let endpoint = Endpoint::parse(&format!("me@127.0.0.1:{port}")).unwrap();
+        let params = ConnectParams::new(endpoint, AuthMethod::Interactive, TermSize::default());
+        let prompter = Arc::new(TestPrompter {
+            password: "pw".into(),
+            steps: Mutex::new(vec![]),
+            host_key_asked: Mutex::new(None),
+        });
+        let result = crate::runtime()
+            .block_on(connect_handle(&params, prompter.clone(), known))
+            .map(|_| ());
+        let asked = *prompter.host_key_asked.lock().unwrap();
+        (result, asked)
+    }
+
+    #[test]
+    fn a_server_with_several_keys_shows_the_one_already_trusted() {
+        let (port, _ed, ec) = two_key_server();
+        let dir = std::env::temp_dir().join(format!(
+            "promptly-ssh-test-{}-twokeys-{port}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let known = Arc::new(FileKnownHosts::new(vec![], dir.join("known_hosts")));
+        known.remember("127.0.0.1", port, &ec).unwrap();
+        let (result, asked) = connect_with_store(port, known);
+        assert!(result.is_ok(), "{:?}", result.err());
+        assert_eq!(
+            asked, None,
+            "the trusted ECDSA key was offered, not a 'changed' Ed25519 one"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_revoked_key_is_refused_without_asking() {
+        let (port, ed, _ec) = two_key_server();
+        let dir = std::env::temp_dir().join(format!(
+            "promptly-ssh-test-{}-revoked-{port}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let user = dir.join("user_known_hosts");
+        std::fs::write(
+            &user,
+            format!("@revoked [127.0.0.1]:{port} {}\n", ed.to_openssh().unwrap()),
+        )
+        .unwrap();
+        let known = Arc::new(FileKnownHosts::new(vec![user], dir.join("known_hosts")));
+        // The prompter would trust anything it was asked about.
+        let (result, asked) = connect_with_store(port, known);
+        assert!(
+            matches!(result, Err(ConnectError::HostKeyRevoked)),
+            "{:?}",
+            result.err()
+        );
+        assert_eq!(asked, None, "nobody is offered the chance to trust it");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
