@@ -39,7 +39,7 @@ class LockSettingsCard extends ConsumerWidget {
           subtitle: Text(
             noCheck
                 ? 'This device has no fingerprint or PIN check for apps. Set an app passcode below to use this.'
-                : 'Promptly asks for ${how ?? 'your fingerprint or PIN'} before connecting with a key.',
+                : 'Promptly asks for ${how ?? 'your fingerprint or PIN'} before connecting with a key. Sync, once set up, uses its host\'s key without asking.',
           ),
           value: s.keyUnlock && !noCheck,
           onChanged: noCheck ? null : lock.setKeyUnlock,
@@ -53,13 +53,7 @@ class LockSettingsCard extends ConsumerWidget {
                 : 'Ask for ${how ?? 'your fingerprint or PIN'} when Promptly opens, and when you come back to it.',
           ),
           value: s.appLock && !noCheck,
-          onChanged: noCheck
-              ? null
-              : (on) async {
-                  // Prove it works before relying on it.
-                  if (on && !await lock.check('Turn on the app lock')) return;
-                  lock.setAppLock(on);
-                },
+          onChanged: noCheck ? null : lock.setAppLock,
         ),
         ListTile(
           title: const Text('Ask again'),
@@ -94,9 +88,7 @@ class LockSettingsCard extends ConsumerWidget {
                 : IconButton(
                     tooltip: 'Remove the passcode',
                     icon: const Icon(Icons.delete_outline),
-                    onPressed: () async {
-                      if (await lock.check('Remove the app passcode')) lock.clearPasscode();
-                    },
+                    onPressed: lock.clearPasscode,
                   ),
             onTap: s.passcodeHash == null ? () => _setPasscode(context, ref) : null,
           ),

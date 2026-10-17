@@ -7,14 +7,15 @@ import '../../core/engine/engine.dart';
 /// One attempt to connect over SSH, as the UI sees it: the step reached,
 /// any question waiting for an answer, and the outcome.
 class ConnectFlow extends ChangeNotifier {
-  ConnectFlow({required this.engine, required this.request, this.unlock});
+  ConnectFlow({required this.engine, required this.request, required this.unlock});
 
   final Engine engine;
   final SshConnectRequest request;
 
   /// Asked before connecting when the request carries a private key: the
   /// app's fingerprint, face, PIN or passcode check. False stops here.
-  final Future<bool> Function()? unlock;
+  /// Required, so no caller that connects can leave the check out.
+  final Future<bool> Function() unlock;
 
   /// Waiting for [unlock].
   bool unlocking = false;
@@ -50,8 +51,7 @@ class ConnectFlow extends ChangeNotifier {
   Future<void> start() async {
     if (_started) return;
     _started = true;
-    final unlock = this.unlock;
-    if (unlock != null && usesKey) {
+    if (usesKey) {
       unlocking = true;
       notifyListeners();
       final ok = await unlock();

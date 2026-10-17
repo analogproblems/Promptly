@@ -702,9 +702,10 @@ If the file holds several themes, save the ones you want. Imported themes appear
 | **Appearance** | **App look** | Light, dark, or follow the system. |
 | | **Terminal theme** | The terminal's colours. See [chapter 15](#15-themes-and-appearance). |
 | **Terminal** | **Let programs copy to the clipboard** | Lets programs such as `tmux` and `vim` set your clipboard, even over SSH. Off by default. |
-| **Security** | **Unlock SSH keys before use** | Asks for your fingerprint, face, device PIN or Windows Hello before connecting with a key. On by default. |
-| | **Lock Promptly** | Asks the same when Promptly opens, and when you come back to it after the time below. Off by default. |
+| **Security** | **Unlock SSH keys before use** | Asks for your fingerprint, face, device PIN or Windows Hello before connecting with a key, testing a connection, or setting up sync with a host that uses one. Once sync is set up, it uses the host's key in the background without asking. On by default. |
+| | **Lock Promptly** | Asks the same when Promptly opens, and when you come back to it after the time below. Off by default. If the device's screen lock is later turned off, Promptly stays locked until it's back. |
 | | **Ask again** | How long a check lasts before keys ask again, and how long Promptly can be away before it locks: every time, or after 1, 5, 15 or 60 minutes. 5 minutes by default. |
+| | | Turning either lock off, asking less often, or removing the app passcode asks first, so someone holding your unlocked device can't simply switch them off. |
 | | **App passcode** | Only on computers with no fingerprint or PIN check that apps can use (Linux). Sets a passcode Promptly asks for instead. It's stored only as a hash, on that computer. |
 | **Updates** | **Check for updates automatically** | Asks GitHub once a day whether a new version is out. Off by default. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |

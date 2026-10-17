@@ -116,9 +116,6 @@ class LockState {
   /// Null until known.
   final bool? systemAvailable;
 
-  /// Whether anything can check who is there: the system, or a passcode.
-  bool get canCheck => systemAvailable == true || settings.passcodeHash != null;
-
   LockState copyWith({
     LockSettings? settings,
     bool? locked,
@@ -169,13 +166,17 @@ class AppLock extends Notifier<LockState> {
   }
 
   /// Check who is there now. With nothing to check with (no system check,
-  /// no passcode), there is nothing to ask and the answer is yes.
-  Future<bool> check(String reason) async {
+  /// no passcode) the answer is [whenNothingToAsk]: yes where there is
+  /// nothing to protect, such as a key on a device with no check, but no
+  /// for the app lock, which stays shut until a check can pass.
+  Future<bool> check(String reason, {bool whenNothingToAsk = false}) async {
     if (_checking) return false;
     _checking = true;
     try {
       bool passed;
-      if (state.systemAvailable == null) await _probe();
+      // Asked again each time it is not yet known to work: the first look
+      // may still be running or have failed, or a screen lock was added.
+      if (state.systemAvailable != true) await _probe();
       if (state.systemAvailable == true) {
         passed = await ref.read(authenticatorProvider).systemCheck(reason);
       } else if (state.settings.passcodeHash != null) {
@@ -184,7 +185,7 @@ class AppLock extends Notifier<LockState> {
         passed = await request.done.future;
         state = state.copyWith(clearRequest: true);
       } else {
-        passed = true;
+        passed = whenNothingToAsk;
       }
       if (passed) _lastPassed = DateTime.now();
       return passed;
@@ -212,7 +213,7 @@ class AppLock extends Notifier<LockState> {
   /// person passed a check within the lock time.
   Future<bool> unlockKeys() async {
     if (!state.settings.keyUnlock || _recent) return true;
-    return check('Unlock your SSH key');
+    return check('Unlock your SSH key', whenNothingToAsk: true);
   }
 
   /// Open the app from the lock screen.
@@ -223,7 +224,7 @@ class AppLock extends Notifier<LockState> {
   }
 
   void lockNow() {
-    if (state.settings.appLock && state.canCheck) {
+    if (state.settings.appLock) {
       _lastPassed = null;
       state = state.copyWith(locked: true);
     }
@@ -245,22 +246,47 @@ class AppLock extends Notifier<LockState> {
   }
 
   // ---- Settings -------------------------------------------------------
+  //
+  // Anything that makes the locks weaker needs a fresh check first, so
+  // someone holding an unlocked device cannot just switch them off. Each
+  // returns whether the change was made.
 
-  void setAppLock(bool on) {
+  /// Turning it on proves the check works before relying on it.
+  Future<bool> setAppLock(bool on) async {
+    if (on == state.settings.appLock) return true;
+    if (!await check(on ? 'Turn on the app lock' : 'Turn off the app lock', whenNothingToAsk: !on)) return false;
     _save(state.settings.copyWith(appLock: on));
-    if (on) _lastPassed = DateTime.now();
+    return true;
   }
 
-  void setKeyUnlock(bool on) => _save(state.settings.copyWith(keyUnlock: on));
+  Future<bool> setKeyUnlock(bool on) async {
+    if (on == state.settings.keyUnlock) return true;
+    if (!on && !await check('Turn off unlocking SSH keys', whenNothingToAsk: true)) return false;
+    _save(state.settings.copyWith(keyUnlock: on));
+    return true;
+  }
 
-  void setLockAfter(int minutes) => _save(state.settings.copyWith(lockAfterMinutes: minutes));
+  /// A longer time (0, every time, is the shortest) asks less often.
+  Future<bool> setLockAfter(int minutes) async {
+    if (minutes == state.settings.lockAfterMinutes) return true;
+    if (minutes > state.settings.lockAfterMinutes && !await check('Ask less often', whenNothingToAsk: true)) {
+      return false;
+    }
+    _save(state.settings.copyWith(lockAfterMinutes: minutes));
+    return true;
+  }
 
   Future<void> setPasscode(String passcode) async {
     final hash = await ref.read(authenticatorProvider).hashPasscode(passcode);
     _save(state.settings.copyWith(passcodeHash: hash));
   }
 
-  void clearPasscode() => _save(state.settings.copyWith(clearPasscode: true, appLock: false));
+  /// Also turns the app lock off, which has nothing else to check with.
+  Future<bool> clearPasscode() async {
+    if (!await check('Remove the app passcode', whenNothingToAsk: true)) return false;
+    _save(state.settings.copyWith(clearPasscode: true, appLock: false));
+    return true;
+  }
 
   void _save(LockSettings s) {
     state = state.copyWith(settings: s);

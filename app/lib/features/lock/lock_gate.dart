@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide LockState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
@@ -18,6 +18,9 @@ class LockGate extends ConsumerStatefulWidget {
 }
 
 class _LockGateState extends ConsumerState<LockGate> with WidgetsBindingObserver {
+  /// What had the keyboard when the app was shut away, given it back after.
+  FocusNode? _hadFocus;
+
   @override
   void initState() {
     super.initState();
@@ -45,15 +48,45 @@ class _LockGateState extends ConsumerState<LockGate> with WidgetsBindingObserver
     }
   }
 
+  /// The app is shut away while locked, and while the passcode is asked
+  /// for, so no key press, paste or soft keyboard input reaches it.
+  static bool _shut(LockState s) => s.locked || s.passcodeRequest != null;
+
+  void _onShut(bool? was, bool now) {
+    if (now == (was ?? false)) return;
+    if (now) {
+      final focus = FocusManager.instance.primaryFocus;
+      _hadFocus = focus?.context == null ? null : focus;
+      // Losing focus also closes a terminal's soft keyboard connection.
+      focus?.unfocus();
+    } else {
+      final back = _hadFocus;
+      _hadFocus = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (back != null && back.context != null && back.canRequestFocus) back.requestFocus();
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen(appLockProvider.select(_shut), _onShut);
     final state = ref.watch(appLockProvider);
     final request = state.passcodeRequest;
+    final shut = _shut(state);
     return Stack(
       children: [
-        // Locked, the app underneath is neither shown nor reachable.
-        Offstage(offstage: state.locked && state.canCheck, child: TickerMode(enabled: !state.locked, child: widget.child)),
-        if (state.locked && state.canCheck) const _LockScreen(),
+        // Locked, the app underneath is not shown, and nothing in it can
+        // take focus: Offstage alone hides it but leaves it the keyboard.
+        Offstage(
+          offstage: state.locked,
+          child: ExcludeFocus(
+            excluding: shut,
+            child: TickerMode(enabled: !state.locked, child: widget.child),
+          ),
+        ),
+        // Shut from the start, before anyone knows whether a check works.
+        if (state.locked) const _LockScreen(),
         // Above the app's navigator, so it brings its own overlay for the
         // text field.
         if (request != null)
@@ -86,6 +119,8 @@ class _LockScreenState extends ConsumerState<_LockScreen> {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
+    final state = ref.watch(appLockProvider);
+    final noCheck = state.systemAvailable == false && state.settings.passcodeHash == null;
     return Material(
       color: t.background,
       child: SafeArea(
@@ -96,6 +131,19 @@ class _LockScreenState extends ConsumerState<_LockScreen> {
               Icon(Icons.lock_outline, size: 48, color: t.accent),
               const SizedBox(height: 16),
               Text('Promptly is locked', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: t.text)),
+              if (noCheck) ...[
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 360),
+                  child: Text(
+                    'Promptly cannot find a fingerprint, face or PIN check on this device right now. '
+                    'Turn on a screen lock in the device settings, then tap Unlock.',
+                    key: const Key('no-check'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: t.muted, height: 1.4),
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               FilledButton.icon(
                 key: const Key('unlock-app'),
