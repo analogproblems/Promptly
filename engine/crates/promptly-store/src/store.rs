@@ -282,34 +282,73 @@ fn connect(path: &Path, key: Option<&DbKey>) -> Result<Connection, rusqlite::Err
 }
 
 /// Rewrite a plain database encrypted, replacing it in one rename, so a
-/// crash leaves either the plain file or the encrypted one. Only while the
-/// database is [`Alone`].
+/// crash leaves either the plain file or the encrypted one.
+///
+/// Every SQLite connection to a file in WAL mode, whether a store, an older
+/// Promptly or any other program, holds a lock on it for as long as it is
+/// open, so leaving WAL mode works only for the last one. On the way out
+/// SQLite folds the log into the file and removes it itself. The file is
+/// then held alone until it is replaced. While anyone else has it open,
+/// this is refused with [`StoreError::Busy`] and the file left as it is.
 fn encrypt_in_place(path: &Path, key: &DbKey) -> Result<(), StoreError> {
-    let tmp = with_suffix(path, ".encrypting");
+    let tmp = with_suffix(path, &format!(".encrypting-{}", std::process::id()));
     let _ = std::fs::remove_file(&tmp);
-    {
-        let conn = connect(path, None)?;
-        conn.execute(
-            "ATTACH DATABASE ?1 AS encrypted KEY ?2",
-            params![tmp.to_string_lossy(), key.literal()],
-        )?;
-        conn.query_row("SELECT sqlcipher_export('encrypted')", [], |_| Ok(()))?;
-        conn.execute("DETACH DATABASE encrypted", [])?;
+    let result = export_encrypted(path, &tmp, key);
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
-    // The copy was read through the log, and with no other connection open
-    // closing checkpointed it; what is left of it must not sit beside the
-    // encrypted file.
-    for suffix in ["-wal", "-shm"] {
-        let _ = std::fs::remove_file(with_suffix(path, suffix));
-    }
-    std::fs::rename(&tmp, path).map_err(|e| StoreError::Io(path.display().to_string(), e))
+    result
 }
 
-/// Move a database no key here can read out of the way, with its log, so a
-/// new one can start. Nothing is deleted or overwritten, and the log goes
-/// first, so a failure leaves the database where it was and no new one
-/// starts. Only while the database is [`Alone`].
+fn export_encrypted(path: &Path, tmp: &Path, key: &DbKey) -> Result<(), StoreError> {
+    let busy = |e: rusqlite::Error| match e.sqlite_error_code() {
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => StoreError::Busy,
+        _ => e.into(),
+    };
+    let conn = connect(path, None)?;
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode = DELETE", [], |r| r.get(0))
+        .map_err(busy)?;
+    if !mode.eq_ignore_ascii_case("delete") {
+        return Err(StoreError::Busy);
+    }
+    conn.execute_batch("PRAGMA locking_mode = EXCLUSIVE; BEGIN EXCLUSIVE; COMMIT;")
+        .map_err(busy)?;
+    conn.execute(
+        "ATTACH DATABASE ?1 AS encrypted KEY ?2",
+        params![tmp.to_string_lossy(), key.literal()],
+    )?;
+    conn.query_row("SELECT sqlcipher_export('encrypted')", [], |_| Ok(()))?;
+    conn.execute("DETACH DATABASE encrypted", [])?;
+    let replace =
+        || std::fs::rename(tmp, path).map_err(|e| StoreError::Io(path.display().to_string(), e));
+    // Replaced while still held. Windows cannot replace an open file, so
+    // there it is closed first; a program that opened it since makes the
+    // rename fail, and the plain file stays.
+    if cfg!(windows) {
+        drop(conn);
+        replace()
+    } else {
+        replace()
+    }
+}
+
+/// Keep a database no key here can read under a name nothing has, with its
+/// log, and clear its place so a new one can start. Only while the
+/// database is [`Alone`].
 fn set_aside(path: &Path) -> Result<(), StoreError> {
+    set_aside_with(path, |p| std::fs::remove_file(p))
+}
+
+/// Each file is first linked (or copied) to its kept name, and only then
+/// are the originals removed, the log before the database. A failure or a
+/// crash part way leaves a complete kept set, the originals, or both,
+/// never a database apart from its log; and an error means no new database
+/// starts.
+fn set_aside_with(
+    path: &Path,
+    remove: impl Fn(&Path) -> std::io::Result<()>,
+) -> Result<(), StoreError> {
     let stamp = OffsetDateTime::now_utc().unix_timestamp();
     let free = |aside: &Path| {
         ["", "-wal", "-shm"]
@@ -323,16 +362,34 @@ fn set_aside(path: &Path) -> Result<(), StoreError> {
         })
         .find(|a| free(a))
         .expect("some name is free");
-    let mv = |from: PathBuf, to: PathBuf| {
-        std::fs::rename(&from, to).map_err(|e| StoreError::Io(from.display().to_string(), e))
-    };
-    for suffix in ["-wal", "-shm"] {
-        let from = with_suffix(path, suffix);
-        if from.exists() {
-            mv(from, with_suffix(&aside, suffix))?;
-        }
+    let io = |p: &Path, e| StoreError::Io(p.display().to_string(), e);
+    let files: Vec<(PathBuf, PathBuf)> = ["", "-wal", "-shm"]
+        .iter()
+        .map(|s| (with_suffix(path, s), with_suffix(&aside, s)))
+        .filter(|(from, _)| from.exists())
+        .collect();
+    for (from, to) in &files {
+        keep_copy(from, to).map_err(|e| io(from, e))?;
     }
-    mv(path.to_path_buf(), aside)
+    for (from, _) in files.iter().rev() {
+        remove(from).map_err(|e| io(from, e))?;
+    }
+    Ok(())
+}
+
+/// `to` as a second name for `from`, or a copy where links are not
+/// possible. Never replaces anything at `to`.
+fn keep_copy(from: &Path, to: &Path) -> std::io::Result<()> {
+    if std::fs::hard_link(from, to).is_ok() {
+        return Ok(());
+    }
+    let mut src = std::fs::File::open(from)?;
+    let mut dst = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)?;
+    std::io::copy(&mut src, &mut dst)?;
+    dst.sync_all()
 }
 
 impl Store {
@@ -340,12 +397,13 @@ impl Store {
     ///
     /// With a key, a plain file (written before the key existed) is
     /// encrypted first, and a file the key cannot read (sealed with a key
-    /// that has since been replaced, so nothing can read it) is renamed
+    /// that has since been replaced, so nothing can read it) is kept as
     /// `<name>.unreadable-<time>` and a new database started. Without a
     /// key, an encrypted file is refused with [`StoreError::Locked`] and
     /// left as it is, for when the key is back. Encrypting or setting aside
-    /// waits for no one: while another store has the file open it is
-    /// refused with [`StoreError::Busy`] and the file left as it is.
+    /// waits for no one: while another store, or any other program, has
+    /// the file open it is refused with [`StoreError::Busy`] and the file
+    /// left as it is.
     pub fn open(path: &Path, key: Option<&DbKey>) -> Result<Self, StoreError> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -1013,9 +1071,126 @@ mod tests {
         assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
         drop(s);
         assert_ne!(head(&path), b"SQLite format 3\0");
-        assert!(!with_suffix(&path, ".encrypting").exists());
+        assert!(no_leftovers(&path));
         let s = Store::open(&path, Some(&key)).unwrap();
         assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Nothing half-made is left beside the database.
+    fn no_leftovers(path: &Path) -> bool {
+        let dir = path.parent().unwrap();
+        !std::fs::read_dir(dir).unwrap().any(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".encrypting")
+        })
+    }
+
+    #[test]
+    fn a_plain_database_any_program_has_open_is_left_as_it_is() {
+        let dir = temp_dir("busy-raw");
+        let path = dir.join("promptly.db");
+        Store::open(&path, None)
+            .unwrap()
+            .put(Collection::Hosts, "h", HOST)
+            .unwrap();
+        // An older Promptly, or any SQLite program: no lock file of ours.
+        let other = Connection::open(&path).unwrap();
+        other
+            .query_row("SELECT COUNT(*) FROM vault_records", [], |_| Ok(()))
+            .unwrap();
+        let key = DbKey::derive(&Dek::generate());
+        assert!(matches!(
+            Store::open(&path, Some(&key)),
+            Err(StoreError::Busy)
+        ));
+        assert_eq!(head(&path), b"SQLite format 3\0", "untouched");
+        assert!(no_leftovers(&path));
+
+        // It goes on writing, into its log, and nothing it wrote is lost.
+        other
+            .execute(
+                "INSERT INTO meta (key, value) VALUES ('written', 'after')",
+                [],
+            )
+            .unwrap();
+        assert!(with_suffix(&path, "-wal").exists());
+        drop(other);
+        let s = Store::open(&path, Some(&key)).unwrap();
+        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        drop(s);
+        assert_ne!(head(&path), b"SQLite format 3\0");
+        let written: String = connect(&path, Some(&key))
+            .unwrap()
+            .query_row("SELECT value FROM meta WHERE key = 'written'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(written, "after");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_set_aside_never_parts_a_database_from_its_log() {
+        // A database whose newest record is only in its log.
+        let made = temp_dir("aside-made");
+        let old_key = DbKey::derive(&Dek::generate());
+        let live = made.join("promptly.db");
+        let conn = connect(&live, Some(&old_key)).unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0;
+             CREATE TABLE t (x); INSERT INTO t VALUES ('in the log');",
+        )
+        .unwrap();
+        let dir = temp_dir("aside-fail");
+        let path = dir.join("promptly.db");
+        for s in ["", "-wal"] {
+            std::fs::copy(with_suffix(&live, s), with_suffix(&path, s)).unwrap();
+        }
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&made);
+        let only_main = dir.join("only-main.db");
+        std::fs::copy(&path, &only_main).unwrap();
+        assert!(
+            connect(&only_main, Some(&old_key))
+                .and_then(|c| c.query_row("SELECT x FROM t", [], |_| Ok(())))
+                .is_err(),
+            "without its log the record is not there"
+        );
+        std::fs::remove_file(&only_main).unwrap();
+
+        // Removing the database itself fails after its log is gone.
+        let err = set_aside_with(&path, |p| {
+            if p == path {
+                Err(std::io::Error::other("injected"))
+            } else {
+                std::fs::remove_file(p)
+            }
+        });
+        assert!(err.is_err());
+        // Opening again sets the rest aside and starts afresh.
+        let s = Store::open(&path, Some(&DbKey::derive(&Dek::generate()))).unwrap();
+        assert!(s.list(Collection::Hosts).unwrap().is_empty());
+
+        // Some kept set still has the record that was only in the log.
+        let found = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| {
+                let n = p.file_name().unwrap().to_string_lossy();
+                n.starts_with("promptly.db.unreadable-")
+                    && !n.contains("-wal")
+                    && !n.contains("-shm")
+            })
+            .filter(|p| {
+                connect(p, Some(&old_key))
+                    .and_then(|c| c.query_row("SELECT x FROM t", [], |r| r.get::<_, String>(0)))
+                    .is_ok_and(|x| x == "in the log")
+            })
+            .count();
+        assert!(found >= 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1031,7 +1206,7 @@ mod tests {
             Err(StoreError::Busy)
         ));
         assert_eq!(head(&path), b"SQLite format 3\0", "untouched");
-        assert!(!with_suffix(&path, ".encrypting").exists());
+        assert!(no_leftovers(&path));
 
         // The other store carries on, and what it writes is kept.
         let later = r#"{"hostname":"10.0.0.2","id":"g","label":"db"}"#;
@@ -1075,7 +1250,7 @@ mod tests {
             a.join().unwrap();
             b.join().unwrap();
         });
-        assert!(!with_suffix(&path, ".encrypting").exists());
+        assert!(no_leftovers(&path));
         let s = Store::open(&path, Some(&key)).unwrap();
         assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
         let _ = std::fs::remove_dir_all(&dir);
