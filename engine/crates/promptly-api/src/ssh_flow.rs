@@ -8,6 +8,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use promptly_ssh::{ConnectStep, Connection, HostKeyInfo, HostKeyStatus, KeyboardPrompt, Prompter};
 use tokio::sync::oneshot;
+use zeroize::Zeroize;
 
 use crate::api::ssh::{
     SshConnectRequest, SshEvent, SshEventKind, SshHostKey, SshHostKeyStatus, SshKbPrompt, SshStep,
@@ -27,6 +28,29 @@ pub(crate) struct Attempt {
     pub pending: Mutex<Pending>,
     /// The connecting task, stopped when the attempt is cancelled.
     pub task: Mutex<Option<tokio::task::AbortHandle>>,
+}
+
+// An attempt cancelled before it started still holds its request; wipe the
+// secrets in it rather than leave them in freed memory.
+impl Drop for Attempt {
+    fn drop(&mut self) {
+        if let Some(request) = self.request.get_mut().ok().and_then(Option::as_mut) {
+            wipe_request(request);
+        }
+    }
+}
+
+fn wipe_request(request: &mut SshConnectRequest) {
+    let hops = request.jumps.iter_mut();
+    let hop_secrets = hops.flat_map(|h| [&mut h.password, &mut h.private_key, &mut h.passphrase]);
+    let own = [
+        &mut request.password,
+        &mut request.private_key,
+        &mut request.passphrase,
+    ];
+    for secret in own.into_iter().chain(hop_secrets).flatten() {
+        secret.zeroize();
+    }
 }
 
 impl Attempt {
@@ -157,5 +181,21 @@ impl Prompter for UiPrompter {
         );
         self.0.emit(e);
         Box::pin(async move { rx.await.unwrap_or(None) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::ssh::tests::request_with_secrets;
+
+    #[test]
+    fn a_request_never_started_has_its_secrets_wiped() {
+        let mut request = request_with_secrets();
+        wipe_request(&mut request);
+        assert_eq!(request.password.as_deref(), Some(""));
+        let hop = &request.jumps[0];
+        assert_eq!(hop.private_key.as_deref(), Some(""));
+        assert_eq!(hop.passphrase.as_deref(), Some(""));
     }
 }

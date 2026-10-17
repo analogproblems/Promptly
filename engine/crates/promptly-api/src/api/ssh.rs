@@ -259,7 +259,7 @@ fn claim_tmux_name(attempt_id: u32, session_id: u32) {
 pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow::Result<()> {
     let attempt = attempt(attempt_id).map_err(anyhow::Error::msg)?;
     *attempt.sink.lock().unwrap() = Some(sink);
-    let Some(request) = attempt.request.lock().unwrap().take() else {
+    let Some(mut request) = attempt.request.lock().unwrap().take() else {
         anyhow::bail!("attempt {attempt_id} already started");
     };
 
@@ -276,7 +276,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
             request.reattach_session_id,
         )
     });
-    let params = params_for(&request, endpoint.clone(), size, tmux.as_deref());
+    let params = params_for(&mut request, endpoint.clone(), size, tmux.as_deref());
     let label = request
         .label
         .clone()
@@ -342,19 +342,21 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
     Ok(())
 }
 
+/// Moves the secrets out of the request into the engine's own type, which
+/// wipes them when it's dropped, so no unwiped copy is left behind.
 fn auth_for(
     kind: &SshAuthKind,
-    password: &Option<String>,
-    private_key: &Option<String>,
-    passphrase: &Option<String>,
+    password: &mut Option<String>,
+    private_key: &mut Option<String>,
+    passphrase: &mut Option<String>,
 ) -> AuthMethod {
     match kind {
         SshAuthKind::Password => AuthMethod::Password {
-            password: password.clone(),
+            password: password.take(),
         },
         SshAuthKind::Key => AuthMethod::Key {
-            private_key: private_key.clone().unwrap_or_default(),
-            passphrase: passphrase.clone(),
+            private_key: private_key.take().unwrap_or_default(),
+            passphrase: passphrase.take(),
         },
         SshAuthKind::Interactive => AuthMethod::Interactive,
         SshAuthKind::Agent => AuthMethod::Agent,
@@ -377,22 +379,28 @@ fn forward_spec(f: &SshForward) -> ForwardSpec {
 }
 
 /// The engine's connection parameters for a request, jump chain included.
+/// The request's secrets move into them.
 fn params_for(
-    request: &SshConnectRequest,
+    request: &mut SshConnectRequest,
     endpoint: Endpoint,
     size: TermSize,
     tmux_session: Option<&str>,
 ) -> ConnectParams {
     let keepalive = std::time::Duration::from_secs(u64::from(request.keepalive_seconds));
     let mut jump: Option<Box<ConnectParams>> = None;
-    for hop in &request.jumps {
+    for hop in &mut request.jumps {
         let mut p = ConnectParams::new(
             Endpoint {
                 user: hop.user.clone(),
                 host: hop.host.clone(),
                 port: hop.port,
             },
-            auth_for(&hop.auth, &hop.password, &hop.private_key, &hop.passphrase),
+            auth_for(
+                &hop.auth,
+                &mut hop.password,
+                &mut hop.private_key,
+                &mut hop.passphrase,
+            ),
             size,
         );
         if request.keepalive_seconds > 0 {
@@ -403,9 +411,9 @@ fn params_for(
     }
     let auth = auth_for(
         &request.auth,
-        &request.password,
-        &request.private_key,
-        &request.passphrase,
+        &mut request.password,
+        &mut request.private_key,
+        &mut request.passphrase,
     );
     let mut params = ConnectParams::new(endpoint, auth, size);
     if request.keepalive_seconds > 0 {
@@ -448,7 +456,7 @@ pub struct SshExecResult {
 /// terminal, and return what it printed. Unattended: a host key not yet
 /// trusted, or a login that needs typing, is an error that says what to do.
 pub fn ssh_exec(
-    request: SshConnectRequest,
+    mut request: SshConnectRequest,
     command: String,
     timeout_seconds: u32,
 ) -> SshExecResult {
@@ -461,7 +469,7 @@ pub fn ssh_exec(
         .label
         .clone()
         .unwrap_or_else(|| endpoint.to_string());
-    let params = params_for(&request, endpoint, TermSize::default(), None);
+    let params = params_for(&mut request, endpoint, TermSize::default(), None);
     let known_hosts = Arc::new(crate::sync_engine::VaultKnownHosts::new());
     let prompter: Arc<dyn Prompter> = Arc::new(QuietPrompter);
     let timeout = std::time::Duration::from_secs(u64::from(timeout_seconds.max(1)));
@@ -599,5 +607,67 @@ pub fn ssh_cancel(attempt_id: u32) {
         if let Some(task) = a.task.lock().unwrap().take() {
             task.abort();
         }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
+    pub(crate) fn request_with_secrets() -> SshConnectRequest {
+        SshConnectRequest {
+            user: "me".into(),
+            host: "target".into(),
+            port: 22,
+            auth: SshAuthKind::Password,
+            password: Some("target-password".into()),
+            private_key: None,
+            passphrase: None,
+            cols: 80,
+            rows: 24,
+            theme: "default".into(),
+            label: None,
+            keepalive_seconds: 0,
+            reattach_session_id: None,
+            jumps: vec![SshHop {
+                user: "me".into(),
+                host: "jump".into(),
+                port: 22,
+                auth: SshAuthKind::Key,
+                password: None,
+                private_key: Some("jump-key".into()),
+                passphrase: Some("jump-passphrase".into()),
+            }],
+            persistent: false,
+            startup_command: None,
+            env: Vec::new(),
+            agent_forward: false,
+            forwards: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn connecting_moves_the_secrets_out_of_the_request() {
+        let mut request = request_with_secrets();
+        let endpoint = Endpoint {
+            user: "me".into(),
+            host: "target".into(),
+            port: 22,
+        };
+        let params = params_for(&mut request, endpoint, TermSize::default(), None);
+
+        assert!(request.password.is_none());
+        let hop = &request.jumps[0];
+        assert!(hop.private_key.is_none() && hop.passphrase.is_none());
+        assert!(matches!(
+            &params.auth,
+            AuthMethod::Password { password: Some(p) } if p == "target-password"
+        ));
+        let jump = params.jump.as_ref().unwrap();
+        assert!(matches!(
+            &jump.auth,
+            AuthMethod::Key { private_key, passphrase: Some(p) }
+                if private_key == "jump-key" && p == "jump-passphrase"
+        ));
     }
 }
