@@ -144,6 +144,11 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   /// ended until reconnected by hand, however often the screen redraws.
   final Set<int> _givenUp = {};
 
+  /// Whether the app is in the background, and the sessions whose
+  /// connection dropped (or whose reconnecting ran out) meanwhile.
+  bool _away = false;
+  final Set<int> _droppedAway = {};
+
   /// Seconds to wait before each try; the last value repeats.
   static const retryDelays = [1, 2, 4, 8, 16, 30];
   static const maxRetries = 10;
@@ -478,6 +483,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final sessionId = flow.sessionId;
     if (sessionId != null) {
       _givenUp.remove(entry.id);
+      _droppedAway.remove(entry.id);
       final existing = entry.controller;
       if (existing == null) {
         _attach(entry, engine, sessionId);
@@ -546,8 +552,9 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   /// An SSH session that ends without an exit status lost its connection
   /// rather than being told to exit: start getting it back.
   void _watchForDrop(SessionEntry entry, TerminalController c) {
-    if (!c.exited || c.exitCode != null || entry.reconnecting) return;
-    if (entry.controller != c || entry.flow?.request == null) return;
+    if (!c.exited || c.exitCode != null) return;
+    if (_away && entry.controller == c && !_givenUp.contains(entry.id)) _droppedAway.add(entry.id);
+    if (entry.reconnecting || entry.controller != c || entry.flow?.request == null) return;
     if (_retryTimers.containsKey(entry.id) || _givenUp.contains(entry.id)) return;
     _scheduleReconnect(entry, attempt: 1);
   }
@@ -577,6 +584,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final attempt = entry.reconnectAttempt;
     if (attempt >= maxRetries) {
       _givenUp.add(entry.id);
+      if (_away) _droppedAway.add(entry.id);
       entry.clearReconnect();
       entry.setError('Could not reconnect after $attempt tries: $error');
       return;
@@ -598,9 +606,35 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final entry = byId(id);
     if (entry == null) return;
     _givenUp.add(id);
+    _droppedAway.remove(id);
     _retryTimers.remove(id)?.cancel();
     entry.flow?.cancel();
     entry.clearReconnect();
+  }
+
+  // ---- Coming back to the app ---------------------------------------------
+
+  /// The app went into the background. A phone may cut its connections
+  /// or stop its timers there, so drops from now on are noted.
+  void appPaused() => _away = true;
+
+  /// The app is in front again: every SSH session that dropped while it
+  /// was away, or is waiting for its next try, reconnects straight away,
+  /// back into its tmux session when it has one. A try already under way
+  /// carries on.
+  void appResumed() {
+    if (!_away) return;
+    _away = false;
+    final dropped = Set.of(_droppedAway);
+    _droppedAway.clear();
+    for (final entry in state) {
+      final c = entry.controller;
+      if (entry.isLocal || c == null || !c.exited || c.exitCode != null) continue;
+      final underWay = entry.reconnecting && entry.reconnectAt == null;
+      if (underWay) continue;
+      final waiting = entry.reconnecting && entry.reconnectAt != null;
+      if (waiting || dropped.contains(entry.id)) reconnectNow(entry.id);
+    }
   }
 
   SshConnectRequest _reattachRequest(SshConnectRequest r, TerminalController? c) => SshConnectRequest(
@@ -638,6 +672,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final engine = ref.read(engineProvider);
     _retryTimers.remove(id)?.cancel();
     _givenUp.remove(id);
+    _droppedAway.remove(id);
     entry.flow?.cancel();
     final engineId = entry.controller?.id;
     entry.dispose();

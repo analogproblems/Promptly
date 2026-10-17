@@ -55,4 +55,4 @@ What to paste into Play Console for the Android app, and what it asks for. Costs
 
 **Target audience:** 18 and over (a tool for people who manage computers; not designed for children).
 
-**Permissions declared:** INTERNET only.
+**Permissions declared:** INTERNET; USE_BIOMETRIC (unlocking the app and keys, when turned on); FOREGROUND_SERVICE, FOREGROUND_SERVICE_SPECIAL_USE and POST_NOTIFICATIONS (a foreground service with a notification, running only while SSH sessions are open, so they stay connected in the background). The special-use declaration for the Play Console: "Keeps the user's open SSH terminal sessions connected while the app is in the background."

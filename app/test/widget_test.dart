@@ -22,6 +22,8 @@ import 'package:promptly/features/settings/settings_screen.dart' show TerminalCh
 import 'package:promptly/features/terminal/keyboard_bar.dart';
 import 'package:promptly/features/terminal/terminal_view.dart';
 import 'package:promptly/features/sessions/session_body.dart';
+import 'package:promptly/features/sessions/session_manager.dart' show SessionManager;
+import 'package:promptly/features/sessions/sessions_in_background.dart';
 import 'package:promptly/features/sessions/session_thumbnail.dart';
 import 'package:promptly/features/sessions/status_dot.dart';
 import 'package:promptly/features/workspace/workspace.dart';
@@ -308,8 +310,22 @@ class FakeEngine implements Engine {
         error: null,
       );
 
+  /// When set, SSH attempts stop after their first step until [finishHeld].
+  bool holdConnects = false;
+  final Map<int, StreamController<SshEvent>> _held = {};
+
+  void finishHeld(int attemptId) => _held.remove(attemptId)!
+    ..add(_connected(connectedSessionId!))
+    ..close();
+
   @override
   Stream<SshEvent> sshConnectEvents(int attemptId) {
+    if (holdConnects) {
+      final events = StreamController<SshEvent>();
+      _held[attemptId] = events;
+      events.add(const SshEvent(kind: SshEventKind.progress, step: SshStep.connecting, secretForKey: false));
+      return events.stream;
+    }
     if (failWith case final fail?) {
       return Stream.fromIterable([
         const SshEvent(kind: SshEventKind.progress, step: SshStep.connecting, secretForKey: false),
@@ -1309,6 +1325,265 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     expect(engine.requests.length, 2);
     expect(engine.requests.last.reattachSessionId, 7);
+  });
+
+  group('phone sessions in the background', () {
+    const dropped = TerminalEvent(kind: TerminalEventKind.exited, frame: null, clipboard: null, exitCode: null);
+
+    void lifecycle(WidgetTester tester, List<AppLifecycleState> states) {
+      for (final state in states) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+      }
+    }
+
+    void away(WidgetTester tester) =>
+        lifecycle(tester, [AppLifecycleState.inactive, AppLifecycleState.hidden, AppLifecycleState.paused]);
+    void back(WidgetTester tester) =>
+        lifecycle(tester, [AppLifecycleState.hidden, AppLifecycleState.inactive, AppLifecycleState.resumed]);
+
+    Future<FakeEngine> connected(WidgetTester tester) async {
+      final engine = FakeEngine()..connectedSessionId = 7;
+      await tester.pumpWidget(app(engine));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'deploy@web-1');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Connect'));
+      await tester.pumpAndSettle();
+      expect(find.text('deploy@web-1: ~'), findsOneWidget);
+      return engine;
+    }
+
+    testWidgets('a session that dropped while the app was away reconnects as soon as it is back', (tester) async {
+      touchPlatformOverride = true;
+      addTearDown(() => touchPlatformOverride = null);
+      final engine = await connected(tester);
+      away(tester);
+      engine.laterFrames.add(dropped);
+      await tester.pump();
+      // Nothing is drawn while the app is away; the session says so for later.
+      expect(engine.notices.single, contains('Connection dropped'));
+      expect(engine.requests, hasLength(1), reason: 'the first try waits a second');
+
+      back(tester);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(engine.requests, hasLength(2), reason: 'no waiting once back');
+      expect(engine.requests.last.reattachSessionId, 7, reason: 'the same session, or its tmux session');
+      await tester.pumpAndSettle();
+      expect(find.text('Connection dropped'), findsNothing);
+      expect(find.text('deploy@web-1: ~'), findsOneWidget);
+    });
+
+    testWidgets('a try already under way on coming back is left to finish', (tester) async {
+      touchPlatformOverride = true;
+      addTearDown(() => touchPlatformOverride = null);
+      final engine = await connected(tester);
+      away(tester);
+      engine.holdConnects = true;
+      engine.laterFrames.add(dropped);
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(engine.requests, hasLength(2), reason: 'the first try started while away');
+
+      back(tester);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(engine.requests, hasLength(2), reason: 'no second try on top of it');
+      expect(engine.cancelledAttempts, isEmpty);
+      engine.finishHeld(2);
+      await tester.pumpAndSettle();
+      expect(find.text('Connection dropped'), findsNothing);
+      expect(find.text('deploy@web-1: ~'), findsOneWidget);
+    });
+
+    testWidgets('one whose tries ran out while away tries again on coming back', (tester) async {
+      touchPlatformOverride = true;
+      addTearDown(() => touchPlatformOverride = null);
+      final engine = await connected(tester);
+      engine.failWith = const SshEvent(kind: SshEventKind.failed, secretForKey: false, error: 'no route to host');
+      away(tester);
+      engine.laterFrames.add(dropped);
+      for (var i = 0; i < 50; i++) {
+        await tester.pump(const Duration(seconds: 5));
+      }
+      expect(engine.requests, hasLength(1 + SessionManager.maxRetries));
+      expect(engine.notices.last, contains('Try ${SessionManager.maxRetries} '));
+
+      engine.failWith = null;
+      back(tester);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(engine.requests.last.reattachSessionId, 7);
+      await tester.pumpAndSettle();
+      expect(find.text('deploy@web-1: ~'), findsOneWidget);
+      expect(find.text('The connection ended.'), findsNothing, reason: 'live again');
+    });
+
+    testWidgets('Stop is respected, and a computer coming to the front waits as before', (tester) async {
+      touchPlatformOverride = true;
+      addTearDown(() => touchPlatformOverride = null);
+      var engine = await connected(tester);
+      engine.laterFrames.add(dropped);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(find.text('Stop'));
+      await tester.pumpAndSettle();
+      away(tester);
+      back(tester);
+      await tester.pump(const Duration(seconds: 2));
+      expect(engine.requests, hasLength(1), reason: 'stopped by hand stays stopped');
+
+      touchPlatformOverride = false;
+      await tester.pumpWidget(const SizedBox());
+      engine = await connected(tester);
+      away(tester);
+      engine.laterFrames.add(dropped);
+      await tester.pump();
+      back(tester);
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(engine.requests, hasLength(1), reason: 'the usual wait before the first try');
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(engine.requests, hasLength(2));
+      await tester.pumpAndSettle();
+    });
+
+    testWidgets('on Android a service keeps sessions running while any are open', (tester) async {
+      androidOverride = true;
+      addTearDown(() => androidOverride = null);
+      final told = <Object?>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SessionsInBackground.channel, (call) async {
+        if (call.method == 'keepAlive') told.add(call.arguments);
+        return null;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SessionsInBackground.channel, null),
+      );
+      final engine = FakeEngine()..connectedSessionId = 1;
+      await tester.pumpWidget(app(engine));
+      await tester.pumpAndSettle();
+      expect(told, isEmpty, reason: 'nothing open, nothing to keep');
+
+      await tester.tap(find.text('Sessions').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open a local shell'));
+      await tester.pumpAndSettle();
+      expect(told, [1]);
+      await tester.tap(find.byTooltip('Back to sessions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Local shell').first);
+      await tester.pumpAndSettle();
+      expect(told, [1, 2]);
+
+      await tester.tap(find.byTooltip('Close session'));
+      await tester.pumpAndSettle();
+      expect(told, [1, 2, 1]);
+      // The last one ending stops the service, though it is still listed.
+      engine.laterFrames.add(dropped);
+      await tester.pumpAndSettle();
+      expect(told, [1, 2, 1, 0]);
+    });
+
+    testWidgets('on Android the service stays up while an SSH session reconnects', (tester) async {
+      androidOverride = true;
+      touchPlatformOverride = true;
+      addTearDown(() {
+        androidOverride = null;
+        touchPlatformOverride = null;
+      });
+      final told = <Object?>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SessionsInBackground.channel, (call) async {
+        if (call.method == 'keepAlive') told.add(call.arguments);
+        return null;
+      });
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SessionsInBackground.channel, null),
+      );
+      final engine = await connected(tester);
+      expect(told, [1]);
+      // In case Android would not start it from the background, it is told
+      // again on coming back, though the count is the same.
+      away(tester);
+      back(tester);
+      await tester.pump();
+      expect(told, [1, 1]);
+
+      engine.laterFrames.add(dropped);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.text('Connection dropped'), findsOneWidget);
+      expect(told, [1, 1], reason: 'no stop between the drop and the first try');
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(find.text('deploy@web-1: ~'), findsOneWidget);
+      expect(told, [1, 1]);
+    });
+
+    testWidgets('on a phone two fingers switch sessions and pinch the text size', (tester) async {
+      touchPlatformOverride = true;
+      addTearDown(() => touchPlatformOverride = null);
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final engine = FakeEngine()..connectedSessionId = 1;
+      await tester.pumpWidget(app(engine));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sessions').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open a local shell'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Back to sessions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Local shell').first);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('session-body-2')), findsOneWidget);
+
+      Future<void> twoFingers(Offset a, Offset b, Offset moveA, Offset moveB) async {
+        final first = await tester.startGesture(a, pointer: 11);
+        final second = await tester.startGesture(b, pointer: 12);
+        for (var i = 0; i < 10; i++) {
+          await first.moveBy(moveA / 10);
+          await second.moveBy(moveB / 10);
+        }
+        await first.up();
+        await second.up();
+        await tester.pumpAndSettle();
+      }
+
+      final centre = tester.getCenter(find.byType(TerminalView));
+      // Swiping right goes back to the session before; there is none before the first.
+      await twoFingers(
+        centre - const Offset(20, 0),
+        centre + const Offset(20, 0),
+        const Offset(120, 0),
+        const Offset(120, 0),
+      );
+      expect(find.byKey(const ValueKey('session-body-1')), findsOneWidget);
+      await twoFingers(
+        centre - const Offset(20, 0),
+        centre + const Offset(20, 0),
+        const Offset(120, 0),
+        const Offset(120, 0),
+      );
+      expect(find.byKey(const ValueKey('session-body-1')), findsOneWidget);
+      await twoFingers(
+        centre - const Offset(20, 0),
+        centre + const Offset(20, 0),
+        const Offset(-120, 0),
+        const Offset(-120, 0),
+      );
+      expect(find.byKey(const ValueKey('session-body-2')), findsOneWidget);
+
+      // Spreading two fingers makes the text bigger, and the size is kept.
+      await twoFingers(
+        centre - const Offset(40, 0),
+        centre + const Offset(40, 0),
+        const Offset(-20, 0),
+        const Offset(20, 0),
+      );
+      expect(engine.settings['terminal_font_size'], '21.0');
+    });
   });
 
   testWidgets('setting up a vault in a folder shows the recovery code, then the sync status', (tester) async {

@@ -26,6 +26,7 @@ class TerminalView extends StatefulWidget {
     this.onOpenLink,
     this.imeInput,
     this.confirmPaste,
+    this.onSwitchSession,
   });
 
   /// The view that last took focus, so the keyboard bar can show or hide
@@ -57,6 +58,10 @@ class TerminalView extends StatefulWidget {
   /// or null to paste nothing. Without one, text is pasted as it is.
   final Future<String?> Function(String text)? confirmPaste;
 
+  /// A two-finger swipe sideways on a touch screen: show the next session
+  /// (`1`, swiping left) or the one before (`-1`, swiping right).
+  final void Function(int step)? onSwitchSession;
+
   @override
   State<TerminalView> createState() => _TerminalViewState();
 }
@@ -68,6 +73,10 @@ typedef _Cell = ({int col, int line, bool right});
 /// A few pixels between the pane's left edge and the first column, so text
 /// does not sit flush against it.
 const double _inset = 8;
+
+/// What two fingers on the terminal are doing: not yet clear, changing the
+/// text size, or finished (a swipe that switched sessions, or a third finger).
+enum _Pair { deciding, pinching, done }
 
 class _TerminalViewState extends State<TerminalView> with TextInputClient, DeltaTextInputClient {
   TextInputConnection? _ime;
@@ -547,9 +556,8 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
 
   void _onPointerDown(PointerDownEvent e) {
     _focus.requestFocus();
-    // Touch selection (long press, handles) comes with the mobile build.
     if (e.kind == PointerDeviceKind.touch) {
-      if (_useIme) _openIme();
+      _touchDown(e);
       return;
     }
     final button = _buttonOf(e.buttons);
@@ -597,6 +605,10 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   }
 
   void _onPointerMove(PointerMoveEvent e) {
+    if (e.kind == PointerDeviceKind.touch) {
+      _touchMove(e);
+      return;
+    }
     if (_reportedButton != null) {
       final cell = _cellAt(e.localPosition);
       if (cell.col == _reportedCell?.col && cell.line == _reportedCell?.line) return;
@@ -619,12 +631,130 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   }
 
   void _onPointerUp(PointerEvent e) {
+    if (e.kind == PointerDeviceKind.touch) {
+      _touchUp(e);
+      return;
+    }
     final button = _reportedButton;
     if (button != null) {
       _reportedButton = null;
       _report(TerminalMouseAction.release, button, _cellAt(e.localPosition), held: true);
     }
     _dragging = false;
+  }
+
+  // ---- Touch -----------------------------------------------------------
+  //
+  // A tap is a click for a program that asks for the mouse, and on a link,
+  // file path or address it offers to open or copy it, as right-click does.
+  // A double tap selects a word. Two fingers pinch to change the text size,
+  // or swipe sideways to switch sessions.
+
+  /// Fingers on the terminal, and where each one is now.
+  final Map<int, Offset> _touches = {};
+
+  /// The finger that may yet be a tap, and where it landed.
+  int? _tapPointer;
+  Offset? _tapStart;
+
+  /// When and where the last tap was, to spot a double tap.
+  DateTime? _lastTap;
+  Offset? _lastTapAt;
+
+  /// Two fingers: where they landed, the text size then, and what they
+  /// turned out to be doing.
+  Map<int, Offset>? _pairStart;
+  double _pairSize = 0;
+  _Pair _pair = _Pair.done;
+
+  /// How far the fingers must spread or close before it counts as a pinch,
+  /// and move sideways together before it counts as a swipe.
+  static const _pinchSlop = 24.0;
+  static const _swipeDistance = 64.0;
+
+  void _touchDown(PointerDownEvent e) {
+    if (_useIme) _openIme();
+    _touches[e.pointer] = e.localPosition;
+    if (_touches.length == 1) {
+      _tapPointer = e.pointer;
+      _tapStart = e.localPosition;
+      return;
+    }
+    // More than one finger is never a tap.
+    _tapPointer = null;
+    if (_touches.length == 2) {
+      _pairStart = Map.of(_touches);
+      _pairSize = widget.controller.fontSize;
+      _pair = _Pair.deciding;
+    } else {
+      _pair = _Pair.done;
+    }
+  }
+
+  void _touchMove(PointerMoveEvent e) {
+    if (!_touches.containsKey(e.pointer)) return;
+    _touches[e.pointer] = e.localPosition;
+    if (e.pointer == _tapPointer && (e.localPosition - _tapStart!).distance > kTouchSlop) _tapPointer = null;
+    final start = _pairStart;
+    if (start == null || _touches.length != 2 || _pair == _Pair.done) return;
+    final ids = start.keys.toList();
+    final from = [for (final id in ids) start[id]!];
+    final to = [for (final id in ids) _touches[id] ?? start[id]!];
+    final spreadFrom = (from[0] - from[1]).distance;
+    final spread = (to[0] - to[1]).distance;
+    final moved = ((to[0] - from[0]) + (to[1] - from[1])) / 2;
+    if (_pair == _Pair.deciding) {
+      if ((spread - spreadFrom).abs() > _pinchSlop) {
+        _pair = _Pair.pinching;
+      } else if (moved.dx.abs() > _swipeDistance && moved.dx.abs() > moved.dy.abs() * 2) {
+        _pair = _Pair.done;
+        widget.onSwitchSession?.call(moved.dx < 0 ? 1 : -1);
+        return;
+      }
+    }
+    if (_pair == _Pair.pinching && spreadFrom > 0) {
+      // Whole sizes only, so the setting is not saved on every move.
+      widget.controller.setFontSize((_pairSize * spread / spreadFrom).roundToDouble());
+    }
+  }
+
+  void _touchUp(PointerEvent e) {
+    if (_touches.remove(e.pointer) == null) return;
+    final tapped = e.pointer == _tapPointer && e is PointerUpEvent;
+    if (e.pointer == _tapPointer) _tapPointer = null;
+    if (_touches.isEmpty) {
+      _pairStart = null;
+      _pair = _Pair.done;
+    }
+    if (tapped) _onTap(e.localPosition, e.position);
+  }
+
+  void _onTap(Offset local, Offset global) {
+    final c = widget.controller;
+    final cell = _cellAt(local);
+    final now = DateTime.now();
+    final second = _lastTap != null &&
+        now.difference(_lastTap!) < _multiClickGap &&
+        (local - _lastTapAt!).distance < kDoubleTapSlop;
+    // A third tap starts over rather than counting as another double.
+    _lastTap = second ? null : now;
+    _lastTapAt = local;
+    if (_isLinkCell(cell) && c.linkAt(cell.col, cell.line) != null) {
+      _lastTap = null;
+      _showContextMenu(global, cell);
+      return;
+    }
+    if (_report(TerminalMouseAction.press, TerminalMouseButton.left, cell)) {
+      _report(TerminalMouseAction.release, TerminalMouseButton.left, cell, held: true);
+      return;
+    }
+    if (second) {
+      c.selectBegin(cell.col, cell.line, cell.right, TerminalSelectKind.word);
+      // The menu puts Copy within reach, as there are no copy keys.
+      _showContextMenu(global, cell);
+    } else {
+      c.selectClear();
+    }
   }
 
   Future<void> _showContextMenu(Offset global, _Cell cell) async {

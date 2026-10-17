@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/core/theme/theme.dart';
 import 'package:promptly/features/terminal/terminal_controller.dart';
+import 'package:promptly/features/terminal/terminal_grid.dart';
 import 'package:promptly/features/terminal/terminal_view.dart';
 
 /// Records what the view asks of the engine.
@@ -815,5 +816,183 @@ void main() {
       expect(engine.written.last, [0x7f]);
     }
     controller.dispose();
+  });
+
+  group('touch', () {
+    Future<TerminalController> touchView(
+      WidgetTester tester,
+      RecordingEngine engine, {
+      void Function(String uri)? onOpenLink,
+      void Function(int step)? onSwitchSession,
+    }) async {
+      final controller = TerminalController(engine: engine, id: 1, label: 'test');
+      addTearDown(controller.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildPromptlyTheme(Brightness.dark),
+          home: Scaffold(
+            body: TerminalView(controller: controller, onOpenLink: onOpenLink, onSwitchSession: onSwitchSession),
+          ),
+        ),
+      );
+      await tester.pump();
+      controller.grid
+        ..cols = 80
+        ..rows = 24;
+      return controller;
+    }
+
+    testWidgets('a tap is a click for a program that asks for the mouse, and nothing otherwise', (tester) async {
+      final engine = RecordingEngine();
+      final controller = await touchView(tester, engine);
+      final origin = tester.getTopLeft(find.byType(TerminalView));
+
+      await tester.tapAt(origin + const Offset(10, 4));
+      await tester.pump();
+      expect(engine.calls.where((c) => c.startsWith('mouse') || c.startsWith('select')), isEmpty);
+
+      engine.takesMouse = true;
+      controller.grid.mouseReporting = true;
+      await tester.tapAt(origin + const Offset(10, 40));
+      await tester.pump();
+      final mouse = engine.calls.where((c) => c.startsWith('mouse')).toList();
+      expect(mouse, hasLength(2), reason: '$mouse');
+      expect(mouse.first, startsWith('mouse press left 0,'));
+      expect(mouse.last, startsWith('mouse release left 0,'));
+      expect(mouse.first, isNot('mouse press left 0,0'), reason: 'the row under the finger');
+
+      // A finger that moves is not a tap.
+      final drag = await tester.startGesture(origin + const Offset(10, 4));
+      await drag.moveBy(const Offset(0, 60));
+      await drag.up();
+      await tester.pump();
+      expect(engine.calls.where((c) => c.startsWith('mouse')), hasLength(2));
+    });
+
+    testWidgets('a tap on a link, path or address offers to open or copy it', (tester) async {
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+      final engine = RecordingEngine()
+        ..link = 'https://example.com/docs'
+        ..takesMouse = true;
+      String? opened;
+      final controller = await touchView(tester, engine, onOpenLink: (uri) => opened = uri);
+      // A program has the mouse, but a link still wins: a phone has no Ctrl.
+      controller.grid
+        ..mouseReporting = true
+        ..lines = [GridRow.blank(80, 0, 0)..flags[0] = CellFlags.link];
+      final origin = tester.getTopLeft(find.byType(TerminalView));
+
+      await tester.tapAt(origin + const Offset(10, 4));
+      await tester.pumpAndSettle();
+      expect(find.text('Open link'), findsOneWidget);
+      expect(find.text('Copy link'), findsOneWidget);
+      expect(engine.calls.where((c) => c.startsWith('mouse')), isEmpty);
+      await tester.tap(find.text('Open link'));
+      await tester.pumpAndSettle();
+      expect(opened, 'https://example.com/docs');
+
+      engine.link = '/var/log/syslog';
+      await tester.tapAt(origin + const Offset(10, 4));
+      await tester.pumpAndSettle();
+      expect(find.text('Open link'), findsNothing, reason: 'a path means something on the other machine');
+      await tester.tap(find.text('Copy path'));
+      await tester.pumpAndSettle();
+      expect(copied, '/var/log/syslog');
+    });
+
+    testWidgets('a double tap selects a word and offers to copy it', (tester) async {
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+      final engine = RecordingEngine()..selection = 'deploy';
+      await touchView(tester, engine);
+      final origin = tester.getTopLeft(find.byType(TerminalView));
+
+      await tester.tapAt(origin + const Offset(30, 4));
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(engine.calls.where((c) => c.startsWith('select')), isEmpty, reason: 'one tap selects nothing');
+      await tester.tapAt(origin + const Offset(32, 4));
+      await tester.pumpAndSettle();
+      expect(engine.calls.where((c) => c.startsWith('select word')), hasLength(1), reason: '${engine.calls}');
+      await tester.tap(find.text('Copy'));
+      await tester.pumpAndSettle();
+      expect(copied, 'deploy');
+    });
+
+    testWidgets('pinching changes the text size, in whole steps', (tester) async {
+      final engine = RecordingEngine();
+      final controller = await touchView(tester, engine);
+      final sizes = <double>[];
+      controller.onFontSize = sizes.add;
+      final centre = tester.getCenter(find.byType(TerminalView));
+
+      final a = await tester.startGesture(centre - const Offset(50, 0), pointer: 1);
+      final b = await tester.startGesture(centre + const Offset(50, 0), pointer: 2);
+      await a.moveBy(const Offset(-25, 0));
+      await b.moveBy(const Offset(25, 0));
+      await a.up();
+      await b.up();
+      await tester.pump();
+      expect(controller.fontSize, 21, reason: 'fingers half as far apart again: 14 × 1.5');
+      expect(sizes.last, 21);
+      expect(sizes.every((s) => s == s.roundToDouble()), isTrue, reason: '$sizes');
+
+      final c = await tester.startGesture(centre - const Offset(80, 0), pointer: 3);
+      final d = await tester.startGesture(centre + const Offset(80, 0), pointer: 4);
+      await c.moveBy(const Offset(60, 0));
+      await d.moveBy(const Offset(-60, 0));
+      await c.up();
+      await d.up();
+      await tester.pump();
+      expect(controller.fontSize, 8, reason: 'never smaller than the smallest size');
+      expect(engine.calls.where((c) => c.startsWith('mouse') || c.startsWith('select')), isEmpty);
+    });
+
+    testWidgets('two fingers swiped sideways switch sessions', (tester) async {
+      final engine = RecordingEngine();
+      final steps = <int>[];
+      final controller = await touchView(tester, engine, onSwitchSession: steps.add);
+      final centre = tester.getCenter(find.byType(TerminalView));
+
+      Future<void> swipe(double dx) async {
+        final a = await tester.startGesture(centre + const Offset(-20, -20), pointer: 1);
+        final b = await tester.startGesture(centre + const Offset(20, 20), pointer: 2);
+        // In small steps, as a screen reports them, one finger at a time.
+        for (var i = 0; i < 12; i++) {
+          await a.moveBy(Offset(dx / 12, 0));
+          await b.moveBy(Offset(dx / 12, 0));
+        }
+        await a.up();
+        await b.up();
+        await tester.pump();
+      }
+
+      await swipe(-120);
+      expect(steps, [1], reason: 'once per swipe, to the next session');
+      await swipe(120);
+      expect(steps, [1, -1]);
+      expect(controller.fontSize, 14, reason: 'a swipe is not a pinch');
+
+      // Two fingers moving up and down are neither.
+      final a = await tester.startGesture(centre + const Offset(-20, 0), pointer: 1);
+      final b = await tester.startGesture(centre + const Offset(20, 0), pointer: 2);
+      for (var i = 0; i < 12; i++) {
+        await a.moveBy(const Offset(0, 10));
+        await b.moveBy(const Offset(0, 10));
+      }
+      await a.up();
+      await b.up();
+      await tester.pump();
+      expect(steps, [1, -1]);
+      expect(controller.fontSize, 14);
+    });
   });
 }

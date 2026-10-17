@@ -13,3 +13,11 @@ bool? touchPlatformOverride;
 bool get isTouchPlatform =>
     touchPlatformOverride ??
     (!kIsWeb && (Platform.isAndroid || Platform.isIOS || Platform.environment['PROMPTLY_TOUCH'] == '1'));
+
+/// Set by tests to pretend to be Android, or not.
+@visibleForTesting
+bool? androidOverride;
+
+/// Android, where open sessions need a foreground service to keep running
+/// while the app is in the background.
+bool get isAndroid => androidOverride ?? (!kIsWeb && Platform.isAndroid);

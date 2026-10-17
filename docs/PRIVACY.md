@@ -28,7 +28,7 @@ That is all. Promptly makes no other connections.
 
 ## Permissions
 
-- **Android.** Network access, for SSH and sync, and the fingerprint or face check, used only to unlock Promptly and your keys when you turn that on (the check happens in Android; Promptly learns only whether it passed). Nothing else. Files are read only when you pick one (a key, a theme, a CSV) or use the file browser.
+- **Android.** Network access, for SSH and sync, and the fingerprint or face check, used only to unlock Promptly and your keys when you turn that on (the check happens in Android; Promptly learns only whether it passed). A foreground service and a notification, used only while sessions are open, so they keep running in the background. Nothing else. Files are read only when you pick one (a key, a theme, a CSV) or use the file browser.
 - **Desktop.** Promptly reads `~/.ssh/config` and the key files it names only when you ask it to import them, and your SSH agent only when a host is set to use it.
 
 ## Children

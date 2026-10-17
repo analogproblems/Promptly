@@ -36,6 +36,7 @@ class SessionBody extends ConsumerStatefulWidget {
     this.focused = true,
     this.onFocus,
     this.onReplaced,
+    this.onSwitchSession,
   });
 
   final SessionEntry entry;
@@ -59,6 +60,10 @@ class SessionBody extends ConsumerStatefulWidget {
   /// "New shell" on an ended local session made another session; show it
   /// where this one was. Defaults to navigating to it.
   final void Function(int sessionId)? onReplaced;
+
+  /// A two-finger swipe on the terminal: show the next session (`1`) or
+  /// the one before (`-1`). Only the phone's full-screen session has one.
+  final void Function(int step)? onSwitchSession;
 
   @override
   ConsumerState<SessionBody> createState() => _SessionBodyState();
@@ -296,6 +301,7 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                                     autofocus: widget.focused,
                                     onFind: _openSearch,
                                     onOpenLink: _openLink,
+                                    onSwitchSession: widget.onSwitchSession,
                                     confirmPaste: (text) =>
                                         confirmPaste(context, text, warn: ref.read(pasteWarningProvider)),
                                   ),
