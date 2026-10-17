@@ -79,11 +79,15 @@ Download the file for your system from the [Releases page](https://github.com/an
 
 ### Windows
 
-1. Unzip the download into a folder of your choice.
-2. Run `promptly.exe`.
-3. The first time, Windows may show **Windows protected your PC**, because Promptly isn't signed with a paid certificate yet. Click **More info**, then **Run anyway**. You only need to do this once.
+The installer is the easiest choice, and the only one that can update itself.
 
-If Windows reports that a `.dll` file is missing, install Microsoft's [Visual C++ Redistributable (x64)](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) once and try again.
+1. Download `promptly-…-windows-x64-setup.exe` and run it.
+2. Windows may show **Windows protected your PC**, because Promptly isn't signed with a paid certificate yet. Click **More info**, then **Run anyway**.
+3. Follow the installer. It installs Promptly for your account only, so it doesn't need an administrator, and adds it to the Start menu. To uninstall, use **Settings › Apps** in Windows.
+
+If you'd rather not install anything, download the zip instead, unzip it into a folder of your choice and run `promptly.exe`. Windows shows the same warning the first time.
+
+If the zip copy reports that a `.dll` file is missing, install Microsoft's [Visual C++ Redistributable (x64)](https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist) once and try again.
 
 ### macOS
 
@@ -100,7 +104,12 @@ You only need to do this once. The **Open Anyway** button is shown for about an 
 
 ### Updating
 
-Download the new release and install it the same way. Your hosts, keys and settings are kept.
+Your hosts, keys and settings are kept when you update.
+
+To see whether a new version is out, open **Settings › About Promptly** and tap **Check**. To have Promptly look once a day and tell you, turn on **Settings › Updates › Check for updates automatically** (it's off by default).
+
+- **Windows, installed with the installer:** when a new version is out, tap **Update and restart**. Promptly downloads it, closes (along with any open sessions), installs it and opens again.
+- **Everywhere else:** tap **Download** to open the release page, then install the new version the same way you installed the first one.
 
 ## 3. Getting started
 
@@ -675,12 +684,13 @@ If the file holds several themes, save the ones you want. Imported themes appear
 | **Appearance** | **App look** | Light, dark, or follow the system. |
 | | **Terminal theme** | The terminal's colours. See [chapter 15](#15-themes-and-appearance). |
 | **Terminal** | **Let programs copy to the clipboard** | Lets programs such as `tmux` and `vim` set your clipboard, even over SSH. On by default. |
+| **Updates** | **Check for updates automatically** | Asks GitHub once a day whether a new version is out. Off by default. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |
 | | **Import from a CSV file** | Imports hosts from a CSV file. |
 | | **Import from ~/.ssh/config** | Imports hosts and keys from your SSH config (computers only). |
 | **Sync** | | Sets up the vault, or shows its status. See [chapter 14](#14-sync). |
 | **Help** | **Help** | A quick-start guide, the keyboard shortcuts, and links to this guide and to report a problem. |
-| | **About Promptly** | The version, links, and the licences of the open-source parts Promptly is built on. |
+| | **About Promptly** | The version, a check for updates, links, and the licences of the open-source parts Promptly is built on. |
 
 ## 17. Keyboard shortcuts
 
@@ -739,7 +749,7 @@ Every vault command takes the vault folder, and asks for the passphrase (or read
 
 ## 19. Privacy and security
 
-- **Promptly collects nothing about you.** There are no analytics, no crash reporting and no accounts. Nothing leaves your device unless you set up sync, and then only encrypted data goes to the storage you chose. See the [privacy policy](PRIVACY.md).
+- **Promptly collects nothing about you.** There are no analytics, no crash reporting and no accounts. Apart from your SSH connections, nothing leaves your device unless you set up sync, which sends only encrypted data to the storage you chose, or check for updates, which asks GitHub for the newest version number. See the [privacy policy](PRIVACY.md).
 - **Your secrets are encrypted before they're synced.** On your device, saved passwords and private keys are kept in Promptly's own data folder, protected by your system's file permissions rather than encryption, so protect your device and its backups as you would your `~/.ssh` folder. They go into the vault only in encrypted form, and your passphrase never leaves your device.
 - **Host keys are always checked.** Promptly warns you before connecting to a server it hasn't seen before, and stops you if a known server's key changes.
 - **You choose what programs can do.** Remote programs can only set your clipboard if you allow it, and agent forwarding is off unless you turn it on for a host.

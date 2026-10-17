@@ -108,6 +108,15 @@ jobs:
           name: promptly-windows-x64
           path: app/build/windows/x64/runner/Release
           if-no-files-found: error
+      - name: Installer
+        shell: pwsh
+        run: ../tools/windows-installer.ps1 build/windows/x64/runner/Release "" ../dist
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: promptly-windows-x64-setup
+          path: dist/*.exe
+          if-no-files-found: error
 
   app-macos:
     name: Flutter app (macOS)

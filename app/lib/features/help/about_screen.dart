@@ -6,6 +6,8 @@ import '../../core/engine/engine.dart';
 import '../../core/links.dart';
 import '../../core/theme/tokens.dart';
 import '../../core/version.dart';
+import '../updates/update_panel.dart';
+import '../updates/updates.dart';
 import 'help_screen.dart';
 
 /// Version, licence and where the project lives.
@@ -51,6 +53,7 @@ class AboutScreen extends ConsumerWidget {
             style: TextStyle(fontSize: 14, height: 1.5, color: t.muted),
           ),
           const SizedBox(height: 24),
+          if (updateChecksSupported) const HelpSection(title: 'Updates', children: [UpdatePanel()]),
           HelpSection(
             title: 'Project',
             children: [
