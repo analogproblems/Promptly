@@ -20,6 +20,8 @@ class RecordingEngine implements Engine {
   @override
   String ping(String name) => name;
   @override
+  bool secretsEncrypted() => true;
+  @override
   EndpointParse parseEndpoint(String input) => const EndpointError('n/a');
   @override
   int terminalOpenLocal({required int cols, required int rows, required String theme}) => 1;

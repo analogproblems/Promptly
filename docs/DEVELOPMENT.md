@@ -27,7 +27,7 @@ Flutter builds, so there is no separate step to build the engine for the app.
 | Rust | stable, 1.85 or newer | via rustup, with `rustfmt` and `clippy` |
 | Flutter | stable, 3.35 or newer | `flutter config --enable-linux-desktop` |
 | flutter_rust_bridge_codegen | exactly the version in `app/pubspec.yaml` | `cargo install flutter_rust_bridge_codegen --version <v> --locked` |
-| Linux desktop deps | | `clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev` |
+| Linux desktop deps | | `clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev libstdc++-12-dev` |
 
 On Ubuntu, `tools/setup.sh` installs all of this and is safe to re-run.
 

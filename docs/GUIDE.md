@@ -750,7 +750,7 @@ Every vault command takes the vault folder, and asks for the passphrase (or read
 ## 19. Privacy and security
 
 - **Promptly collects nothing about you.** There are no analytics, no crash reporting and no accounts. Apart from your SSH connections, nothing leaves your device unless you set up sync, which sends only encrypted data to the storage you chose, or check for updates, which asks GitHub for the newest version number. See the [privacy policy](PRIVACY.md).
-- **Your secrets are encrypted before they're synced.** On your device, saved passwords and private keys are kept in Promptly's own data folder, protected by your system's file permissions rather than encryption, so protect your device and its backups as you would your `~/.ssh` folder. They go into the vault only in encrypted form, and your passphrase never leaves your device.
+- **Your secrets are encrypted, on your device and in the vault.** Saved passwords, private keys and the vault's key are encrypted in Promptly's data folder with a key held in your system's secure storage (the Keychain, Android Keystore, Windows Credential Manager or the Linux keyring), so a copy of the folder, such as a backup, doesn't reveal them. They go into the vault only in encrypted form, and your passphrase never leaves your device. On a Linux computer with no keyring, Promptly can't encrypt them on the device; **Settings** then says so, and installing a keyring such as GNOME Keyring or KWallet turns encryption on.
 - **Host keys are always checked.** Promptly warns you before connecting to a server it hasn't seen before, and stops you if a known server's key changes.
 - **You choose what programs can do.** Remote programs can only set your clipboard if you allow it, and agent forwarding is off unless you turn it on for a host.
 - **Reachability checks are local.** With **Show which hosts are up** on, your device knocks on each host's SSH port directly; nothing goes anywhere else.
@@ -764,6 +764,10 @@ Promptly is open source, so anyone can check what it does. To report a security 
 **The password is rejected.** If you saved the password, edit the host and type it again. Some servers turn off password logins entirely; use a [key](#6-keys) instead.
 
 **The key is rejected.** Make sure the public key is in `~/.ssh/authorized_keys` on the server, for the user you log in as, and that the host is set to use that key. On the server, `~/.ssh` should be readable only by you (`chmod 700 ~/.ssh` and `chmod 600 ~/.ssh/authorized_keys`).
+
+**Your Mac asks whether Promptly may use your keychain.** Promptly keeps the key that encrypts your saved passwords and keys in your login keychain. If macOS asks, for example after an update, enter your Mac password and choose **Always Allow**. If you deny it, Promptly can't read what it saved until you allow it.
+
+**Saved passwords and keys stopped working after a system reset.** The key that encrypts them lives in your system's secure storage. If that was cleared (a reset keychain or keyring, or a phone restored without it), Promptly can't read them any more. Type the passwords again and re-import your keys; if you use sync, remove the device from another one and join the vault again.
 
 **"The key for this host is missing."** The host points at a key that was deleted. Edit the host and pick another key.
 

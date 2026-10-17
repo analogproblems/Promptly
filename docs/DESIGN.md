@@ -217,7 +217,7 @@ promptly/
 
 **promptly-vault.** The heart of sync: data model types, the operation log, merge rules, encryption, the `Backend` trait and its implementations, and the sync scheduler. Pure Rust with no platform dependencies beyond what each backend needs (an HTTP client for cloud APIs, the filesystem for local, `russh-sftp` for SFTP). Fully specified in [VAULT.md](VAULT.md).
 
-**promptly-store.** The materialised local state in SQLite (`rusqlite`, bundled, with SQLCipher for encryption at rest). Secrets such as the vault key are never in SQLite; they go through a `SecretStore` trait implemented by the platform (Keychain, Android Keystore, Windows Credential Manager, libsecret).
+**promptly-store.** The materialised local state in SQLite (`rusqlite`, bundled, with SQLCipher for encryption at rest). Secrets such as the vault key are never in SQLite; they go through a `SecretStore` trait. Its file implementation seals each secret with a per-device key that the app keeps in the platform's secure storage (Keychain, Android Keystore, Windows Credential Manager, libsecret) and hands to the engine at startup.
 
 **promptly-api.** A flat set of async functions and streams for the bridge: `connect(host_id)`, `write(session, bytes)`, `frames(session)`, `hosts()`, `sync_now()` and so on. No business logic here; it only adapts.
 

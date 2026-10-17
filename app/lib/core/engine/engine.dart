@@ -108,6 +108,10 @@ abstract class Engine {
   /// Where the engine keeps its files. Called once at startup.
   void setDataDir(String path);
 
+  /// Whether saved passwords, keys and the vault key are encrypted on disk.
+  /// False only when the system has no secure storage for the device key.
+  bool secretsEncrypted();
+
   /// The built-in terminal themes, Promptly's own first.
   List<rust_themes.ThemeInfo> themesList();
 
@@ -328,6 +332,9 @@ class RustEngine implements Engine {
 
   @override
   void setDataDir(String path) => rust.setDataDir(path: path);
+
+  @override
+  bool secretsEncrypted() => rust_store.secretsEncrypted();
 
   @override
   List<rust_themes.ThemeInfo> themesList() => rust_themes.themesList();

@@ -7,7 +7,18 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collection`, `secrets`, `store`, `validate`
+// These functions are ignored because they are not marked as `pub`: `collection`, `secret_store`, `secrets`, `store`, `validate`
+
+/// Hand the engine the device key from the platform's secure storage, so
+/// saved secrets are encrypted on disk. Call once at startup, before
+/// anything reads a secret; without it they are stored as plain files.
+void setDeviceKey({required List<int> key}) =>
+    RustLib.instance.api.crateApiStoreSetDeviceKey(key: key);
+
+/// Whether saved passwords, keys and the vault key are encrypted on this
+/// device. False only when the platform has no secure storage to hold the
+/// device key.
+bool secretsEncrypted() => RustLib.instance.api.crateApiStoreSecretsEncrypted();
 
 List<StoreRecord> recordsList({required String collectionName}) => RustLib
     .instance

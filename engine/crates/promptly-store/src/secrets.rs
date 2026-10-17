@@ -1,8 +1,10 @@
-//! Where small secrets live on each platform: Keychain on Apple, Keystore on
-//! Android, Credential Manager on Windows, libsecret on Linux.
+//! Where small secrets live: saved passwords, private keys and the vault key.
 //!
-//! Implementations are provided by the app side through the bridge; the engine
-//! never links a platform keychain library directly.
+//! They are files in the data folder, encrypted with a device key that the app
+//! keeps in the platform's own secure storage (Keychain on Apple, Keystore on
+//! Android, Credential Manager on Windows, the Secret Service on Linux) and
+//! hands to the engine at startup. The engine never links a platform keychain
+//! library directly.
 
 pub trait SecretStore: Send + Sync {
     /// Store `value` under `key`, replacing any previous value.
@@ -67,18 +69,36 @@ mod tests {
 
 /// Secrets as files, one per id, readable only by the owner.
 ///
-/// This is how OpenSSH itself keeps `~/.ssh/id_*`: file permissions, plus
-/// the key's own passphrase if it has one. It is the default on Linux
-/// desktops, where a keychain service is not always present. The vault
-/// passphrase (milestone 2) encrypts these at rest, and platforms with a
-/// system keychain use it instead through the app side of the bridge.
+/// With a device key each file is sealed with it, bound to its id, so a copy
+/// of the folder is useless without the platform's secure storage. Without
+/// one (a Linux desktop with no Secret Service) the files are plain, as
+/// OpenSSH keeps `~/.ssh/id_*`, and only file permissions protect them.
 pub struct FileSecretStore {
     dir: std::path::PathBuf,
+    key: Option<Dek>,
 }
 
 impl FileSecretStore {
+    /// Plain files, protected only by file permissions.
     pub fn new(dir: std::path::PathBuf) -> Self {
-        Self { dir }
+        Self { dir, key: None }
+    }
+
+    /// Files encrypted with `key`, the device key.
+    pub fn encrypted(dir: std::path::PathBuf, key: Dek) -> Self {
+        Self {
+            dir,
+            key: Some(key),
+        }
+    }
+
+    /// Whether secrets are encrypted on disk.
+    pub fn is_encrypted(&self) -> bool {
+        self.key.is_some()
+    }
+
+    fn aad(key: &str) -> Vec<u8> {
+        format!("promptly-secret/{key}").into_bytes()
     }
 
     fn path_for(&self, key: &str) -> Result<std::path::PathBuf, SecretError> {
@@ -109,6 +129,15 @@ impl SecretStore for FileSecretStore {
     fn put(&self, key: &str, value: &[u8]) -> Result<(), SecretError> {
         self.ensure_dir()?;
         let path = self.path_for(key)?;
+        let sealed;
+        let value = match &self.key {
+            Some(k) => {
+                sealed = seal(k, &Self::aad(key), value)
+                    .map_err(|e| SecretError::Platform(e.to_string()))?;
+                &sealed[..]
+            }
+            None => value,
+        };
         let tmp = path.with_extension("tmp");
         {
             let mut opts = std::fs::OpenOptions::new();
@@ -132,7 +161,20 @@ impl SecretStore for FileSecretStore {
     fn get(&self, key: &str) -> Result<Option<Vec<u8>>, SecretError> {
         let path = self.path_for(key)?;
         match std::fs::read(&path) {
-            Ok(bytes) => Ok(Some(bytes)),
+            Ok(bytes) => match &self.key {
+                // Written while the secure storage was unavailable, as when a
+                // keyring starts late; it is sealed the next time it is saved.
+                Some(_) if !bytes.starts_with(MAGIC) => Ok(Some(bytes)),
+                Some(k) => open(k, &Self::aad(key), &bytes).map(Some).map_err(|_| {
+                    SecretError::Platform(format!(
+                        "saved secret {key:?} could not be decrypted with this device's key"
+                    ))
+                }),
+                None if bytes.starts_with(MAGIC) => Err(SecretError::Platform(format!(
+                    "saved secret {key:?} is encrypted, but this device's secure storage is unavailable"
+                ))),
+                None => Ok(Some(bytes)),
+            },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(SecretError::Platform(e.to_string())),
         }
@@ -166,6 +208,8 @@ impl SecretStore for FileSecretStore {
     }
 }
 
+use promptly_vault::crypto::{open, seal, Dek, MAGIC};
+
 #[cfg(test)]
 mod file_tests {
     use super::*;
@@ -197,6 +241,40 @@ mod file_tests {
         assert_eq!(s.get("k1").unwrap(), None);
         assert!(s.get("../etc/passwd").is_err(), "ids are never paths");
         assert!(s.put(".hidden", b"x").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn encrypted_store_seals_each_file_to_its_id() {
+        let dir = std::env::temp_dir().join(format!("promptly-secrets-enc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let key = Dek::generate();
+        let s = FileSecretStore::encrypted(dir.clone(), key.clone());
+        assert!(s.is_encrypted());
+        s.put("pw", b"hunter2").unwrap();
+        let raw = std::fs::read(dir.join("pw")).unwrap();
+        assert!(raw.starts_with(MAGIC));
+        assert!(
+            !raw.windows(7).any(|w| w == b"hunter2"),
+            "no plaintext on disk"
+        );
+        assert_eq!(s.get("pw").unwrap().as_deref(), Some(&b"hunter2"[..]));
+        assert_eq!(s.list().unwrap(), vec!["pw".to_string()]);
+
+        // A file moved to another id does not open.
+        std::fs::copy(dir.join("pw"), dir.join("other")).unwrap();
+        assert!(s.get("other").is_err());
+        // Nor does it open with another key, or with no key at all.
+        assert!(FileSecretStore::encrypted(dir.clone(), Dek::generate())
+            .get("pw")
+            .is_err());
+        assert!(FileSecretStore::new(dir.clone()).get("pw").is_err());
+
+        // A plain file, saved while the key was unavailable, still reads.
+        FileSecretStore::new(dir.clone())
+            .put("plain", b"x")
+            .unwrap();
+        assert_eq!(s.get("plain").unwrap().as_deref(), Some(&b"x"[..]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

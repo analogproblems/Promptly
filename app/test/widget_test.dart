@@ -25,6 +25,9 @@ import 'package:promptly/features/updates/updates.dart';
 /// Records and secrets live in maps so the hosts and keys screens work.
 class FakeEngine implements Engine {
   final Map<String, Map<String, String>> records = {};
+
+  /// Whether saved secrets are encrypted, as when the system has a keyring.
+  bool encrypted = true;
   final Map<String, String> secrets = {};
   final Map<String, String> settings = {};
   int generated = 0;
@@ -46,6 +49,8 @@ class FakeEngine implements Engine {
 
   @override
   String ping(String name) => 'pong: $name';
+  @override
+  bool secretsEncrypted() => encrypted;
 
   @override
   EndpointParse parseEndpoint(String input) {
@@ -1997,6 +2002,24 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(days: 2));
     expect(updates.checks, 2);
+  });
+
+  testWidgets('Settings warns only when saved secrets cannot be encrypted', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(appWith(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTo(tester, find.byKey(const Key('settings-about')));
+    expect(find.byKey(const Key('secrets-plain'), skipOffstage: false), findsNothing);
+
+    final plain = FakeEngine()..encrypted = false;
+    await tester.pumpWidget(appWith(plain));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTo(tester, find.byKey(const Key('secrets-plain')));
+    expect(find.text('Saved passwords and keys are not encrypted'), findsOneWidget);
   });
 
   testWidgets('every main screen lays out at double text size without overflowing', (tester) async {

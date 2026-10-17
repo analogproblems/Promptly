@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use flutter_rust_bridge::frb;
 use promptly_store::{col_parse, Collection, FileSecretStore, SecretStore, Store};
 use promptly_vault::model::{Group, Host, Identity, Snippet};
+use promptly_vault::Dek;
 
 use crate::api::engine::data_dir;
 use crate::sync_engine;
@@ -32,14 +33,45 @@ pub(crate) fn store() -> Result<Arc<Store>, String> {
     Ok(s)
 }
 
-pub(crate) fn secrets() -> Arc<dyn SecretStore> {
+static DEVICE_KEY: Mutex<Option<Dek>> = Mutex::new(None);
+
+/// Hand the engine the device key from the platform's secure storage, so
+/// saved secrets are encrypted on disk. Call once at startup, before
+/// anything reads a secret; without it they are stored as plain files.
+#[frb(sync)]
+pub fn set_device_key(key: Vec<u8>) -> Result<(), String> {
+    let key = Dek::from_slice(&key).ok_or("the device key must be 32 bytes")?;
+    if SECRETS.lock().unwrap().is_some() {
+        return Err("the secret store is already open".into());
+    }
+    *DEVICE_KEY.lock().unwrap() = Some(key);
+    Ok(())
+}
+
+/// Whether saved passwords, keys and the vault key are encrypted on this
+/// device. False only when the platform has no secure storage to hold the
+/// device key.
+#[frb(sync)]
+pub fn secrets_encrypted() -> bool {
+    secret_store().is_encrypted()
+}
+
+fn secret_store() -> Arc<FileSecretStore> {
     let mut guard = SECRETS.lock().unwrap();
     if let Some(s) = guard.as_ref() {
         return s.clone();
     }
-    let s = Arc::new(FileSecretStore::new(data_dir().join("secrets")));
+    let dir = data_dir().join("secrets");
+    let s = Arc::new(match DEVICE_KEY.lock().unwrap().clone() {
+        Some(key) => FileSecretStore::encrypted(dir, key),
+        None => FileSecretStore::new(dir),
+    });
     *guard = Some(s.clone());
     s
+}
+
+pub(crate) fn secrets() -> Arc<dyn SecretStore> {
+    secret_store()
 }
 
 fn collection(name: &str) -> Result<Collection, String> {

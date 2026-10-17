@@ -179,6 +179,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
               ),
+              if (!engine.secretsEncrypted()) ...[
+                const SizedBox(height: 16),
+                _Section(
+                  title: 'Security',
+                  child: ListTile(
+                    key: const Key('secrets-plain'),
+                    leading: Icon(Icons.lock_open_outlined, color: t.muted),
+                    title: const Text('Saved passwords and keys are not encrypted'),
+                    subtitle: const Text(
+                      'This computer has no keyring for Promptly to keep its key in, so only file permissions protect them. Install one, such as GNOME Keyring or KWallet, and restart Promptly.',
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 16),
               _Section(
                 title: 'Engine',
