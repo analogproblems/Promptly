@@ -70,14 +70,49 @@ class SessionsScreen extends ConsumerWidget {
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                   itemCount: sessions.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 12),
-                  itemBuilder: (context, i) => SessionCard(
-                    entry: sessions[i],
-                    onOpen: () => context.go('/sessions/${sessions[i].id}'),
-                    onClose: () => ref.read(sessionManagerProvider.notifier).close(sessions[i].id),
+                  // Swipe a card either way to close it, as its close button does.
+                  itemBuilder: (context, i) => Dismissible(
+                    key: ValueKey('session-swipe-${sessions[i].id}'),
+                    background: const _CloseBackground(alignment: Alignment.centerLeft),
+                    secondaryBackground: const _CloseBackground(alignment: Alignment.centerRight),
+                    onDismissed: (_) => ref.read(sessionManagerProvider.notifier).close(sessions[i].id),
+                    child: SessionCard(
+                      entry: sessions[i],
+                      onOpen: () => context.go('/sessions/${sessions[i].id}'),
+                      onClose: () => ref.read(sessionManagerProvider.notifier).close(sessions[i].id),
+                    ),
                   ),
                 ),
         ),
       ],
+    );
+  }
+}
+
+/// Behind a session card being swiped away.
+class _CloseBackground extends StatelessWidget {
+  const _CloseBackground({required this.alignment});
+
+  final Alignment alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Container(
+      alignment: alignment,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: BoxDecoration(
+        color: t.danger.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(PromptlyTokens.panelRadius),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.close, color: t.danger),
+          const SizedBox(width: 6),
+          Flexible(child: Text('Close', overflow: TextOverflow.ellipsis, style: TextStyle(color: t.danger))),
+        ],
+      ),
     );
   }
 }

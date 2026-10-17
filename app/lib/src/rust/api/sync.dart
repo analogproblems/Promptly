@@ -10,6 +10,11 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // These functions are ignored because they are not marked as `pub`: `kdf`, `keys_of`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`
 
+PassphraseCheck syncPassphraseCheck({required String passphrase}) => RustLib
+    .instance
+    .api
+    .crateApiSyncSyncPassphraseCheck(passphrase: passphrase);
+
 SyncStatus syncStatus() => RustLib.instance.api.crateApiSyncSyncStatus();
 
 /// Status after every sync run and every change to the setup.
@@ -143,6 +148,36 @@ Future<SyncSetupResult> syncRotateKey({required String passphrase}) =>
 /// `None` when sync is not set up. The same text, pasted on the other
 /// device, is its join code. Whoever reads it can read the vault.
 String? syncQrPayload() => RustLib.instance.api.crateApiSyncSyncQrPayload();
+
+/// How easy a new passphrase would be to guess, for the meter under the
+/// field. Setting a vault up refuses one that is not `allowed`, with the
+/// same advice.
+class PassphraseCheck {
+  /// 0, refused, to 3, strong.
+  final int level;
+  final bool allowed;
+
+  /// What to say about it, in plain words.
+  final String advice;
+
+  const PassphraseCheck({
+    required this.level,
+    required this.allowed,
+    required this.advice,
+  });
+
+  @override
+  int get hashCode => level.hashCode ^ allowed.hashCode ^ advice.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PassphraseCheck &&
+          runtimeType == other.runtimeType &&
+          level == other.level &&
+          allowed == other.allowed &&
+          advice == other.advice;
+}
 
 /// Something about the vault itself that another try will not fix: the
 /// person has to do something, and the sync screen says what.

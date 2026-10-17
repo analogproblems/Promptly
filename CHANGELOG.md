@@ -60,6 +60,14 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 - Everything in the vault now remembers when it was made and when it last changed, the same on every device, ready for a history view.
 - The command-line tool works on a vault on your own server as well as in a folder: give it `sftp://user@host/path`. It logs in with `--identity`, a password from `PROMPTLY_SSH_PASSWORD`, or your SSH agent, and the server must already be in `~/.ssh/known_hosts`.
 - The list of servers you trust, kept in Promptly's data folder, is now encrypted with the same device key as your saved passwords. On a Linux computer with no keyring it stays plain text, like OpenSSH's own.
+- On a phone, swipe a host to the right to connect or to the left to edit it. Press and hold a host to select it, then tap others to pick several, and delete them or move them to a group in one go. *Select* in a host's menu does the same on desktop.
+- Groups in the hosts list fold away with a tap on their name, and stay folded the next time you open Promptly. The add button offers a host, a group, or importing hosts.
+- The Sessions tab shows how many sessions are open, and on a phone you can swipe a session away to close it.
+- Choosing a sync passphrase shows how hard it is to guess, with advice in plain words, instead of asking for at least eight characters. Only passphrases that would be guessed quickly are refused, and Promptly says why. The command-line tool uses the same check.
+- Settings has a *Hardware keyboard* section: *Caps Lock types Escape*, handy in vim, and on iPad and Mac *Cmd works as Ctrl* in the terminal.
+- On a Mac, Promptly's menus are in the menu bar at the top of the screen, with the usual Promptly, Window and Help menus. Windows and Linux keep the menu bar in the window.
+- About, *Licences* now includes the notices for OpenSSL and SQLCipher, which the engine is built with.
+- On a narrow phone with large text, the session bar puts Snippets and Port forwards under a *More* button, and the sync set-up buttons and the card shown when a session ends no longer run off the screen. A host's last-connected time sits beside its name.
 
 ## 1.0.1
 

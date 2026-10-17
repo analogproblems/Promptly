@@ -70,6 +70,27 @@ pub struct SyncSetupResult {
     pub recovery_code: String,
 }
 
+/// How easy a new passphrase would be to guess, for the meter under the
+/// field. Setting a vault up refuses one that is not `allowed`, with the
+/// same advice.
+pub struct PassphraseCheck {
+    /// 0, refused, to 3, strong.
+    pub level: u8,
+    pub allowed: bool,
+    /// What to say about it, in plain words.
+    pub advice: String,
+}
+
+#[frb(sync)]
+pub fn sync_passphrase_check(passphrase: String) -> PassphraseCheck {
+    let a = promptly_vault::passphrase::assess(&passphrase);
+    PassphraseCheck {
+        level: a.strength as u8,
+        allowed: a.allowed(),
+        advice: a.advice.into(),
+    }
+}
+
 #[frb(sync)]
 pub fn sync_status() -> Result<SyncStatus, String> {
     sync_engine::status()
@@ -145,9 +166,7 @@ pub fn sync_create_local_folder(
     passphrase: String,
     device_name: String,
 ) -> Result<SyncSetupResult, String> {
-    if passphrase.chars().count() < 8 {
-        return Err("Use a passphrase of at least eight characters.".into());
-    }
+    promptly_vault::passphrase::check(&passphrase)?;
     let store = crate::api::store::store()?;
     let backend = promptly_vault::LocalFolder::new(&path);
     let (vault, recovery) = Vault::create(
@@ -227,9 +246,7 @@ pub fn sync_create_sftp(
     passphrase: String,
     device_name: String,
 ) -> Result<SyncSetupResult, String> {
-    if passphrase.chars().count() < 8 {
-        return Err("Use a passphrase of at least eight characters.".into());
-    }
+    promptly_vault::passphrase::check(&passphrase)?;
     let store = crate::api::store::store()?;
     let backend = sync_engine::connect_sftp(&host_id, &remote_dir)?;
     let (vault, recovery) = Vault::create(
@@ -323,9 +340,7 @@ pub fn sync_unlock(
 /// carry on once they have the new passphrase. Returns the new recovery
 /// code, shown once; the old one stops working.
 pub fn sync_recreate_vault(passphrase: String) -> Result<SyncSetupResult, String> {
-    if passphrase.chars().count() < 8 {
-        return Err("Use a passphrase of at least eight characters.".into());
-    }
+    promptly_vault::passphrase::check(&passphrase)?;
     let code = sync_engine::recreate(&passphrase, kdf())?;
     Ok(SyncSetupResult {
         // Not a reason to lose the code, which the vault already needs.
@@ -358,9 +373,7 @@ pub fn sync_remove_device(device_record_id: String) -> Result<(), String> {
 /// nothing written from now on. The other devices ask for the passphrase
 /// once.
 pub fn sync_rotate_key(passphrase: String) -> Result<SyncSetupResult, String> {
-    if passphrase.chars().count() < 8 {
-        return Err("Use a passphrase of at least eight characters.".into());
-    }
+    promptly_vault::passphrase::check(&passphrase)?;
     let code = sync_engine::rotate_key(&passphrase, kdf())?;
     Ok(SyncSetupResult {
         // Not a reason to lose the code, which the vault already needs.

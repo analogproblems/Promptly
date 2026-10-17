@@ -171,8 +171,11 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
   }
 
   Future<void> _create() async {
-    if (_pass.text.length < 8) {
-      setState(() => _error = 'Use a passphrase of at least eight characters.');
+    // No rules about length or kinds of character: only a passphrase that
+    // would be guessed almost at once is refused, and the meter says why.
+    final check = ref.read(engineProvider).syncPassphraseCheck(_pass.text);
+    if (!check.allowed) {
+      setState(() => _error = check.advice);
       return;
     }
     if (_pass.text != _confirm.text) {
@@ -346,10 +349,11 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
           decoration: const InputDecoration(hintText: 'Work laptop'),
         ),
         const SizedBox(height: 16),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             OutlinedButton(onPressed: () => setState(() => _step = _Step.place), child: const Text('Back')),
-            const SizedBox(width: 8),
             FilledButton(key: const Key('sync-folder-continue'), onPressed: _continueFromFolder, child: const Text('Continue')),
           ],
         ),
@@ -406,10 +410,11 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
         decoration: const InputDecoration(hintText: 'Work laptop'),
       ),
       const SizedBox(height: 16),
-      Row(
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
         children: [
           OutlinedButton(onPressed: _busy ? null : () => setState(() => _step = _Step.place), child: const Text('Back')),
-          const SizedBox(width: 8),
           FilledButton(
             key: const Key('sync-server-continue'),
             onPressed: _busy || hosts.isEmpty ? null : _continueFromServer,
@@ -424,7 +429,7 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
         _Heading('Choose a passphrase'),
         const SizedBox(height: 8),
         Text(
-          'It locks the vault. Promptly cannot reset it: if you forget it, only the recovery code on the next screen can open the vault. Pick something long you will remember.',
+          'It locks the vault. Promptly cannot reset it: if you forget it, only the recovery code on the next screen can open the vault. A few words that don\'t belong together are hard to guess and easy to remember.',
           style: TextStyle(color: t.muted, height: 1.45),
         ),
         const SizedBox(height: 12),
@@ -432,6 +437,7 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
         const SizedBox(height: 16),
         _Label('Passphrase'),
         TextField(key: const Key('sync-passphrase'), controller: _pass, obscureText: true, autofocus: true),
+        PassphraseMeter(controller: _pass),
         const SizedBox(height: 12),
         _Label('Again'),
         TextField(
@@ -441,10 +447,11 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
           onSubmitted: (_) => _create(),
         ),
         const SizedBox(height: 16),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             OutlinedButton(onPressed: _busy ? null : () => setState(() => _step = _place == _Place.sftp ? _Step.server : _Step.folder), child: const Text('Back')),
-            const SizedBox(width: 8),
             FilledButton(
               key: const Key('sync-create'),
               onPressed: _busy ? null : _create,
@@ -522,10 +529,11 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
           ],
         ),
         const SizedBox(height: 8),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             OutlinedButton(onPressed: _busy ? null : () => setState(() => _step = _place == _Place.sftp ? _Step.server : _Step.folder), child: const Text('Back')),
-            const SizedBox(width: 8),
             FilledButton(
               key: const Key('sync-join'),
               onPressed: _busy ? null : _join,
@@ -1191,7 +1199,7 @@ class _AttentionCardState extends ConsumerState<AttentionCard> {
 
 /// Asks twice for the passphrase that locks the vault from now on: when it
 /// is set up again, or given a new key.
-class _NewPassphraseDialog extends StatefulWidget {
+class _NewPassphraseDialog extends ConsumerStatefulWidget {
   const _NewPassphraseDialog({required this.keyPrefix, required this.title, required this.body, required this.action});
 
   final String keyPrefix;
@@ -1200,10 +1208,10 @@ class _NewPassphraseDialog extends StatefulWidget {
   final String action;
 
   @override
-  State<_NewPassphraseDialog> createState() => _NewPassphraseDialogState();
+  ConsumerState<_NewPassphraseDialog> createState() => _NewPassphraseDialogState();
 }
 
-class _NewPassphraseDialogState extends State<_NewPassphraseDialog> {
+class _NewPassphraseDialogState extends ConsumerState<_NewPassphraseDialog> {
   final _pass = TextEditingController();
   final _confirm = TextEditingController();
   String? _error;
@@ -1216,8 +1224,9 @@ class _NewPassphraseDialogState extends State<_NewPassphraseDialog> {
   }
 
   void _submit() {
-    if (_pass.text.length < 8) {
-      setState(() => _error = 'Use a passphrase of at least eight characters.');
+    final check = ref.read(engineProvider).syncPassphraseCheck(_pass.text);
+    if (!check.allowed) {
+      setState(() => _error = check.advice);
     } else if (_pass.text != _confirm.text) {
       setState(() => _error = 'The two passphrases differ.');
     } else {
@@ -1245,6 +1254,7 @@ class _NewPassphraseDialogState extends State<_NewPassphraseDialog> {
               autofocus: true,
               decoration: const InputDecoration(labelText: 'Passphrase'),
             ),
+            PassphraseMeter(controller: _pass),
             const SizedBox(height: 8),
             TextField(
               key: Key('${widget.keyPrefix}-confirm'),
@@ -1268,6 +1278,74 @@ class _NewPassphraseDialogState extends State<_NewPassphraseDialog> {
           child: Text(widget.action),
         ),
       ],
+    );
+  }
+}
+
+/// Under a new passphrase as it is typed: four bars, a word for how hard
+/// it would be to guess, and what would make it better. The engine judges
+/// it, so the meter and the refusal agree.
+class PassphraseMeter extends ConsumerWidget {
+  const PassphraseMeter({super.key, required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: controller,
+      builder: (context, value, _) {
+        if (value.text.isEmpty) return const SizedBox.shrink();
+        final check = ref.watch(engineProvider).syncPassphraseCheck(value.text);
+        final (word, color) = switch (check.level) {
+          0 => ('Too easy to guess', t.danger),
+          1 => ('Weak', t.warning),
+          2 => ('Good', t.accent),
+          _ => ('Strong', t.accent),
+        };
+        return Semantics(
+          key: const Key('passphrase-meter'),
+          liveRegion: true,
+          label: 'Passphrase strength: $word. ${check.advice}',
+          excludeSemantics: true,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    for (var i = 0; i < 4; i++) ...[
+                      if (i > 0) const SizedBox(width: 4),
+                      Expanded(
+                        child: Container(
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: i <= check.level ? color : t.border,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text.rich(
+                  key: const Key('passphrase-advice'),
+                  TextSpan(
+                    children: [
+                      TextSpan(text: '$word. ', style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+                      TextSpan(text: check.advice),
+                    ],
+                  ),
+                  style: TextStyle(fontSize: 13, color: t.muted, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

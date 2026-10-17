@@ -8,18 +8,20 @@ import 'models.dart';
 import 'repositories.dart';
 
 /// Edit a group: its name and colour, and the defaults its hosts inherit
-/// when they leave a field blank.
-Future<void> showGroupEditor(BuildContext context, WidgetRef ref, Group group) {
-  return showDialog<void>(
+/// when they leave a field blank. With [isNew] the group is made on Save.
+/// Returns the group as saved, or null when nothing was.
+Future<Group?> showGroupEditor(BuildContext context, WidgetRef ref, Group group, {bool isNew = false}) {
+  return showDialog<Group>(
     context: context,
-    builder: (ctx) => _GroupEditor(group: group),
+    builder: (ctx) => _GroupEditor(group: group, isNew: isNew),
   );
 }
 
 class _GroupEditor extends ConsumerStatefulWidget {
-  const _GroupEditor({required this.group});
+  const _GroupEditor({required this.group, required this.isNew});
 
   final Group group;
+  final bool isNew;
 
   @override
   ConsumerState<_GroupEditor> createState() => _GroupEditorState();
@@ -35,6 +37,7 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
   late String? _identityId = widget.group.defaults['identity_id'] as String?;
   late String? _jumpHostId = widget.group.defaults['jump_host_id'] as String?;
   String? _portError;
+  String? _labelError;
 
   @override
   void dispose() {
@@ -45,6 +48,10 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
   }
 
   void _save() {
+    if (widget.isNew && _label.text.trim().isEmpty) {
+      setState(() => _labelError = 'Give the group a name.');
+      return;
+    }
     final portText = _port.text.trim();
     final port = int.tryParse(portText);
     if (portText.isNotEmpty && (port == null || port < 1 || port > 65535)) {
@@ -73,7 +80,7 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
     } else {
       defaults['identity_id'] = _identityId;
     }
-    ref.read(groupsProvider.notifier).save(Group(
+    final saved = ref.read(groupsProvider.notifier).save(Group(
           id: widget.group.id,
           label: _label.text.trim().isEmpty ? widget.group.label : _label.text.trim(),
           parentId: widget.group.parentId,
@@ -81,7 +88,7 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
           defaults: defaults,
         ));
     ref.invalidate(hostsProvider);
-    Navigator.pop(context);
+    Navigator.pop(context, saved);
   }
 
   Future<void> _delete() async {
@@ -113,7 +120,7 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
     final jumpHosts = [for (final h in ref.watch(hostsProvider)) if (h.groupId != widget.group.id) h];
     final brightness = Theme.of(context).brightness;
     return AlertDialog(
-      title: const Text('Group'),
+      title: Text(widget.isNew ? 'New group' : 'Group'),
       scrollable: true,
       content: SizedBox(
         width: 460,
@@ -124,7 +131,12 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
             TextField(
               key: const Key('group-label'),
               controller: _label,
-              decoration: const InputDecoration(labelText: 'Name'),
+              autofocus: widget.isNew,
+              decoration: InputDecoration(
+                labelText: 'Name',
+                hintText: 'Production, Homelab, Clients…',
+                errorText: _labelError,
+              ),
             ),
             const SizedBox(height: 12),
             Text('Colour', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: t.muted)),
@@ -208,17 +220,19 @@ class _GroupEditorState extends ConsumerState<_GroupEditor> {
               ],
               onChanged: (v) => setState(() => _jumpHostId = v),
             ),
-            const SizedBox(height: 16),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                key: const Key('group-delete'),
-                style: TextButton.styleFrom(foregroundColor: t.danger),
-                onPressed: _delete,
-                icon: const Icon(Icons.delete_outline),
-                label: const Text('Delete group'),
+            if (!widget.isNew) ...[
+              const SizedBox(height: 16),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  key: const Key('group-delete'),
+                  style: TextButton.styleFrom(foregroundColor: t.danger),
+                  onPressed: _delete,
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Delete group'),
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),

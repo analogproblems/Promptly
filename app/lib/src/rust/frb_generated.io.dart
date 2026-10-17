@@ -221,6 +221,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ParsedEndpoint dco_decode_parsed_endpoint(dynamic raw);
 
   @protected
+  PassphraseCheck dco_decode_passphrase_check(dynamic raw);
+
+  @protected
   ReachTarget dco_decode_reach_target(dynamic raw);
 
   @protected
@@ -568,6 +571,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   ParsedEndpoint sse_decode_parsed_endpoint(SseDeserializer deserializer);
+
+  @protected
+  PassphraseCheck sse_decode_passphrase_check(SseDeserializer deserializer);
 
   @protected
   ReachTarget sse_decode_reach_target(SseDeserializer deserializer);
@@ -1012,6 +1018,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_parsed_endpoint(
     ParsedEndpoint self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_passphrase_check(
+    PassphraseCheck self,
     SseSerializer serializer,
   );
 

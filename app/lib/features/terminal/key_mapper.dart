@@ -2,6 +2,19 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
+/// What Settings, Hardware keyboard changes about a keyboard's keys.
+class KeyOptions {
+  const KeyOptions({this.capsLockAsEscape = false, this.cmdAsCtrl = false});
+
+  /// Caps Lock types Escape, and letters follow Shift alone whatever the
+  /// Caps Lock light says, since the system still toggles it.
+  final bool capsLockAsEscape;
+
+  /// Cmd counts as Ctrl in the terminal, so Cmd+C stops a program. Offered
+  /// on iPad and Mac, where Cmd sits where Ctrl does elsewhere.
+  final bool cmdAsCtrl;
+}
+
 /// Turns a key press into the bytes a terminal program expects.
 ///
 /// Returns null for keys the terminal does not consume (so the app can use
@@ -9,15 +22,22 @@ import 'package:flutter/services.dart';
 abstract final class KeyMapper {
   static const _esc = 0x1b;
 
+  /// `capsLocked` is whether the system has Caps Lock on, which only
+  /// matters with [KeyOptions.capsLockAsEscape].
   static List<int>? bytesFor(
     KeyEvent event, {
     required bool appCursor,
     bool ctrl = false,
     bool alt = false,
     bool shift = false,
+    bool capsLockAsEscape = false,
+    bool capsLocked = false,
   }) {
     if (event is KeyUpEvent) return null;
     final key = event.logicalKey;
+    if (capsLockAsEscape && key == LogicalKeyboardKey.capsLock) {
+      return event is KeyDownEvent ? [_esc] : null;
+    }
 
     // Keys that are the app's, never the terminal's.
     if (ctrl && shift && (key == LogicalKeyboardKey.keyC || key == LogicalKeyboardKey.keyV)) {
@@ -66,13 +86,17 @@ abstract final class KeyMapper {
       return null;
     }
 
-    final ch = event.character;
+    var ch = event.character;
     if (ch == null || ch.isEmpty) return null;
+    if (capsLockAsEscape && capsLocked && isLetter(ch)) ch = shift ? ch.toUpperCase() : ch.toLowerCase();
     final code = ch.codeUnitAt(0);
     if (ch.length == 1 && (code < 0x20 || code == 0x7f)) return null;
     final encoded = utf8.encode(ch);
     return alt ? [_esc, ...encoded] : encoded;
   }
+
+  /// A single letter A to Z, either case: the keys Caps Lock changes.
+  static bool isLetter(String ch) => ch.length == 1 && RegExp('[A-Za-z]').hasMatch(ch);
 
   /// xterm's modifier parameter: 1 plus shift=1, alt=2, ctrl=4.
   static int _modifierParam({required bool ctrl, required bool alt, required bool shift}) {

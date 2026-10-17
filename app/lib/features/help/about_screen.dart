@@ -71,7 +71,9 @@ class AboutScreen extends ConsumerWidget {
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.description_outlined, color: t.muted),
                 title: const Text('Licences'),
-                subtitle: const Text('Promptly\'s MIT licence and the open-source parts it is built on'),
+                subtitle: const Text(
+                  'Promptly\'s MIT licence and the open-source parts the app and its engine are built on',
+                ),
                 onTap: () => showLicensePage(
                   context: context,
                   applicationName: 'Promptly',

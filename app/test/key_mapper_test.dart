@@ -50,4 +50,21 @@ void main() {
     );
     expect(KeyMapper.bytesFor(up, appCursor: false), isNull);
   });
+
+  test('Caps Lock can type Escape, and then letters follow Shift alone', () {
+    final caps = down(LogicalKeyboardKey.capsLock);
+    expect(KeyMapper.bytesFor(caps, appCursor: false), isNull, reason: 'off, Caps Lock is left to the system');
+    expect(KeyMapper.bytesFor(caps, appCursor: false, capsLockAsEscape: true), [0x1b]);
+    // The system still turns Caps Lock on, so its capitals are undone.
+    final a = down(LogicalKeyboardKey.keyA, character: 'A');
+    expect(KeyMapper.bytesFor(a, appCursor: false, capsLockAsEscape: true, capsLocked: true), [0x61]);
+    expect(
+      KeyMapper.bytesFor(a, appCursor: false, capsLockAsEscape: true, capsLocked: true, shift: true),
+      [0x41],
+      reason: 'Shift still makes a capital',
+    );
+    expect(KeyMapper.bytesFor(a, appCursor: false, capsLocked: true), [0x41], reason: 'without the option, as typed');
+    final bang = down(LogicalKeyboardKey.exclamation, character: '!');
+    expect(KeyMapper.bytesFor(bang, appCursor: false, capsLockAsEscape: true, capsLocked: true), [0x21]);
+  });
 }

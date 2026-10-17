@@ -154,7 +154,7 @@ On a narrow screen the **Sessions** tab lists every open session with a live thu
 
 ### Desktop layout
 
-On a computer with a window at least 900 pixels wide, the app gains a **menu bar** across the top (**File**, **Edit**, **View**, **Session** and **Help**), and the **Sessions** tab becomes a workspace with tabs, split panes and a hosts panel. [Chapter 9](#9-the-desktop-workspace) covers the workspace in detail. Make the window narrower and Promptly switches back to the simpler layout.
+On a computer with a window at least 900 pixels wide, the app gains a **menu bar** across the top (**File**, **Edit**, **View**, **Session** and **Help**; on a Mac these are in the menu bar at the top of the screen instead), and the **Sessions** tab becomes a workspace with tabs, split panes and a hosts panel. [Chapter 9](#9-the-desktop-workspace) covers the workspace in detail. Make the window narrower and Promptly switches back to the simpler layout.
 
 ### The session bar
 
@@ -165,6 +165,8 @@ Each session has a slim bar along its top edge. From left to right it shows:
 - The session's title, usually set by the server's shell (for example `deploy@web-1: ~`).
 - The terminal's size in columns and rows, such as `120×40`.
 - Buttons for **Search**, **Snippets**, **Files** (SSH sessions only) and **Port forwards** (hosts that have some), and a **Close** button.
+
+On a narrow phone the size is left out, and **Snippets** and **Port forwards** are under the **More** button (**⋮**).
 
 ## 5. Hosts
 
@@ -179,13 +181,15 @@ Above the full list you may see two shortcut sections:
 - **Favourites:** hosts you've starred. Tap the star on any row to add or remove it.
 - **Recent:** up to five hosts you've connected to in the last 30 days. This appears once you have four or more hosts.
 
-If you use groups, the full list is divided into one section per group, with ungrouped hosts under **Other**.
+If you use groups, the full list is divided into one section per group, with ungrouped hosts under **Other**. Tap a group's name to fold it away, and tap it again to open it. Promptly remembers which groups are folded. While you search, every group is open, so nothing is hidden.
 
 **To find a host,** type in the search box. It matches labels, addresses, usernames, tags and notes.
 
-**To connect,** tap the host's row.
+**To connect,** tap the host's row. On a phone or tablet you can also swipe the row to the right.
 
-**To edit, favourite or delete a host,** open the **⋮** menu at the end of its row.
+**To edit, favourite or delete a host,** open the **⋮** menu at the end of its row. On a phone or tablet, swiping a row to the left edits it.
+
+**To work on several hosts at once,** press and hold one (or choose **Select** from its **⋮** menu), then tap the others. The bar at the top says how many are selected and has **Move to group** and **Delete**. Moving offers your groups, **No group**, and **New group…**. Tap **×**, or press Back, to stop selecting.
 
 The small indicator at the top right of the list shows your sync status. Tap it to open the sync settings.
 
@@ -193,7 +197,7 @@ The small indicator at the top right of the list shows your sync status. Tap it 
 
 ### Adding a host
 
-Tap the **+** button on the **Hosts** tab. The form has six sections. Only the address and user are required; everything else is optional. If the host is in a group, the form shows what the group fills in for the fields you leave to it.
+Tap the **+** button on the **Hosts** tab and choose **Host**. The same button also offers **Group**, and importing from a CSV file or (on a computer) from `~/.ssh/config`. The form has six sections. Only the address and user are required; everything else is optional. If the host is in a group, the form shows what the group fills in for the fields you leave to it.
 
 **Basics**
 
@@ -251,7 +255,7 @@ Deleting a host also removes its saved password. Keys are kept, because other ho
 
 Groups keep a long list tidy (**Production**, **Homelab**, **Clients**) and save typing, because a group can supply defaults to its hosts.
 
-**To create a group,** tap **New group** in a host's **Organise** section.
+**To create a group,** tap the **+** button on the **Hosts** tab and choose **Group**, or tap **New group** in a host's **Organise** section. You can also make one while moving selected hosts.
 
 **To edit a group,** tap the **Edit group** button (the sliders icon) next to the group's name in the hosts list. There you can:
 
@@ -386,13 +390,20 @@ On Linux, Windows and macOS, Promptly can also open a terminal on your own compu
 
 ### Closing a session
 
-Tap the **×** at the right of the session bar, or the **×** on its card in the **Sessions** list. Closing a session disconnects it.
+Tap the **×** at the right of the session bar, or the **×** on its card in the **Sessions** list. On a phone you can also swipe a card away, either way. Closing a session disconnects it.
+
+The **Sessions** tab shows how many sessions are open.
 
 ## 8. Working in the terminal
 
 ### Typing
 
 Everything you type goes to the program in the terminal. Promptly keeps only a few key combinations for itself, all using Shift or Alt, so that shortcuts like Ctrl+D, Ctrl+W, Ctrl+T, Ctrl+B and Ctrl+K reach your shell, editor or `tmux` as they should. The full list is in [chapter 17](#17-keyboard-shortcuts).
+
+**With a hardware keyboard,** two settings in **Settings › Hardware keyboard** can help:
+
+- **Caps Lock types Escape.** Handy in `vim`. Letters then follow Shift alone, even if the Caps Lock light comes on.
+- **Cmd works as Ctrl** (iPad and Mac). In the terminal, Cmd+C stops a program as Ctrl+C does. Copy and paste with Cmd+Shift+C and Cmd+Shift+V instead.
 
 ### Selecting and copying text
 
@@ -527,6 +538,8 @@ You can type several words in any order; the palette shows items that contain al
 | **Help** | Help, Settings, About Promptly |
 
 Items in the **Session** menu act on the focused session.
+
+On a Mac, the menus are in the menu bar at the top of the screen. **Settings…** (Cmd+,), **About Promptly** and **Quit Promptly** (Cmd+Q) are in the **Promptly** menu, there is the usual **Window** menu, and **Help** opens Promptly's help.
 
 ## 10. Snippets
 
@@ -707,7 +720,7 @@ Go to **Settings › Sync** and tap **Set up** (or tap the sync indicator on the
 
 1. Choose where the vault lives and tap **Continue**.
 2. Pick the folder (or the server and a folder on it), and give this device a name, such as `Work laptop`. An empty folder starts a new vault.
-3. Choose a **passphrase** of at least eight characters, and type it again. Pick something long that you'll remember.
+3. Choose a **passphrase**, and type it again. A few words that don't belong together are hard to guess and easy to remember. As you type, a meter shows how hard it is to guess, with advice in plain words. There are no rules about kinds of character: only a passphrase that would be guessed quickly, such as a common password, a short one, or one made of runs like `abc123`, is refused, and Promptly says why.
 4. Tap **Create the vault**.
 5. Promptly shows your **recovery code**. Write it down and keep it somewhere safe, away from this device. Tick **I have written it down somewhere safe** and tap **Done**.
 
@@ -767,7 +780,7 @@ Removing a device on its own doesn't lock it out of what it already has. It keep
 
 Tap **Re-key** under **Re-key the vault** in **Settings › Sync** (or choose **Remove and re-key** when removing a device).
 
-1. Choose a new passphrase, different from the vault's current one, and type it again. Anyone who knew the old passphrase could otherwise open the new key with it.
+1. Choose a new passphrase, different from the vault's current one, and type it again. The same meter shows how hard it is to guess. Anyone who knew the old passphrase could otherwise open the new key with it.
 2. Promptly syncs, gives the vault a new key, and writes everything again under it.
 3. Write down the new recovery code it shows. The old code stops working.
 
@@ -822,13 +835,15 @@ If the file holds several themes, save the ones you want. Imported themes appear
 | | **Text size** | The terminal's text size. Zooming in a session changes it too. |
 | | **Lines to keep for scrolling back** | 1,000, 10,000 (the default), 50,000 or 100,000. Applies to sessions opened after the change. |
 | | **Keyboard bar** | Which keys sit above the keyboard on a phone or tablet, and their order. See [On a phone or tablet](#on-a-phone-or-tablet). |
+| **Hardware keyboard** | **Caps Lock types Escape** | Caps Lock sends Escape, and letters follow Shift alone. Off by default. See [Typing](#typing). |
+| | **Cmd works as Ctrl** | iPad and Mac only. In the terminal, Cmd acts as Ctrl. Off by default. |
 | **Updates** | **Check for updates automatically** | Asks GitHub once a day whether a new version is out. Off by default. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |
 | | **Import from a CSV file** | Imports hosts from a CSV file. |
 | | **Import from ~/.ssh/config** | Imports hosts and keys from your SSH config (computers only). |
 | **Sync** | | Sets up the vault, or shows its status. See [chapter 14](#14-sync). |
 | **Help** | **Help** | A quick-start guide, the keyboard shortcuts, and links to this guide and to report a problem. |
-| | **About Promptly** | The version, a check for updates, links, and the licences of the open-source parts Promptly is built on. |
+| | **About Promptly** | The version, a check for updates, links, and the licences of the open-source parts Promptly is built on, including OpenSSL and SQLCipher, which its engine uses. |
 
 ## 17. Keyboard shortcuts
 
