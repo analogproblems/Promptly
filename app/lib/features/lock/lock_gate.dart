@@ -33,11 +33,18 @@ class _LockGateState extends ConsumerState<LockGate> with WidgetsBindingObserver
     super.dispose();
   }
 
+  /// The last lifecycle state, to tell going away from coming back: both
+  /// pass through hidden.
+  AppLifecycleState? _last;
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
     final lock = ref.read(appLockProvider.notifier);
+    final last = _last;
+    _last = s;
     switch (s) {
       case AppLifecycleState.hidden:
+        if (last != AppLifecycleState.paused) lock.wentAway();
       case AppLifecycleState.paused:
         lock.wentAway();
       case AppLifecycleState.resumed:

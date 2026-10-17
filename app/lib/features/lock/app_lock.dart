@@ -135,9 +135,10 @@ class AppLock extends Notifier<LockState> {
   DateTime? _wentAway;
   bool _checking = false;
 
-  /// True while a check is on screen, so the system dialog taking focus is
-  /// not taken for leaving the app.
-  bool get checking => _checking;
+  /// Time spent away while a check was on screen. The check's own system
+  /// screen (a device PIN, say) can send the app away, so this is settled
+  /// by how the check ends: passing clears it, anything else applies it.
+  Duration? _awayDuringCheck;
 
   @override
   LockState build() {
@@ -183,8 +184,8 @@ class AppLock extends Notifier<LockState> {
   Future<bool> check(String reason, {bool whenNothingToAsk = false}) async {
     if (_checking) return false;
     _checking = true;
+    var passed = false;
     try {
-      bool passed;
       // Asked again each time it is not yet known to work: the first look
       // may still be running or have failed, or a screen lock was added.
       if (state.systemAvailable != true) await _probe();
@@ -202,6 +203,14 @@ class AppLock extends Notifier<LockState> {
       return passed;
     } finally {
       _checking = false;
+      final away = _awayDuringCheck;
+      _awayDuringCheck = null;
+      if (passed) {
+        // Whoever is there just proved it, so time away so far doesn't count.
+        _wentAway = null;
+      } else if (away != null) {
+        _lockIfAwayFor(away);
+      }
     }
   }
 
@@ -243,7 +252,6 @@ class AppLock extends Notifier<LockState> {
 
   /// The app went to the background, or its window was hidden.
   void wentAway() {
-    if (_checking) return;
     _wentAway ??= DateTime.now();
   }
 
@@ -251,9 +259,20 @@ class AppLock extends Notifier<LockState> {
   void cameBack() {
     final away = _wentAway;
     _wentAway = null;
-    if (away == null || !state.settings.appLock || state.locked) return;
+    if (away == null) return;
+    final gone = DateTime.now().difference(away);
+    if (_checking) {
+      final before = _awayDuringCheck;
+      _awayDuringCheck = before == null ? gone : before + gone;
+    } else {
+      _lockIfAwayFor(gone);
+    }
+  }
+
+  void _lockIfAwayFor(Duration gone) {
+    if (!state.settings.appLock || state.locked) return;
     final minutes = state.settings.lockAfterMinutes;
-    if (minutes <= 0 || DateTime.now().difference(away) >= Duration(minutes: minutes)) lockNow();
+    if (minutes <= 0 || gone >= Duration(minutes: minutes)) lockNow();
   }
 
   // ---- Settings -------------------------------------------------------

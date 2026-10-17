@@ -344,4 +344,60 @@ void main() {
     expect(engine.syncCalls, isEmpty, reason: 'no sync connection started');
     expect(find.textContaining('stays locked'), findsOneWidget);
   });
+
+  /// Opens Promptly with the app lock on ("every time"), unlocks it with the
+  /// app passcode, and starts a key check that asks for the passcode again.
+  Future<(AppLock, Future<bool>)> unlockedWithKeyCheckPending(WidgetTester tester) async {
+    final engine = FakeEngine()
+      ..settings['app_lock'] = 'true'
+      ..settings['lock_after_minutes'] = '0'
+      ..settings['app_passcode'] = '"hash:2468"';
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1')};
+    await tester.pumpWidget(appWith(engine, authenticator: FakeAuthenticator(system: false)));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('app-passcode')), '2468');
+    await tester.tap(find.byKey(const Key('app-passcode-ok')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(hostRow), findsOneWidget);
+    final lock = ProviderScope.containerOf(tester.element(find.byType(LockGate))).read(appLockProvider.notifier);
+    final pending = lock.unlockKeys();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('app-passcode')), findsOneWidget);
+    return (lock, pending);
+  }
+
+  testWidgets('leaving the app while a check is asked, then cancelling it, locks the app', (tester) async {
+    final (lock, pending) = await unlockedWithKeyCheckPending(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+
+    lock.cancelPasscode();
+    expect(await pending, isFalse);
+    await tester.pumpAndSettle();
+    expect(find.text('Promptly is locked'), findsOneWidget);
+    expect(find.byKey(hostRow), findsNothing);
+  });
+
+  testWidgets("passing a check that sent the app away doesn't lock it", (tester) async {
+    // A device PIN screen sends the app to the background, and its answer
+    // can arrive before the app is back in front.
+    final (_, pending) = await unlockedWithKeyCheckPending(tester);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.enterText(find.byKey(const Key('app-passcode')), '2468');
+    await tester.tap(find.byKey(const Key('app-passcode-ok')));
+    expect(await pending, isTrue);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.text('Promptly is locked'), findsNothing);
+    expect(find.byKey(hostRow), findsOneWidget);
+  });
 }
