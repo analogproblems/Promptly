@@ -658,6 +658,7 @@ class FakeEngine implements Engine {
   /// When set, the recreated vault's result waits for this, as a slow
   /// folder would; the vault is back (and its warning gone) before then.
   Completer<void>? recreateDone;
+  Completer<void>? removeDone;
 
   /// Folders that already hold a vault, for the join path.
   final Set<String> foldersWithVaults = {};
@@ -799,7 +800,11 @@ class FakeEngine implements Engine {
   }
 
   @override
-  Future<void> syncRemoveDevice(String deviceRecordId) async => syncCalls.add('remove $deviceRecordId');
+  Future<void> syncRemoveDevice(String deviceRecordId) async {
+    syncCalls.add('remove $deviceRecordId');
+    await removeDone?.future;
+  }
+
   @override
   Future<SyncSetupResult> syncRotateKey(String passphrase) async {
     syncCalls.add('rekey $passphrase');
@@ -1421,6 +1426,34 @@ void main() {
     await tester.tap(find.byKey(const Key('sync-rekey-confirm-button')));
     await tester.pumpAndSettle();
     expect(engine.syncCalls, ['remove other', 'remove other', 'rekey a brand new passphrase']);
+    expect(find.text('Write this down'), findsOneWidget);
+    expect(find.text('REKE-YED0-0000-0000-0000-0000-0000-0002'), findsOneWidget);
+  });
+
+  testWidgets('a re-key asked for still happens, and its code shows, after leaving the sync screen', (tester) async {
+    final engine = FakeEngine()
+      ..configured()
+      ..removeDone = Completer<void>();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await openSync(tester);
+    await tapVisible(tester, find.byTooltip('Remove device'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sync-remove-rekey')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('sync-rekey-passphrase')), 'a brand new passphrase');
+    await tester.enterText(find.byKey(const Key('sync-rekey-confirm')), 'a brand new passphrase');
+    await tester.tap(find.byKey(const Key('sync-rekey-confirm-button')));
+    await tester.pumpAndSettle();
+
+    // Leave the sync screen while the device is still being removed.
+    Navigator.of(tester.element(find.byType(SyncScreen))).pop();
+    await tester.pumpAndSettle();
+    expect(find.byType(SyncScreen), findsNothing);
+    engine.removeDone!.complete();
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['remove other', 'rekey a brand new passphrase']);
+    await openSync(tester);
     expect(find.text('Write this down'), findsOneWidget);
     expect(find.text('REKE-YED0-0000-0000-0000-0000-0000-0002'), findsOneWidget);
   });

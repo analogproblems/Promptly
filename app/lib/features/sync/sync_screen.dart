@@ -716,16 +716,21 @@ class _ConfiguredView extends ConsumerWidget {
       ),
     );
     if (choice == null || !context.mounted) return;
+    // Held before waiting: the person may leave the screen, but a re-key
+    // they asked for must still happen and its new code must still be shown.
+    final engine = ref.read(engineProvider);
+    final pending = ref.read(pendingRecoveryProvider.notifier);
+    final fail = _failNote(context);
     // Asked before anything happens, so cancelling it removes nothing.
     final passphrase = choice == _RemoveChoice.removeAndRekey ? await _askRekeyPassphrase(context) : null;
     if (choice == _RemoveChoice.removeAndRekey && passphrase == null) return;
     try {
-      await ref.read(engineProvider).syncRemoveDevice(d.id);
+      await engine.syncRemoveDevice(d.id);
     } catch (e) {
-      if (context.mounted) notYet(context, 'Could not remove: $e');
+      fail('Could not remove: $e');
       return;
     }
-    if (passphrase != null && context.mounted) await _rotate(context, ref, passphrase);
+    if (passphrase != null) await _rotate(fail, engine, pending, passphrase);
   }
 
   Future<String?> _askRekeyPassphrase(BuildContext context) => showDialog<String>(
@@ -740,19 +745,27 @@ class _ConfiguredView extends ConsumerWidget {
         ),
       );
 
-  Future<void> _rotate(BuildContext context, WidgetRef ref, String passphrase) async {
+  /// Shows a note while [context] is still on screen; after that the
+  /// person has moved on and there is nowhere to show it.
+  void Function(String) _failNote(BuildContext context) => (message) {
+        if (context.mounted) notYet(context, message);
+      };
+
+  Future<void> _rotate(void Function(String) fail, Engine engine, PendingRecovery pending, String passphrase) async {
     try {
-      final result = await ref.read(engineProvider).syncRotateKey(passphrase);
       // The new recovery code, shown by the screen above like a fresh setup.
-      ref.read(pendingRecoveryProvider.notifier).set(result);
+      pending.set(await engine.syncRotateKey(passphrase));
     } catch (e) {
-      if (context.mounted) notYet(context, 'Could not re-key: $e');
+      fail('Could not re-key: $e');
     }
   }
 
   Future<void> _rekey(BuildContext context, WidgetRef ref) async {
+    final engine = ref.read(engineProvider);
+    final pending = ref.read(pendingRecoveryProvider.notifier);
+    final fail = _failNote(context);
     final passphrase = await _askRekeyPassphrase(context);
-    if (passphrase != null && context.mounted) await _rotate(context, ref, passphrase);
+    if (passphrase != null) await _rotate(fail, engine, pending, passphrase);
   }
 
   void _showQr(BuildContext context, WidgetRef ref) {
