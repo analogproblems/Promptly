@@ -27,18 +27,24 @@ pub(crate) fn store() -> Result<Arc<Store>, String> {
     if let Some(s) = guard.as_ref() {
         return Ok(s.clone());
     }
-    let key = match &*DEVICE_KEY.lock().unwrap() {
+    let s = match &*DEVICE_KEY.lock().unwrap() {
         None => return Err("the local store was used before startup finished".into()),
-        Some(DeviceKey::Key(key)) => Some(DbKey::derive(key)),
-        Some(DeviceKey::NoStorage | DeviceKey::Unavailable) => None,
+        Some(device_key) => Arc::new(open_store(device_key, &data_dir().join("promptly.db"))?),
     };
-    let path = data_dir().join("promptly.db");
-    let s = Arc::new(
-        Store::open(&path, key.as_ref())
-            .map_err(|e| format!("could not open the local store at {}: {e}", path.display()))?,
-    );
     *guard = Some(s.clone());
     Ok(s)
+}
+
+/// Plain on disk only when the system has no secure storage at all. When
+/// the storage refused the key, the file is not touched: the app works from
+/// an empty store kept in memory, so nothing is written unencrypted.
+fn open_store(device_key: &DeviceKey, path: &std::path::Path) -> Result<Store, String> {
+    let opened = match device_key {
+        DeviceKey::Key(key) => Store::open(path, Some(&DbKey::derive(key))),
+        DeviceKey::NoStorage => Store::open(path, None),
+        DeviceKey::Unavailable => Store::open_in_memory(),
+    };
+    opened.map_err(|e| format!("could not open the local store at {}: {e}", path.display()))
 }
 
 static DEVICE_KEY: Mutex<Option<DeviceKey>> = Mutex::new(None);
@@ -69,9 +75,9 @@ pub fn set_no_device_key() -> Result<(), String> {
 
 /// Tell the engine the platform's secure storage exists but would not give
 /// up the device key (denied, locked or damaged). Saved secrets are then
-/// neither read nor written until the app restarts with the key; the local
-/// database opens unencrypted if it is not encrypted already, and fails to
-/// open if it is.
+/// neither read nor written until the app restarts with the key, and the
+/// local database is left alone: hosts and settings start empty and are
+/// kept in memory only, never written unencrypted.
 #[frb(sync)]
 pub fn set_device_key_unavailable() -> Result<(), String> {
     set_key(DeviceKey::Unavailable)
@@ -265,4 +271,36 @@ pub fn secret_delete(id: String) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HOST: &str = r#"{"hostname":"10.0.0.1","id":"h","label":"web"}"#;
+
+    #[test]
+    fn a_refused_key_writes_nothing_to_disk() {
+        let dir = std::env::temp_dir().join(format!("promptly-api-refused-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // No database yet: none is made, and what is saved stays in memory.
+        let path = dir.join("promptly.db");
+        let s = open_store(&DeviceKey::Unavailable, &path).unwrap();
+        s.put(Collection::Hosts, "h", HOST).unwrap();
+        drop(s);
+        assert!(!path.exists());
+
+        // A plain one from before is neither read nor added to.
+        let plain = dir.join("plain.db");
+        drop(open_store(&DeviceKey::NoStorage, &plain).unwrap());
+        let before = std::fs::read(&plain).unwrap();
+        let s = open_store(&DeviceKey::Unavailable, &plain).unwrap();
+        assert!(s.list(Collection::Hosts).unwrap().is_empty());
+        s.put(Collection::Hosts, "h", HOST).unwrap();
+        drop(s);
+        assert_eq!(std::fs::read(&plain).unwrap(), before);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

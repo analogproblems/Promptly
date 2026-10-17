@@ -209,7 +209,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                     subtitle: Text(
                       kept == SecretsState.locked
-                          ? "Promptly couldn't get its key from your system's secure storage, so it can't use or save passwords and keys, and your hosts and settings are either not encrypted or can't be opened. Unlock your keychain, or allow Promptly when asked, and restart Promptly."
+                          ? "Promptly couldn't get its key from your system's secure storage, so it can't use or save passwords and keys, and it can't open your saved hosts and settings. Anything you add now is kept only until Promptly closes. Unlock your keychain, or allow Promptly when asked, and restart Promptly."
                           : 'This computer has no keyring for Promptly to keep its key in, so only file permissions protect your hosts, settings, passwords and keys. Install one, such as GNOME Keyring or KWallet, and restart Promptly.',
                     ),
                   ),

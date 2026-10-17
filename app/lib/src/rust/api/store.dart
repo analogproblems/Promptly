@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collection`, `secret_store`, `secrets`, `set_key`, `store`, `validate`
+// These functions are ignored because they are not marked as `pub`: `collection`, `open_store`, `secret_store`, `secrets`, `set_key`, `store`, `validate`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `DeviceKey`
 
 /// Hand the engine the device key from the platform's secure storage, so
@@ -24,9 +24,9 @@ void setNoDeviceKey() => RustLib.instance.api.crateApiStoreSetNoDeviceKey();
 
 /// Tell the engine the platform's secure storage exists but would not give
 /// up the device key (denied, locked or damaged). Saved secrets are then
-/// neither read nor written until the app restarts with the key; the local
-/// database opens unencrypted if it is not encrypted already, and fails to
-/// open if it is.
+/// neither read nor written until the app restarts with the key, and the
+/// local database is left alone: hosts and settings start empty and are
+/// kept in memory only, never written unencrypted.
 void setDeviceKeyUnavailable() =>
     RustLib.instance.api.crateApiStoreSetDeviceKeyUnavailable();
 
