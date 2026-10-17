@@ -22,6 +22,7 @@ If you turn on sync, Promptly writes an encrypted copy of that data to a place *
 - Reads and writes to your chosen sync location, when sync is on.
 - With the "Show which hosts are up" setting on, a brief TCP connection to each saved host's port once a minute, to show whether it answers. Nothing is sent over it. It is off by default.
 - Opening a link from the terminal, help or about pages hands it to your browser.
+- Checking for a new version: a request to GitHub (api.github.com) for the newest Promptly release, when you press *Check* on the About page, or once a day with the "Check for updates automatically" setting on. It carries nothing about you or your data beyond what any web request does (your IP address and the app's version). The setting is off by default. Updating from inside the app (Windows, when installed with the installer) then downloads the installer from GitHub.
 
 That is all. Promptly makes no other connections.
 

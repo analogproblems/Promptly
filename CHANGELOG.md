@@ -4,6 +4,8 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 
 ## Unreleased
 
+- Windows has an installer. It installs for you alone, with no administrator prompt, and adds Promptly to the Start menu and to Settings, Apps for uninstalling. The zip is still there for anyone who prefers it.
+- Promptly can tell you about new versions. Press *Check* on the About page, or turn on *Check for updates automatically* in Settings to have it look once a day (off by default). On Windows, when installed with the installer, *Update and restart* installs the new version and opens it again; elsewhere it opens the download page.
 - Search highlights the match it is on in solid yellow, with the other matches in a softer yellow, so the current one is easy to spot. Searching for text that repeats inside itself, such as "22" in "222", no longer shows "0 of 1" or a half-highlighted match.
 - Hosts have a *None* authentication option for servers that let you in without a password or key, such as Tailscale SSH. *Ask each time* now goes straight in on those servers too, instead of prompting.
 - The mouse works in full-screen programs that ask for it, such as vim with `mouse=a`, tmux and htop: clicks, drags and the wheel go to the program. Hold Shift to select text or scroll as before.
@@ -14,6 +16,7 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 - Imported PuTTY and PEM keys keep their passphrase. CSV passwords keep their spaces. Jump hosts from `~/.ssh/config` that Promptly cannot follow are reported instead of being skipped silently.
 - On a phone keyboard, backspace erases a whole emoji and keeps working on a command recalled from history. A big paste no longer freezes the app while a program is busy.
 - File permissions keep their special bits, Windows paths rename and navigate in the right folder, port forward rows stay in place after one is removed, and exported keys with the same name no longer overwrite each other.
+- On desktop, the menu bar is slimmer and its menus open below it instead of over it, rows are more compact, and shortcuts no longer touch the menu's right edge. The nine Tab entries moved into a View, Go to tab submenu. The Help page's shortcut list no longer runs keys into their descriptions, and on a phone the host editor picks how to sign in from a list instead of buttons squeezed so tight their words broke. Session text has a small margin on the left instead of touching the edge.
 
 ## 1.0.1
 

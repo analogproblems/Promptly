@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show File;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -18,6 +19,7 @@ import 'package:promptly/features/sessions/session_body.dart';
 import 'package:promptly/features/sessions/session_thumbnail.dart';
 import 'package:promptly/features/workspace/workspace.dart';
 import 'package:promptly/features/workspace/workspace_screen.dart';
+import 'package:promptly/features/updates/updates.dart';
 
 /// A stand-in for the Rust engine so widget tests need no native library.
 /// Records and secrets live in maps so the hosts and keys screens work.
@@ -742,11 +744,42 @@ Future<void> tapVisible(WidgetTester tester, Finder finder) async {
   await tester.tap(finder);
 }
 
+/// GitHub as the update check sees it, without the network.
+class FakeUpdateService implements UpdateService {
+  FakeUpdateService(this.release);
+
+  Release? release;
+  int checks = 0;
+  File? ran;
+
+  @override
+  Future<Release?> latest() async {
+    checks++;
+    return release;
+  }
+
+  @override
+  Future<File> download(ReleaseAsset asset, void Function(double) onProgress) async {
+    onProgress(1);
+    return File(asset.name);
+  }
+
+  @override
+  Future<void> runInstaller(File installer) async => ran = installer;
+}
+
 Widget app([FakeEngine? engine]) => appWith(engine);
 
 /// The app on a fake engine. The welcome tour counts as seen unless a test
 /// asks for a first run.
-Widget appWith(FakeEngine? engine, {String? localDir, Fs? localFs, bool onboarded = true, PickedTextFile? pickedFile}) {
+Widget appWith(
+  FakeEngine? engine, {
+  String? localDir,
+  Fs? localFs,
+  bool onboarded = true,
+  PickedTextFile? pickedFile,
+  UpdateService? updates,
+}) {
   engine ??= FakeEngine();
   if (onboarded) engine.settings.putIfAbsent('onboarding_done', () => 'true');
   return ProviderScope(
@@ -757,6 +790,7 @@ Widget appWith(FakeEngine? engine, {String? localDir, Fs? localFs, bool onboarde
       ),
       if (localDir != null) localStartDirProvider.overrideWithValue(localDir),
       if (localFs != null) localFsProvider.overrideWithValue(localFs),
+      if (updates != null) updateServiceProvider.overrideWithValue(updates),
     ],
     child: const PromptlyApp(),
   );
@@ -1534,6 +1568,42 @@ void main() {
     expect(workspaceOf(tester).currentTab!.leaves.length, 1);
   });
 
+  testWidgets('every menu opens below the menu bar, inside the window, with room after the shortcuts', (tester) async {
+    for (final height in [900.0, 600.0]) {
+      tester.view.physicalSize = Size(1400, height);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(app(FakeEngine()));
+      await tester.pumpAndSettle();
+      final barBottom = tester.getBottomLeft(find.byType(MenuBar)).dy;
+      for (final name in ['File', 'Edit', 'View', 'Session', 'Help']) {
+        await tester.tap(find.text(name));
+        await tester.pumpAndSettle();
+        // The open menu is the panel holding the menu's items.
+        final items = find.byType(MenuItemButton);
+        expect(items, findsWidgets, reason: '$name opens');
+        final top = tester.getTopLeft(items.first).dy;
+        expect(top, greaterThanOrEqualTo(barBottom), reason: '$name at $height high must not cover the bar');
+        final panel = find.ancestor(of: items.first, matching: find.byType(SingleChildScrollView)).first;
+        final bottom = tester.getBottomLeft(panel).dy;
+        expect(bottom, lessThanOrEqualTo(height), reason: '$name stays inside the window');
+        for (final item in tester.widgetList<MenuItemButton>(items)) {
+          if (item.shortcut == null) continue;
+          final f = find.byWidget(item);
+          if (tester.getRect(f).bottom > height) continue;
+          final label = find.descendant(of: f, matching: find.byType(Text)).last;
+          expect(
+            tester.getTopRight(f).dx - tester.getTopRight(label).dx,
+            greaterThanOrEqualTo(16),
+            reason: '$name: shortcut ${(tester.widget<Text>(label)).data} needs room on its right',
+          );
+        }
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+      }
+    }
+  });
+
   testWidgets('tabs open, cycle and close with the keyboard', (tester) async {
     desktopWindow(tester);
     final engine = FakeEngine();
@@ -1855,6 +1925,78 @@ void main() {
     await scrollTap(tester, find.byKey(const Key('about-licences')));
     await tester.pumpAndSettle();
     expect(find.byType(LicensePage), findsOneWidget);
+  });
+
+  testWidgets('about checks for updates and says what to do with one', (tester) async {
+    final updates = FakeUpdateService(const Release(version: appVersion, pageUrl: releasesPage));
+    await tester.pumpWidget(appWith(FakeEngine(), updates: updates));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('settings-about')));
+    await tester.pumpAndSettle();
+    expect(updates.checks, 0, reason: 'nothing is asked until Check is pressed');
+
+    await tester.tap(find.byKey(const Key('update-check-now')));
+    await tester.pumpAndSettle();
+    expect(find.text('Promptly is up to date'), findsOneWidget);
+
+    updates.release = const Release(
+      version: '99.0.0',
+      pageUrl: releasesPage,
+      windowsInstaller: ReleaseAsset(name: 'promptly-99.0.0$windowsInstallerSuffix', url: 'https://x', size: 1),
+    );
+    installedByInstallerOverride = false;
+    addTearDown(() => installedByInstallerOverride = null);
+    await tester.tap(find.byKey(const Key('update-check-now')));
+    await tester.pumpAndSettle();
+    expect(find.text('Version 99.0.0 is out'), findsOneWidget);
+    expect(find.byKey(const Key('update-open-page')), findsOneWidget, reason: 'a copy from the zip downloads by hand');
+    expect(find.byKey(const Key('update-install')), findsNothing);
+
+    // Installed with the installer, it offers to update itself.
+    installedByInstallerOverride = true;
+    await tester.tap(find.byTooltip('Back to settings'));
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('settings-about')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('update-install')), findsOneWidget);
+  });
+
+  testWidgets('the automatic update check is off until turned on, then reminds once', (tester) async {
+    final engine = FakeEngine();
+    final updates = FakeUpdateService(const Release(version: '99.0.0', pageUrl: releasesPage));
+    await tester.pumpWidget(appWith(engine, updates: updates));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 30));
+    expect(updates.checks, 0);
+
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('update-check')));
+    await tester.pumpAndSettle();
+    expect(engine.settings['update_check'], 'true');
+
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+    expect(updates.checks, 1);
+    expect(find.text('Promptly 99.0.0 is out.'), findsOneWidget);
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 13));
+    await tester.pumpAndSettle();
+    expect(find.text('Promptly 99.0.0 is out.'), findsNothing, reason: 'the reminder goes by itself');
+
+    // A day later it looks again, but does not repeat itself.
+    await tester.pump(const Duration(days: 1));
+    await tester.pump();
+    expect(updates.checks, 2);
+    expect(find.text('Promptly 99.0.0 is out.'), findsNothing);
+
+    // Off again: no more checks.
+    await scrollTap(tester, find.byKey(const Key('update-check')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(days: 2));
+    expect(updates.checks, 2);
   });
 
   testWidgets('every main screen lays out at double text size without overflowing', (tester) async {

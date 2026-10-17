@@ -6,6 +6,7 @@ import 'core/theme/theme.dart';
 import 'features/sessions/session_manager.dart';
 import 'features/settings/settings_providers.dart';
 import 'features/sync/sync_providers.dart';
+import 'features/updates/update_reminder.dart';
 
 /// The root widget. Themes come from the design tokens; navigation from the
 /// router. Everything else is a feature under `features/`.
@@ -44,7 +45,8 @@ class _PromptlyAppState extends ConsumerState<PromptlyApp> with WidgetsBindingOb
       darkTheme: buildPromptlyTheme(Brightness.dark, reducedMotion: reducedMotion),
       themeMode: themeMode,
       routerConfig: ref.watch(routerProvider),
-      builder: (context, child) => TerminalThemeSync(child: SyncRefresh(child: child ?? const SizedBox.shrink())),
+      builder: (context, child) =>
+          TerminalThemeSync(child: SyncRefresh(child: UpdateReminder(child: child ?? const SizedBox.shrink()))),
     );
   }
 }

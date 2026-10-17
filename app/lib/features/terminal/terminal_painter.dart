@@ -73,6 +73,7 @@ class TerminalPainter extends CustomPainter {
     required this.cursorVisible,
     required this.focused,
     required this.generation,
+    this.inset = 0,
   });
 
   final TerminalGrid grid;
@@ -82,10 +83,15 @@ class TerminalPainter extends CustomPainter {
   final bool focused;
   final int generation;
 
+  /// Space between the left edge and the first column, filled with the
+  /// terminal's background.
+  final double inset;
+
   @override
   void paint(Canvas canvas, Size size) {
     final bgPaint = Paint()..color = Color(0xFF000000 | grid.defaultBg);
     canvas.drawRect(Offset.zero & size, bgPaint);
+    canvas.translate(inset, 0);
 
     final cw = metrics.width;
     final ch = metrics.height;
@@ -190,5 +196,6 @@ class TerminalPainter extends CustomPainter {
       old.cursorVisible != cursorVisible ||
       old.focused != focused ||
       old.metrics != metrics ||
-      old.grid != grid;
+      old.grid != grid ||
+      old.inset != inset;
 }
