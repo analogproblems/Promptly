@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collection`, `open_store`, `secret_store`, `secrets`, `set_key`, `store`, `validate`
+// These functions are ignored because they are not marked as `pub`: `collection`, `known_hosts_files`, `open_store`, `secret_store`, `secrets`, `set_key`, `store`, `validate`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `DeviceKey`
 
 /// Hand the engine the device key from the platform's secure storage, so
@@ -64,6 +64,8 @@ bool recordDelete({required String collectionName, required String id}) =>
 String? settingGet({required String key}) =>
     RustLib.instance.api.crateApiStoreSettingGet(key: key);
 
+/// Save an app setting. The ones that make sense on every device (the
+/// look, the terminal's behaviour) travel in the vault; the rest stay here.
 void settingSet({required String key, required String json}) =>
     RustLib.instance.api.crateApiStoreSettingSet(key: key, json: json);
 

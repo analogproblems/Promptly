@@ -2,8 +2,13 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
+use promptly_ssh::{
+    AuthMethod, ConnectError, ConnectParams, Endpoint, FileKnownHosts, QuietPrompter, SftpBackend,
+    SftpError, TermSize,
+};
 use promptly_store::{col_name, col_parse, Collection, DbKey, Store};
 use promptly_vault::model::{Collection as Col, Host};
 use promptly_vault::policy::{self, Kept};
@@ -24,17 +29,138 @@ pub trait Credentials {
     fn recovery_code(&self) -> Option<&str>;
 }
 
+/// Where the vault is, and how to log in to the server it may be on.
+pub trait Place {
+    /// A folder, or `sftp://user@host[:port]/path` for a vault on a server.
+    fn location(&self) -> &str;
+    /// A private key to log in to the server with, instead of the SSH agent.
+    fn identity(&self) -> Option<&Path> {
+        None
+    }
+}
+
+/// Where a vault lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Location {
+    Folder(PathBuf),
+    /// On a server, over SFTP. The path is in the login's home folder
+    /// unless it starts with `/`.
+    Sftp {
+        endpoint: Endpoint,
+        path: String,
+    },
+}
+
+impl Location {
+    /// A folder, or `sftp://user@host[:port]/path`. A second slash after
+    /// the host makes the path absolute: `sftp://me@nas//srv/vault`.
+    pub fn parse(text: &str) -> Result<Self> {
+        let Some(rest) = text.strip_prefix("sftp://") else {
+            return Ok(Self::Folder(PathBuf::from(text)));
+        };
+        let (login, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let endpoint = Endpoint::parse(login).map_err(|e| {
+            anyhow!("{text} is not a server vault: {e}, like sftp://me@nas/promptly-vault")
+        })?;
+        anyhow::ensure!(
+            !path.trim_matches('/').is_empty(),
+            "{text} names no folder on the server, like sftp://me@nas/promptly-vault"
+        );
+        Ok(Self::Sftp {
+            endpoint,
+            path: path.to_string(),
+        })
+    }
+}
+
+/// Open the vault's storage: the folder, or an SFTP connection to the
+/// server with the same code the app syncs through. The server's host key
+/// must already be in `~/.ssh/known_hosts`, as nobody is there to ask.
+pub fn open(place: &impl Place) -> Result<Box<dyn Backend>> {
+    match Location::parse(place.location())? {
+        Location::Folder(path) => Ok(Box::new(LocalFolder::new(path))),
+        Location::Sftp { endpoint, path } => {
+            Ok(Box::new(connect_sftp(&endpoint, &path, place.identity())?))
+        }
+    }
+}
+
+/// Log in with the key given, else a password from PROMPTLY_SSH_PASSWORD,
+/// else whatever the SSH agent holds. A key with a passphrase takes it from
+/// PROMPTLY_KEY_PASSPHRASE, or asks for it on a terminal.
+fn connect_sftp(endpoint: &Endpoint, path: &str, identity: Option<&Path>) -> Result<SftpBackend> {
+    let private_key = identity
+        .map(|p| {
+            std::fs::read_to_string(p)
+                .map(zeroize::Zeroizing::new)
+                .with_context(|| format!("could not read the key {}", p.display()))
+        })
+        .transpose()?;
+    let auth = |passphrase: Option<String>| match &private_key {
+        Some(key) => AuthMethod::Key {
+            private_key: key.to_string(),
+            passphrase,
+        },
+        None => match std::env::var("PROMPTLY_SSH_PASSWORD") {
+            Ok(password) => AuthMethod::Password {
+                password: Some(password),
+            },
+            Err(_) => AuthMethod::Agent,
+        },
+    };
+    let known_hosts = Arc::new(FileKnownHosts::new(
+        FileKnownHosts::user_file().into_iter().collect(),
+        data_dir().join("known_hosts"),
+    ));
+    let connect = |passphrase: Option<String>| {
+        let params = ConnectParams::new(endpoint.clone(), auth(passphrase), TermSize::default());
+        SftpBackend::connect_blocking(&params, Arc::new(QuietPrompter), known_hosts.clone(), path)
+    };
+    let result = match connect(std::env::var("PROMPTLY_KEY_PASSPHRASE").ok()) {
+        Err(SftpError::Connect(ConnectError::KeyNeedsPassphrase))
+            if std::io::IsTerminal::is_terminal(&std::io::stdin()) =>
+        {
+            let typed =
+                zeroize::Zeroizing::new(rpassword::prompt_password("Passphrase for the key: ")?);
+            connect(Some(typed.to_string()))
+        }
+        other => other,
+    };
+    let host = &endpoint.host;
+    result.map_err(|e| match e {
+        SftpError::Connect(ConnectError::HostKeyRejected { changed: false }) => anyhow!(
+            "{host} is not in ~/.ssh/known_hosts yet. Connect to it once with ssh to check and trust its host key, then try again."
+        ),
+        SftpError::Connect(ConnectError::HostKeyRejected { changed: true }) => anyhow!(
+            "{host} showed a different host key from the one in ~/.ssh/known_hosts. This can mean someone is intercepting the connection: check with whoever runs the server."
+        ),
+        SftpError::Connect(ConnectError::HostKeyRevoked) => {
+            anyhow!("{host}'s host key is marked as revoked in ~/.ssh/known_hosts.")
+        }
+        SftpError::Connect(ConnectError::KeyNeedsPassphrase) => anyhow!(
+            "the key needs its passphrase: set PROMPTLY_KEY_PASSPHRASE, or run this on a terminal to be asked"
+        ),
+        SftpError::Connect(ConnectError::AuthFailed { .. } | ConnectError::Cancelled) => anyhow!(
+            "{host} did not accept the login. Give a key it accepts with --identity, add one to your SSH agent, or set PROMPTLY_SSH_PASSWORD."
+        ),
+        SftpError::Connect(e) => {
+            let plain = e.explain();
+            anyhow!("{host}: {}. {}", plain.title, plain.hint)
+        }
+        other => anyhow!("{host}: {other}"),
+    })
+}
+
 /// The data key plus where it came from.
 pub struct Unlocked {
     pub dek: Dek,
     pub manifest: Manifest,
 }
 
-/// Unlock the vault in `folder`. Returns `None` only when nothing was given
-/// and no terminal is available to ask on.
-pub fn unlock(args: &(impl Credentials + HasFolder)) -> Result<Option<Unlocked>> {
-    let backend = LocalFolder::new(args.folder());
-    let manifest = Vault::read_manifest(&backend).map_err(|e| anyhow!("{e}"))?;
+/// Unlock the vault in `backend`. Returns `None` only when nothing was
+/// given and no terminal is available to ask on.
+pub fn unlock(args: &impl Credentials, backend: &dyn Backend) -> Result<Option<Unlocked>> {
+    let manifest = Vault::read_manifest(backend).map_err(|e| anyhow!("{e}"))?;
     let dek = if args.wants_recovery_code() {
         let typed;
         let code = match args.recovery_code() {
@@ -59,21 +185,19 @@ pub fn unlock(args: &(impl Credentials + HasFolder)) -> Result<Option<Unlocked>>
     Ok(Some(Unlocked { dek, manifest }))
 }
 
-pub trait HasFolder {
-    fn folder(&self) -> &Path;
-}
-
-impl<T: Credentials> HasFolder for T
-where
-    T: FolderPath,
-{
-    fn folder(&self) -> &Path {
-        FolderPath::folder_path(self)
-    }
-}
-
-pub trait FolderPath {
-    fn folder_path(&self) -> &Path;
+/// Where this tool keeps its own files.
+fn data_dir() -> PathBuf {
+    std::env::var_os("PROMPTLY_CLI_DATA_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .or_else(|| {
+                    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share"))
+                })
+                .map(|d| d.join("promptly-cli"))
+        })
+        .unwrap_or_else(|| PathBuf::from(".promptly-cli"))
 }
 
 /// Where this tool keeps its own device state for one vault: the store,
@@ -85,18 +209,8 @@ struct DataPaths {
     previous: PathBuf,
 }
 
-fn data_paths(folder: &Path, vault_id: &str) -> DataPaths {
-    let base = std::env::var_os("PROMPTLY_CLI_DATA_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
-                .or_else(|| {
-                    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share"))
-                })
-                .map(|d| d.join("promptly-cli"))
-        })
-        .unwrap_or_else(|| folder.join(".promptly-cli"));
+fn data_paths(vault_id: &str) -> DataPaths {
+    let base = data_dir();
     DataPaths {
         db: base.join(format!("{vault_id}.db")),
         manifest: base.join(format!("{vault_id}.manifest.json")),
@@ -130,8 +244,8 @@ fn save_manifest(paths: &DataPaths, manifest: &Manifest) -> Result<()> {
 /// unlock the vault anyway. When the key was changed on another device,
 /// the passphrase from before brings it over (see [`bring_over`]): nothing
 /// is set aside or started again.
-fn cli_store(folder: &Path, unlocked: &Unlocked) -> Result<Store> {
-    let paths = data_paths(folder, &unlocked.manifest.vault_id);
+fn cli_store(unlocked: &Unlocked) -> Result<Store> {
+    let paths = data_paths(&unlocked.manifest.vault_id);
     let key = DbKey::derive(&unlocked.dek);
     if !Store::key_fits(&paths.db, &key)? {
         bring_over(&paths, &key)?;
@@ -240,7 +354,7 @@ fn finish_reseal(store: &Store, new: &Dek) -> Result<()> {
     Ok(())
 }
 
-fn open_vault<'a>(backend: &'a LocalFolder, store: &Store, unlocked: &Unlocked) -> Vault<'a> {
+fn open_vault<'a>(backend: &'a dyn Backend, store: &Store, unlocked: &Unlocked) -> Vault<'a> {
     let kept = store
         .meta_get(META_KEPT)
         .ok()
@@ -294,12 +408,8 @@ fn push_all<'a>(store: &Store, vault: Vault<'a>) -> Result<(Vault<'a>, Option<u6
 }
 
 /// Pull everything into this tool's store and return it with the vault.
-fn fresh<'a>(
-    backend: &'a LocalFolder,
-    folder: &Path,
-    unlocked: &Unlocked,
-) -> Result<(Store, Vault<'a>)> {
-    let store = cli_store(folder, unlocked)?;
+fn fresh<'a>(backend: &'a dyn Backend, unlocked: &Unlocked) -> Result<(Store, Vault<'a>)> {
+    let store = cli_store(unlocked)?;
     let vault = open_vault(backend, &store, unlocked);
     let report = store.pull(&vault)?;
     for w in report.warnings {
@@ -308,9 +418,8 @@ fn fresh<'a>(
     Ok((store, vault))
 }
 
-pub fn inspect(folder: &Path, unlocked: Option<&Unlocked>) -> Result<String> {
-    let backend = LocalFolder::new(folder);
-    let manifest = Vault::read_manifest(&backend).map_err(|e| anyhow!("{e}"))?;
+pub fn inspect(backend: &dyn Backend, unlocked: Option<&Unlocked>) -> Result<String> {
+    let manifest = Vault::read_manifest(backend).map_err(|e| anyhow!("{e}"))?;
     let mut out = String::new();
     out.push_str(&format!("vault      {}\n", manifest.vault_id));
     out.push_str(&format!("created    {}\n", manifest.created_at));
@@ -342,7 +451,7 @@ pub fn inspect(folder: &Path, unlocked: Option<&Unlocked>) -> Result<String> {
     }
     out.push_str(&format!("size       {total} bytes\n"));
     if let Some(unlocked) = unlocked {
-        let (store, _vault) = fresh(&backend, folder, unlocked)?;
+        let (store, _vault) = fresh(backend, unlocked)?;
         out.push_str(&format!("clock      {}\n", store.clock_counter()));
         for col in [
             Col::Hosts,
@@ -385,9 +494,8 @@ fn decrypt_secret(dek: &Dek, id: &str, record: &Value) -> Option<String> {
     String::from_utf8(plain).ok()
 }
 
-pub fn export(folder: &Path, unlocked: &Unlocked, with_secrets: bool) -> Result<String> {
-    let backend = LocalFolder::new(folder);
-    let (store, _vault) = fresh(&backend, folder, unlocked)?;
+pub fn export(backend: &dyn Backend, unlocked: &Unlocked, with_secrets: bool) -> Result<String> {
+    let (store, _vault) = fresh(backend, unlocked)?;
     let mut doc = Map::new();
     doc.insert("format".into(), json!(1));
     doc.insert("vault_id".into(), json!(unlocked.manifest.vault_id));
@@ -429,10 +537,9 @@ pub fn export(folder: &Path, unlocked: &Unlocked, with_secrets: bool) -> Result<
 
 /// Merge records from an export document. Secrets with a `value` are
 /// re-encrypted under the vault key.
-pub fn import(folder: &Path, unlocked: &Unlocked, text: &str) -> Result<usize> {
+pub fn import(backend: &dyn Backend, unlocked: &Unlocked, text: &str) -> Result<usize> {
     let doc: Value = serde_json::from_str(text).context("the file is not JSON")?;
-    let backend = LocalFolder::new(folder);
-    let (store, vault) = fresh(&backend, folder, unlocked)?;
+    let (store, vault) = fresh(backend, unlocked)?;
     let mut n = 0;
     if let Some(obj) = doc.as_object() {
         for (name, items) in obj {
@@ -469,10 +576,9 @@ pub fn import(folder: &Path, unlocked: &Unlocked, text: &str) -> Result<usize> {
     Ok(n)
 }
 
-pub fn sync(folder: &Path, unlocked: &Unlocked) -> Result<String> {
-    let backend = LocalFolder::new(folder);
-    let store = cli_store(folder, unlocked)?;
-    let vault = open_vault(&backend, &store, unlocked);
+pub fn sync(backend: &dyn Backend, unlocked: &Unlocked) -> Result<String> {
+    let store = cli_store(unlocked)?;
+    let vault = open_vault(backend, &store, unlocked);
     let report = store.pull(&vault)?;
     let (_vault, pushed) = push_all(&store, vault)?;
     let mut s = format!(
@@ -497,9 +603,12 @@ pub fn sync(folder: &Path, unlocked: &Unlocked) -> Result<String> {
 }
 
 /// An OpenSSH `config` for every host in the vault.
-pub fn ssh_config(folder: &Path, unlocked: &Unlocked, keys_dir: Option<&Path>) -> Result<String> {
-    let backend = LocalFolder::new(folder);
-    let (store, _vault) = fresh(&backend, folder, unlocked)?;
+pub fn ssh_config(
+    backend: &dyn Backend,
+    unlocked: &Unlocked,
+    keys_dir: Option<&Path>,
+) -> Result<String> {
+    let (store, _vault) = fresh(backend, unlocked)?;
     let identities: BTreeMap<String, Value> = store
         .list(Col::Identities)?
         .into_iter()
@@ -654,11 +763,14 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub fn change_passphrase(folder: &Path, unlocked: &Unlocked, new_passphrase: &str) -> Result<()> {
-    let backend = LocalFolder::new(folder);
+pub fn change_passphrase(
+    backend: &dyn Backend,
+    unlocked: &Unlocked,
+    new_passphrase: &str,
+) -> Result<()> {
     let mut manifest = unlocked.manifest.clone();
     // Detect a race: the manifest must still be the one we unlocked.
-    let current = Vault::read_manifest(&backend).map_err(|e| anyhow!("{e}"))?;
+    let current = Vault::read_manifest(backend).map_err(|e| anyhow!("{e}"))?;
     anyhow::ensure!(
         current == manifest,
         "the vault's manifest changed under us; try again"
@@ -666,25 +778,22 @@ pub fn change_passphrase(folder: &Path, unlocked: &Unlocked, new_passphrase: &st
     manifest.change_passphrase(&unlocked.dek, new_passphrase);
     // Key stretching takes a moment; look again right before writing, so
     // a change made meanwhile on another device is not overwritten.
-    let current = Vault::read_manifest(&backend).map_err(|e| anyhow!("{e}"))?;
+    let current = Vault::read_manifest(backend).map_err(|e| anyhow!("{e}"))?;
     anyhow::ensure!(
         current == unlocked.manifest,
         "the vault's manifest changed under us; try again"
     );
-    // Write the new manifest beside the old one and rename it over, so the
-    // folder always holds one whole manifest, old or new, whatever happens.
-    let target = folder.join(promptly_vault::sync::MANIFEST_NAME);
-    let tmp = folder.join(format!(".vault.json.tmp-{}", std::process::id()));
-    {
-        let mut f = std::fs::File::create(&tmp)?;
-        std::io::Write::write_all(&mut f, manifest.to_json().as_bytes())?;
-        f.sync_all()?;
-    }
-    if let Err(e) = std::fs::rename(&tmp, &target) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
-    Ok(())
+    // A folder gets the new manifest beside the old one, renamed over it,
+    // so it always holds one whole manifest, old or new, whatever happens.
+    // The manifest is no device's file, so any device id will do here.
+    Vault::with_dek(
+        backend,
+        DeviceId::generate(),
+        manifest.vault_id.clone(),
+        unlocked.dek.clone(),
+    )
+    .replace_manifest(&unlocked.manifest.keys_fingerprint(), &manifest)
+    .map_err(|e| anyhow!("{e}"))
 }
 
 /// Give the vault a new data key (VAULT.md section 11), wrapped under
@@ -692,13 +801,16 @@ pub fn change_passphrase(folder: &Path, unlocked: &Unlocked, new_passphrase: &st
 /// is synced first; the secrets are encrypted again and a snapshot under
 /// the new key replaces this tool's files. Whoever has only the old key,
 /// a removed device included, can read nothing written from now on.
-pub fn rotate_dek(folder: &Path, unlocked: &Unlocked, new_passphrase: &str) -> Result<String> {
+pub fn rotate_dek(
+    backend: &dyn Backend,
+    unlocked: &Unlocked,
+    new_passphrase: &str,
+) -> Result<String> {
     anyhow::ensure!(
         unlocked.manifest.unlock(new_passphrase).is_err(),
         "choose a passphrase the vault does not have now: whoever knows the current one could open the new key with it"
     );
-    let backend = LocalFolder::new(folder);
-    let (store, vault) = fresh(&backend, folder, unlocked)?;
+    let (store, vault) = fresh(backend, unlocked)?;
     let known = vault
         .check_manifest(Some(&unlocked.manifest.keys_fingerprint()))
         .map_err(|e| anyhow!("{e}"))?;
@@ -726,7 +838,7 @@ pub fn rotate_dek(folder: &Path, unlocked: &Unlocked, new_passphrase: &str) -> R
     // The new settings are kept first, with the old ones as the ones
     // before, so whichever key the store is left under, the next run can
     // bring it over (see [`bring_over`]).
-    let paths = data_paths(folder, &unlocked.manifest.vault_id);
+    let paths = data_paths(&unlocked.manifest.vault_id);
     if let Err(e) = save_manifest(&paths, &manifest) {
         trouble.push(format!(
             "the new vault settings could not be kept beside this tool's records ({e})"
@@ -802,9 +914,8 @@ fn record_id_of(device: &DeviceId) -> String {
 }
 
 /// The vault's devices, one per line, removed ones marked.
-pub fn list_devices(folder: &Path, unlocked: &Unlocked) -> Result<String> {
-    let backend = LocalFolder::new(folder);
-    let (store, _vault) = fresh(&backend, folder, unlocked)?;
+pub fn list_devices(backend: &dyn Backend, unlocked: &Unlocked) -> Result<String> {
+    let (store, _vault) = fresh(backend, unlocked)?;
     let mut out = String::new();
     let mut seen = Vec::new();
     for r in store.list(Col::Devices)? {
@@ -863,9 +974,8 @@ pub fn list_devices(folder: &Path, unlocked: &Unlocked) -> Result<String> {
 /// name. Every device then ignores what it writes after the last of its
 /// files read here, and it stops syncing once it finds out. Returns its
 /// name. It keeps the copy it has: rotate the key as well if it was lost.
-pub fn remove_device(folder: &Path, unlocked: &Unlocked, who: &str) -> Result<String> {
-    let backend = LocalFolder::new(folder);
-    let (store, vault) = fresh(&backend, folder, unlocked)?;
+pub fn remove_device(backend: &dyn Backend, unlocked: &Unlocked, who: &str) -> Result<String> {
+    let (store, vault) = fresh(backend, unlocked)?;
     ensure_not_removed(&store)?;
     let records: Vec<(String, Value)> = store
         .list(Col::Devices)?
@@ -936,7 +1046,6 @@ mod tests {
     use promptly_vault::{DeviceId, KdfParams};
 
     struct Creds<'a> {
-        folder: &'a Path,
         pass: &'a str,
     }
     impl Credentials for Creds<'_> {
@@ -945,11 +1054,6 @@ mod tests {
         }
         fn recovery_code(&self) -> Option<&str> {
             None
-        }
-    }
-    impl FolderPath for Creds<'_> {
-        fn folder_path(&self) -> &Path {
-            self.folder
         }
     }
 
@@ -1024,34 +1128,28 @@ mod tests {
         device_record(&phone, "phone");
         phone.push(&phone_vault).unwrap();
 
-        let creds = Creds {
-            folder: &vault_dir,
-            pass: "pass",
-        };
-        let unlocked = unlock(&creds).unwrap().unwrap();
-        let list = list_devices(&vault_dir, &unlocked).unwrap();
+        let creds = Creds { pass: "pass" };
+        let unlocked = unlock(&creds, &backend).unwrap().unwrap();
+        let list = list_devices(&backend, &unlocked).unwrap();
         assert!(list.contains("laptop (linux)"), "{list}");
         assert!(list.contains("phone (linux)"), "{list}");
 
         // Not this tool, nor a name nobody has.
-        let me = cli_store(&vault_dir, &unlocked)
-            .unwrap()
-            .device_id()
-            .clone();
-        assert!(remove_device(&vault_dir, &unlocked, &record_id_of(&me)).is_err());
-        assert!(remove_device(&vault_dir, &unlocked, "tablet").is_err());
+        let me = cli_store(&unlocked).unwrap().device_id().clone();
+        assert!(remove_device(&backend, &unlocked, &record_id_of(&me)).is_err());
+        assert!(remove_device(&backend, &unlocked, "tablet").is_err());
 
         // The phone is removed: the laptop stops listening to it.
         assert_eq!(
-            remove_device(&vault_dir, &unlocked, "Phone").unwrap(),
+            remove_device(&backend, &unlocked, "Phone").unwrap(),
             "phone"
         );
-        let list = list_devices(&vault_dir, &unlocked).unwrap();
+        let list = list_devices(&backend, &unlocked).unwrap();
         assert!(
             list.contains("phone (linux), joined 2026-01-01, removed "),
             "{list}"
         );
-        assert!(remove_device(&vault_dir, &unlocked, "phone").is_err());
+        assert!(remove_device(&backend, &unlocked, "phone").is_err());
         let host_id = "0192f3a0-0000-7000-8000-000000000007";
         phone
             .put(
@@ -1066,7 +1164,7 @@ mod tests {
 
         // A host kept on this tool's device never reaches the vault.
         let local = "0192f3a0-0000-7000-8000-000000000008";
-        import(&vault_dir, &unlocked, &json!({
+        import(&backend, &unlocked, &json!({
             "hosts": [{"id": local, "label": "here only", "hostname": "h", "sync": "local_only"}]
         }).to_string())
         .unwrap();
@@ -1076,10 +1174,10 @@ mod tests {
         // A new key: the old one opens nothing new, the new passphrase and
         // code open the vault, and everything is there under the new key.
         assert!(
-            rotate_dek(&vault_dir, &unlocked, "pass").is_err(),
+            rotate_dek(&backend, &unlocked, "pass").is_err(),
             "not the same passphrase"
         );
-        let code = rotate_dek(&vault_dir, &unlocked, "new pass").unwrap();
+        let code = rotate_dek(&backend, &unlocked, "new pass").unwrap();
         let manifest = Vault::read_manifest(&backend).unwrap();
         assert!(manifest.unlock("pass").is_err());
         let new_dek = manifest.unlock("new pass").unwrap();
@@ -1121,12 +1219,9 @@ mod tests {
 
         // Its own records open with the new passphrase: the same device,
         // and the host kept here is still here.
-        let creds = Creds {
-            folder: &vault_dir,
-            pass: "new pass",
-        };
-        let renewed = unlock(&creds).unwrap().unwrap();
-        let again = cli_store(&vault_dir, &renewed).unwrap();
+        let creds = Creds { pass: "new pass" };
+        let renewed = unlock(&creds, &backend).unwrap().unwrap();
+        let again = cli_store(&renewed).unwrap();
         assert_eq!(again.device_id(), &me, "not set aside as unreadable");
         assert!(again.get(Collection::Hosts, local).unwrap().is_some());
 
@@ -1149,7 +1244,7 @@ mod tests {
             .unwrap();
         add_reseal_from(&again, &unlocked.dek).unwrap();
         drop(again);
-        import(&vault_dir, &renewed, "{}").unwrap();
+        import(&backend, &renewed, "{}").unwrap();
         fresh_store.pull(&fresh_vault).unwrap();
         let secret: Value = serde_json::from_str(
             &fresh_store
@@ -1163,7 +1258,7 @@ mod tests {
             decrypt_secret(&new_dek, late, &secret).as_deref(),
             Some("swordfish")
         );
-        assert!(cli_store(&vault_dir, &renewed)
+        assert!(cli_store(&renewed)
             .unwrap()
             .meta_get(META_RESEAL_FROM)
             .unwrap()
@@ -1172,7 +1267,7 @@ mod tests {
         // A change made here and not yet written, then a new key made on
         // the laptop: this tool's records are brought over with the
         // passphrase from before, not set aside.
-        let pending = cli_store(&vault_dir, &renewed).unwrap();
+        let pending = cli_store(&renewed).unwrap();
         let snippet = "0192f3a0-0000-7000-8000-00000000000a";
         pending
             .put(
@@ -1215,11 +1310,8 @@ mod tests {
         laptop_vault
             .rotate(&known, "third pass", KdfParams::fast_for_tests())
             .unwrap();
-        let creds = Creds {
-            folder: &vault_dir,
-            pass: "third pass",
-        };
-        let third = unlock(&creds).unwrap().unwrap();
+        let creds = Creds { pass: "third pass" };
+        let third = unlock(&creds, &backend).unwrap().unwrap();
         let data_dir = PathBuf::from(std::env::var_os("PROMPTLY_CLI_DATA_DIR").unwrap());
         let set_aside = || {
             std::fs::read_dir(&data_dir)
@@ -1234,15 +1326,15 @@ mod tests {
                 .count()
         };
         if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            let err = cli_store(&vault_dir, &third).err().unwrap().to_string();
+            let err = cli_store(&third).err().unwrap().to_string();
             assert!(err.contains("PROMPTLY_PREVIOUS_PASSPHRASE"), "{err}");
         }
         std::env::set_var("PROMPTLY_PREVIOUS_PASSPHRASE", "not it");
-        let err = cli_store(&vault_dir, &third).err().unwrap().to_string();
+        let err = cli_store(&third).err().unwrap().to_string();
         assert!(err.contains("not the passphrase"), "{err}");
         assert_eq!(set_aside(), 0, "nothing set aside while asking");
         std::env::set_var("PROMPTLY_PREVIOUS_PASSPHRASE", "new pass");
-        let moved = cli_store(&vault_dir, &third);
+        let moved = cli_store(&third);
         std::env::remove_var("PROMPTLY_PREVIOUS_PASSPHRASE");
         let moved = moved.unwrap();
         assert_eq!(moved.device_id(), &me);
@@ -1258,12 +1350,12 @@ mod tests {
             "its secrets are locked again under the new key too"
         );
         drop(moved);
-        assert_eq!(cli_store(&vault_dir, &third).unwrap().device_id(), &me);
+        assert_eq!(cli_store(&third).unwrap().device_id(), &me);
 
         // A new key made here, then straight away another on the laptop,
         // with no run of this tool between: the passphrase this tool last
         // used still brings everything over.
-        rotate_dek(&vault_dir, &third, "fourth pass").unwrap();
+        rotate_dek(&backend, &third, "fourth pass").unwrap();
         let laptop_vault =
             Vault::open(&backend, laptop.device_id().clone(), "fourth pass").unwrap();
         laptop.pull(&laptop_vault).unwrap();
@@ -1271,13 +1363,10 @@ mod tests {
         laptop_vault
             .rotate(&known, "fifth pass", KdfParams::fast_for_tests())
             .unwrap();
-        let creds = Creds {
-            folder: &vault_dir,
-            pass: "fifth pass",
-        };
-        let fifth = unlock(&creds).unwrap().unwrap();
+        let creds = Creds { pass: "fifth pass" };
+        let fifth = unlock(&creds, &backend).unwrap().unwrap();
         std::env::set_var("PROMPTLY_PREVIOUS_PASSPHRASE", "fourth pass");
-        let moved = cli_store(&vault_dir, &fifth);
+        let moved = cli_store(&fifth);
         std::env::remove_var("PROMPTLY_PREVIOUS_PASSPHRASE");
         let moved = moved.unwrap();
         assert_eq!(moved.device_id(), &me);
@@ -1291,7 +1380,7 @@ mod tests {
             .put(Collection::Secrets, mine_only, &fields.to_string())
             .unwrap();
         drop(moved);
-        import(&vault_dir, &fifth, "{}").unwrap();
+        import(&backend, &fifth, "{}").unwrap();
         let reader = Store::open(&dir.join("reader.db"), None).unwrap();
         let reader_vault = Vault::with_dek(
             &backend,
@@ -1363,28 +1452,25 @@ mod tests {
         app.put(Collection::Hosts, host2, &json!({"id": host2, "label": "web 2", "hostname": "10.0.0.12", "auth": {"kind": "identity", "identity_id": key2}}).to_string()).unwrap();
         app.push(&vault).unwrap();
 
-        let creds = Creds {
-            folder: &vault_dir,
-            pass: "pass",
-        };
-        let unlocked = unlock(&creds).unwrap().unwrap();
+        let creds = Creds { pass: "pass" };
+        let unlocked = unlock(&creds, &backend).unwrap().unwrap();
 
-        let text = inspect(&vault_dir, Some(&unlocked)).unwrap();
+        let text = inspect(&backend, Some(&unlocked)).unwrap();
         assert!(text.contains("hosts       2"), "{text}");
         assert!(text.contains("devices    1"), "{text}");
 
-        let exported = export(&vault_dir, &unlocked, true).unwrap();
+        let exported = export(&backend, &unlocked, true).unwrap();
         let doc: Value = serde_json::from_str(&exported).unwrap();
         assert_eq!(doc["hosts"][0]["label"], "web 1");
         assert!(doc["secrets"][0]["value"]
             .as_str()
             .unwrap()
             .contains("PRIVATE KEY"));
-        let without = export(&vault_dir, &unlocked, false).unwrap();
+        let without = export(&backend, &unlocked, false).unwrap();
         assert!(!without.contains("PRIVATE KEY"));
 
         let keys = dir.join("keys");
-        let config = ssh_config(&vault_dir, &unlocked, Some(&keys)).unwrap();
+        let config = ssh_config(&backend, &unlocked, Some(&keys)).unwrap();
         assert!(
             config.contains("Host web-1\n    HostName 10.0.0.11\n    User deploy\n    Port 2222\n"),
             "{config}"
@@ -1397,7 +1483,7 @@ mod tests {
         assert_eq!(config.matches("IdentityFile ").count(), 2, "{config}");
 
         // Import a new host and a secret in plain text; the app pulls it back.
-        let n = import(&vault_dir, &unlocked, &json!({
+        let n = import(&backend, &unlocked, &json!({
             "hosts": [{"id": "0192f3a0-0000-7000-8000-000000000009", "label": "nas", "hostname": "nas.local", "auth": {"kind": "agent"}}],
             "secrets": [{"id": "0192f3a0-0000-7000-8000-00000000000a", "kind": "password", "value": "hunter2"}]
         }).to_string()).unwrap();
@@ -1416,30 +1502,17 @@ mod tests {
             Some("hunter2")
         );
 
-        let report = sync(&vault_dir, &unlocked).unwrap();
+        let report = sync(&backend, &unlocked).unwrap();
         assert!(report.starts_with("pulled"), "{report}");
 
-        change_passphrase(&vault_dir, &unlocked, "new pass").unwrap();
-        assert!(unlock(&Creds {
-            folder: &vault_dir,
-            pass: "pass"
-        })
-        .is_err());
-        assert!(unlock(&Creds {
-            folder: &vault_dir,
-            pass: "new pass"
-        })
-        .unwrap()
-        .is_some());
+        change_passphrase(&backend, &unlocked, "new pass").unwrap();
+        assert!(unlock(&Creds { pass: "pass" }, &backend).is_err());
+        assert!(unlock(&Creds { pass: "new pass" }, &backend)
+            .unwrap()
+            .is_some());
         // The device id of the CLI is stable across runs.
-        let a = cli_store(&vault_dir, &unlocked)
-            .unwrap()
-            .device_id()
-            .clone();
-        let b = cli_store(&vault_dir, &unlocked)
-            .unwrap()
-            .device_id()
-            .clone();
+        let a = cli_store(&unlocked).unwrap().device_id().clone();
+        let b = cli_store(&unlocked).unwrap().device_id().clone();
         assert_eq!(a, b);
         let _ = DeviceId::parse(a.as_str()).unwrap();
         // The CLI's copy is encrypted, not plain SQLite.
@@ -1450,5 +1523,132 @@ mod tests {
         .unwrap();
         assert!(!db.starts_with(b"SQLite format 3\0"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_vault_is_a_folder_or_a_place_on_a_server() {
+        assert_eq!(
+            Location::parse("/home/me/vault").unwrap(),
+            Location::Folder(PathBuf::from("/home/me/vault"))
+        );
+        let Location::Sftp { endpoint, path } =
+            Location::parse("sftp://me@nas.local:2222/promptly-vault").unwrap()
+        else {
+            panic!("not a server vault");
+        };
+        assert_eq!(
+            (
+                endpoint.user.as_str(),
+                endpoint.host.as_str(),
+                endpoint.port
+            ),
+            ("me", "nas.local", 2222)
+        );
+        assert_eq!(path, "promptly-vault", "in the login's home folder");
+        let Location::Sftp { endpoint, path } =
+            Location::parse("sftp://me@nas//srv/vault").unwrap()
+        else {
+            panic!("not a server vault");
+        };
+        assert_eq!(endpoint.port, 22);
+        assert_eq!(path, "/srv/vault", "a second slash makes it absolute");
+        for bad in [
+            "sftp://nas/vault",
+            "sftp://me@nas",
+            "sftp://me@nas/",
+            "sftp://@nas/v",
+        ] {
+            assert!(Location::parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    struct Server(&'static str);
+    impl Place for Server {
+        fn location(&self) -> &str {
+            self.0
+        }
+    }
+
+    #[test]
+    fn a_server_vault_goes_through_the_apps_sftp_connection() {
+        use_test_data_dir();
+        // Nothing listens on port 1, so the connection fails at once, and
+        // says so in plain words naming the server.
+        let err = open(&Server("sftp://me@127.0.0.1:1/vault"))
+            .err()
+            .expect("nothing is listening")
+            .to_string();
+        assert!(err.starts_with("127.0.0.1: "), "{err}");
+        let err = open(&Server("sftp://127.0.0.1/vault")).err().unwrap();
+        assert!(err.to_string().contains("user"), "{err}");
+    }
+
+    #[test]
+    fn every_command_works_on_any_storage() {
+        use_test_data_dir();
+        // Storage that is not a folder, as a server is not.
+        let backend = promptly_vault::backend::MemoryBackend::default();
+        let app = Store::open_in_memory().unwrap();
+        let (vault, _code) = Vault::create(
+            &backend,
+            app.device_id().clone(),
+            "pass",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        device_record(&app, "laptop");
+        let host_id = "0192f3a0-0000-7000-8000-000000000011";
+        app.put(
+            Collection::Hosts,
+            host_id,
+            &json!({"id": host_id, "label": "web", "hostname": "10.0.0.1", "auth": {"kind": "agent"}})
+                .to_string(),
+        )
+        .unwrap();
+        app.setting_set("terminal_bell", r#""off""#).unwrap();
+        app.push(&vault).unwrap();
+
+        let unlocked = unlock(&Creds { pass: "pass" }, &backend).unwrap().unwrap();
+        let text = inspect(&backend, Some(&unlocked)).unwrap();
+        assert!(text.contains("hosts       1"), "{text}");
+        assert!(text.contains("settings    1"), "{text}");
+        let doc: Value =
+            serde_json::from_str(&export(&backend, &unlocked, false).unwrap()).unwrap();
+        assert_eq!(doc["hosts"][0]["label"], "web");
+        assert_eq!(doc["settings"][0]["terminal_bell"], "off");
+        assert!(doc["hosts"][0]["created_at"].is_string(), "{doc}");
+        assert!(ssh_config(&backend, &unlocked, None)
+            .unwrap()
+            .contains("Host web\n"));
+        let nas = "0192f3a0-0000-7000-8000-000000000012";
+        let n = import(
+            &backend,
+            &unlocked,
+            &json!({"hosts": [{"id": nas, "label": "nas", "hostname": "nas.local", "auth": {"kind": "agent"}}]})
+                .to_string(),
+        )
+        .unwrap();
+        assert_eq!(n, 1);
+        assert!(sync(&backend, &unlocked).unwrap().starts_with("pulled"));
+        app.pull(&vault).unwrap();
+        assert!(app.get(Collection::Hosts, nas).unwrap().is_some());
+        assert!(list_devices(&backend, &unlocked)
+            .unwrap()
+            .contains("laptop (linux)"));
+
+        change_passphrase(&backend, &unlocked, "new pass").unwrap();
+        assert!(unlock(&Creds { pass: "pass" }, &backend).is_err());
+        let unlocked = unlock(&Creds { pass: "new pass" }, &backend)
+            .unwrap()
+            .unwrap();
+        let code = rotate_dek(&backend, &unlocked, "newer pass").unwrap();
+        assert!(RecoveryCode::parse(&code).is_some());
+        let unlocked = unlock(&Creds { pass: "newer pass" }, &backend)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            remove_device(&backend, &unlocked, "laptop").unwrap(),
+            "laptop"
+        );
     }
 }

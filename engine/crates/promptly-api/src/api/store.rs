@@ -9,6 +9,7 @@
 use std::sync::{Arc, Mutex};
 
 use flutter_rust_bridge::frb;
+use promptly_ssh::FileKnownHosts;
 use promptly_store::{col_parse, Collection, DbKey, FileSecretStore, SecretStore, Store};
 use promptly_vault::model::{Group, Host, Identity, Snippet};
 use promptly_vault::Dek;
@@ -139,6 +140,25 @@ pub(crate) fn secrets() -> Arc<dyn SecretStore> {
     secret_store()
 }
 
+/// The known-hosts files: the user's own `~/.ssh/known_hosts`, read only,
+/// and Promptly's file in the data folder, sealed with the device key like
+/// the saved secrets (plain only when the system has no secure storage).
+pub(crate) fn known_hosts_files() -> FileKnownHosts {
+    // Unit tests never read the real one in the home folder.
+    let user = if cfg!(test) {
+        Some(data_dir().join("user_known_hosts"))
+    } else {
+        FileKnownHosts::user_file()
+    };
+    let files = FileKnownHosts::new(user.into_iter().collect(), data_dir().join("known_hosts"));
+    match &*DEVICE_KEY.lock().unwrap() {
+        Some(DeviceKey::Key(key)) => files.sealed(key.clone()),
+        Some(DeviceKey::NoStorage) => files,
+        // Too early, or refused: nothing is read or written in the clear.
+        Some(DeviceKey::Unavailable) | None => files.locked(),
+    }
+}
+
 fn collection(name: &str) -> Result<Collection, String> {
     col_parse(name).ok_or_else(|| format!("unknown collection {name:?}"))
 }
@@ -225,10 +245,18 @@ pub fn setting_get(key: String) -> Result<Option<String>, String> {
     store()?.setting_get(&key).map_err(|e| e.to_string())
 }
 
+/// Save an app setting. The ones that make sense on every device (the
+/// look, the terminal's behaviour) travel in the vault; the rest stay here.
 #[frb(sync)]
 pub fn setting_set(key: String, json: String) -> Result<(), String> {
     serde_json::from_str::<serde_json::Value>(&json).map_err(|e| format!("not valid JSON: {e}"))?;
-    store()?.setting_set(&key, &json).map_err(|e| e.to_string())
+    let changed = store()?
+        .setting_set(&key, &json)
+        .map_err(|e| e.to_string())?;
+    if changed {
+        sync_engine::notify_change();
+    }
+    Ok(())
 }
 
 /// Store a secret (a password, a private key) under an id the app chooses.

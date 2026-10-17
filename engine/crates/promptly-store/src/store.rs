@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use hkdf::Hkdf;
-use promptly_vault::model::Collection;
+use promptly_vault::model::{Collection, CREATED_AT, SETTINGS_ID, SYNCED_SETTINGS, UPDATED_AT};
 use promptly_vault::state::{Field, Record as VaultRecord};
 use promptly_vault::{
     Clock, Dek, DeviceId, Op, PullReport, State, SyncError, SyncState, Timestamp, Vault,
@@ -570,19 +570,42 @@ impl Store {
 
     /// Insert or replace. `json` must be an object. Only the fields that
     /// differ become an operation; returns whether anything changed.
+    ///
+    /// A change is stamped with [`UPDATED_AT`], and a record that is new (or
+    /// back after a deletion) with [`CREATED_AT`] as well, unless it brings
+    /// its own, as a record from an export does. What `json` says about
+    /// either is otherwise ignored: the store keeps them.
     pub fn put(&self, col: Collection, id: &str, json: &str) -> Result<bool, StoreError> {
         let value: Value = serde_json::from_str(json)
             .map_err(|e| StoreError::InvalidRecord(format!("not valid JSON: {e}")))?;
-        let Value::Object(fields) = value else {
+        let Value::Object(mut fields) = value else {
             return Err(StoreError::InvalidRecord(
                 "a record must be a JSON object".into(),
             ));
         };
         let mut inner = self.inner.lock().unwrap();
+        let exists = inner.state.get(col, id).is_some();
+        fields.remove(UPDATED_AT);
+        if exists {
+            fields.remove(CREATED_AT);
+        }
         let ts = inner.clock.tick();
-        let Some(op) = inner.state.put_diff(col, id, &fields, ts, now()) else {
+        let Some(mut op) = inner.state.put_diff(col, id, &fields, ts, now()) else {
             return Ok(false);
         };
+        if let Op::Put {
+            at,
+            fields: changed,
+            ..
+        } = &mut op
+        {
+            changed.insert(UPDATED_AT.into(), Value::String(at.clone()));
+            if !exists {
+                changed
+                    .entry(CREATED_AT.to_string())
+                    .or_insert_with(|| Value::String(at.clone()));
+            }
+        }
         inner.state.apply(&op);
         self.persist_op(&mut inner, col, id, &op)?;
         Ok(true)
@@ -675,24 +698,40 @@ impl Store {
         f(&inner.state)
     }
 
-    // ---- Settings and metadata (local to this device) -------------------
+    // ---- Settings and metadata -------------------------------------------
 
+    /// An app setting as JSON. Those in [`SYNCED_SETTINGS`] are fields of
+    /// the vault's `settings` record; the rest live only on this device.
     pub fn setting_get(&self, key: &str) -> Result<Option<String>, StoreError> {
         let inner = self.inner.lock().unwrap();
+        if SYNCED_SETTINGS.contains(&key) {
+            return Ok(inner
+                .state
+                .get(Collection::Settings, SETTINGS_ID)
+                .and_then(|fields| fields.get(key).map(Value::to_string)));
+        }
         let mut stmt = inner
             .conn
             .prepare_cached("SELECT json FROM settings WHERE key = ?1")?;
         Ok(stmt.query_row(params![key], |r| r.get(0)).optional()?)
     }
 
-    pub fn setting_set(&self, key: &str, json: &str) -> Result<(), StoreError> {
+    /// Save an app setting. Returns whether the vault has something new to
+    /// sync: a synced setting that changed.
+    pub fn setting_set(&self, key: &str, json: &str) -> Result<bool, StoreError> {
+        if SYNCED_SETTINGS.contains(&key) {
+            let value: Value = serde_json::from_str(json)
+                .map_err(|e| StoreError::InvalidRecord(format!("not valid JSON: {e}")))?;
+            let record = serde_json::json!({ "id": SETTINGS_ID, key: value });
+            return self.put(Collection::Settings, SETTINGS_ID, &record.to_string());
+        }
         let inner = self.inner.lock().unwrap();
         inner.conn.execute(
             "INSERT INTO settings (key, json, updated_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(key) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
             params![key, json, now()],
         )?;
-        Ok(())
+        Ok(false)
     }
 
     /// Small device-local values: the vault configuration, markers.
@@ -846,6 +885,14 @@ mod tests {
     use promptly_vault::backend::MemoryBackend;
     use promptly_vault::{Backend, BackendError, KdfParams};
 
+    /// A record as the app wrote it: without the times the store adds.
+    fn bare(r: &Record) -> String {
+        let mut v: Map<String, Value> = serde_json::from_str(&r.json).unwrap();
+        assert!(v.remove(CREATED_AT).is_some(), "{}", r.json);
+        assert!(v.remove(UPDATED_AT).is_some(), "{}", r.json);
+        serde_json::to_string(&v).unwrap()
+    }
+
     #[test]
     fn records_round_trip_and_only_changes_become_operations() {
         let s = Store::open_in_memory().unwrap();
@@ -890,7 +937,9 @@ mod tests {
         assert_eq!(got["port"], 22);
         let (ops, _) = Store::pending(&s.inner.lock().unwrap().conn).unwrap();
         match &ops[3] {
-            Op::Put { fields, .. } => assert_eq!(fields.keys().collect::<Vec<_>>(), ["label"]),
+            Op::Put { fields, .. } => {
+                assert_eq!(fields.keys().collect::<Vec<_>>(), ["label", UPDATED_AT])
+            }
             _ => panic!(),
         }
         assert!(s.delete(Collection::Hosts, "a").unwrap());
@@ -900,10 +949,181 @@ mod tests {
     }
 
     #[test]
+    fn records_carry_when_they_were_made_and_last_changed() {
+        let s = Store::open_in_memory().unwrap();
+        let stamps = |s: &Store| {
+            let r: Value =
+                serde_json::from_str(&s.get(Collection::Hosts, "h").unwrap().unwrap().json)
+                    .unwrap();
+            (
+                r[CREATED_AT].as_str().unwrap().to_string(),
+                r[UPDATED_AT].as_str().unwrap().to_string(),
+            )
+        };
+        s.put(Collection::Hosts, "h", r#"{"id":"h","label":"web"}"#)
+            .unwrap();
+        let (created, updated) = stamps(&s);
+        assert_eq!(created, updated);
+        assert!(
+            OffsetDateTime::parse(&created, &Rfc3339).is_ok(),
+            "{created}"
+        );
+
+        // Nothing changed: nothing is stamped, whatever the times sent say.
+        let stale = r#"{"id":"h","label":"web","created_at":"2001-01-01T00:00:00Z","updated_at":"2001-01-01T00:00:00Z"}"#;
+        assert!(!s.put(Collection::Hosts, "h", stale).unwrap());
+        assert_eq!(stamps(&s), (created.clone(), updated.clone()));
+
+        // A change moves the update time and keeps the creation time.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(s
+            .put(
+                Collection::Hosts,
+                "h",
+                r#"{"id":"h","label":"web-1","created_at":"2001-01-01T00:00:00Z"}"#
+            )
+            .unwrap());
+        let (created2, updated2) = stamps(&s);
+        assert_eq!(created2, created);
+        let at = |s: &str| OffsetDateTime::parse(s, &Rfc3339).unwrap();
+        assert!(at(&updated2) > at(&updated), "{updated2} after {updated}");
+
+        // A new record from an export keeps the time it was made.
+        s.put(
+            Collection::Snippets,
+            "x",
+            r#"{"id":"x","label":"ls","command":"ls","created_at":"2001-01-01T00:00:00Z"}"#,
+        )
+        .unwrap();
+        let x: Value =
+            serde_json::from_str(&s.get(Collection::Snippets, "x").unwrap().unwrap().json).unwrap();
+        assert_eq!(x[CREATED_AT], "2001-01-01T00:00:00Z");
+        assert_ne!(x[UPDATED_AT], "2001-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn the_times_travel_and_merge_like_any_field() {
+        let backend = MemoryBackend::default();
+        let a = Store::open_in_memory().unwrap();
+        let b = Store::open_in_memory().unwrap();
+        let (va, _code) = Vault::create(
+            &backend,
+            a.device_id().clone(),
+            "pw",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        let vb = Vault::open(&backend, b.device_id().clone(), "pw").unwrap();
+        a.put(Collection::Hosts, "h", r#"{"id":"h","label":"web"}"#)
+            .unwrap();
+        a.push(&va).unwrap();
+        b.pull(&vb).unwrap();
+        let get = |s: &Store| -> Value {
+            serde_json::from_str(&s.get(Collection::Hosts, "h").unwrap().unwrap().json).unwrap()
+        };
+        let made = get(&a)[CREATED_AT].clone();
+        assert_eq!(get(&b)[CREATED_AT], made);
+
+        // Edited on the second device, then snapshotted and read afresh.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        b.put(Collection::Hosts, "h", r#"{"id":"h","label":"web-1"}"#)
+            .unwrap();
+        b.push(&vb).unwrap();
+        b.compact(&vb, true).unwrap();
+        a.pull(&va).unwrap();
+        assert_eq!(get(&a), get(&b));
+        assert_eq!(get(&a)[CREATED_AT], made);
+        assert_ne!(get(&a)[UPDATED_AT], made);
+        let c = Store::open_in_memory().unwrap();
+        c.pull(&Vault::open(&backend, c.device_id().clone(), "pw").unwrap())
+            .unwrap();
+        assert_eq!(get(&c), get(&b));
+    }
+
+    #[test]
+    fn synced_settings_go_in_the_settings_record_and_the_rest_stay_here() {
+        let s = Store::open_in_memory().unwrap();
+        assert_eq!(s.setting_get("theme_mode").unwrap(), None);
+        assert!(s.setting_set("theme_mode", r#""dark""#).unwrap());
+        assert!(
+            !s.setting_set("theme_mode", r#""dark""#).unwrap(),
+            "no change"
+        );
+        assert!(s.setting_set("terminal_scrollback", "50000").unwrap());
+        assert_eq!(
+            s.setting_get("theme_mode").unwrap().as_deref(),
+            Some(r#""dark""#)
+        );
+        assert_eq!(
+            s.setting_get("terminal_scrollback").unwrap().as_deref(),
+            Some("50000")
+        );
+        let record: Value = serde_json::from_str(
+            &s.get(Collection::Settings, SETTINGS_ID)
+                .unwrap()
+                .unwrap()
+                .json,
+        )
+        .unwrap();
+        assert_eq!(record["id"], SETTINGS_ID);
+        assert_eq!(record["theme_mode"], "dark");
+        assert_eq!(record["terminal_scrollback"], 50000);
+        assert_eq!(
+            s.pending_count().unwrap(),
+            2,
+            "each change goes to the vault"
+        );
+
+        // This device's own choices never become operations.
+        assert!(!s.setting_set("terminal_font_size", "18").unwrap());
+        assert!(!s.setting_set("keyboard_bar_keys", r#"["esc"]"#).unwrap());
+        assert_eq!(s.pending_count().unwrap(), 2);
+        assert_eq!(
+            s.setting_get("terminal_font_size").unwrap().as_deref(),
+            Some("18")
+        );
+        assert!(s.setting_set("theme_mode", "not json").is_err());
+    }
+
+    #[test]
+    fn a_setting_changed_on_one_device_shows_on_the_other() {
+        let backend = MemoryBackend::default();
+        let a = Store::open_in_memory().unwrap();
+        let b = Store::open_in_memory().unwrap();
+        let (va, _code) = Vault::create(
+            &backend,
+            a.device_id().clone(),
+            "pw",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        let vb = Vault::open(&backend, b.device_id().clone(), "pw").unwrap();
+        a.setting_set("terminal_bell", r#""vibrate""#).unwrap();
+        a.setting_set("terminal_font_size", "20").unwrap();
+        a.push(&va).unwrap();
+        b.setting_set("paste_warning", "false").unwrap();
+        b.push(&vb).unwrap();
+        a.pull(&va).unwrap();
+        b.pull(&vb).unwrap();
+        for s in [&a, &b] {
+            assert_eq!(
+                s.setting_get("terminal_bell").unwrap().as_deref(),
+                Some(r#""vibrate""#)
+            );
+            assert_eq!(
+                s.setting_get("paste_warning").unwrap().as_deref(),
+                Some("false"),
+                "settings changed on each side both survive"
+            );
+        }
+        assert_eq!(b.setting_get("terminal_font_size").unwrap(), None);
+    }
+
+    #[test]
     fn settings_and_meta_round_trip() {
         let s = Store::open_in_memory().unwrap();
         assert_eq!(s.setting_get("theme").unwrap(), None);
-        s.setting_set("theme", r#""dark""#).unwrap();
+        assert!(!s.setting_set("theme", r#""dark""#).unwrap());
         s.setting_set("theme", r#""light""#).unwrap();
         assert_eq!(
             s.setting_get("theme").unwrap().as_deref(),
@@ -948,7 +1168,7 @@ mod tests {
         assert_eq!(again.clock_counter(), 2);
         assert_eq!(again.list(Collection::Snippets).unwrap().len(), 1);
         assert_eq!(
-            again.list(Collection::Hosts).unwrap()[0].json,
+            bare(&again.list(Collection::Hosts).unwrap()[0]),
             r#"{"id":"h1","label":"old"}"#
         );
         assert_eq!(again.pending_count().unwrap(), 2);
@@ -982,7 +1202,7 @@ mod tests {
         let report = b.pull(&vb).unwrap();
         assert_eq!(report.files_applied, 1);
         assert_eq!(
-            b.list(Collection::Hosts).unwrap()[0].json,
+            bare(&b.list(Collection::Hosts).unwrap()[0]),
             r#"{"id":"h","label":"web","port":22}"#
         );
         assert!(b.sync_state().unwrap().markers.contains_key(a.device_id()));
@@ -1004,8 +1224,8 @@ mod tests {
         a.pull(&va).unwrap();
         b.pull(&vb).unwrap();
         let want = r#"{"id":"h","label":"web-1","port":2222}"#;
-        assert_eq!(a.list(Collection::Hosts).unwrap()[0].json, want);
-        assert_eq!(b.list(Collection::Hosts).unwrap()[0].json, want);
+        assert_eq!(bare(&a.list(Collection::Hosts).unwrap()[0]), want);
+        assert_eq!(bare(&b.list(Collection::Hosts).unwrap()[0]), want);
         assert!(b.clock_counter() >= a.clock_counter() - 1);
     }
 
@@ -1108,7 +1328,7 @@ mod tests {
 
         let again = Store::open(&path, Some(&key)).unwrap();
         assert_eq!(again.device_id(), &device);
-        assert_eq!(again.list(Collection::Hosts).unwrap()[0].json, HOST);
+        assert_eq!(bare(&again.list(Collection::Hosts).unwrap()[0]), HOST);
         drop(again);
 
         // Plain SQLite cannot read it, and the store will not open it unkeyed.
@@ -1175,23 +1395,24 @@ mod tests {
             .unwrap();
         assert_eq!(head(&path), b"SQLite format 3\0");
         assert_eq!(
-            Store::open(&path, None)
-                .unwrap()
-                .list(Collection::Hosts)
-                .unwrap()[0]
-                .json,
+            bare(
+                &Store::open(&path, None)
+                    .unwrap()
+                    .list(Collection::Hosts)
+                    .unwrap()[0]
+            ),
             HOST
         );
 
         // The keyring arrives: the same data, now encrypted.
         let key = DbKey::derive(&Dek::generate());
         let s = Store::open(&path, Some(&key)).unwrap();
-        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        assert_eq!(bare(&s.list(Collection::Hosts).unwrap()[0]), HOST);
         drop(s);
         assert_ne!(head(&path), b"SQLite format 3\0");
         assert!(no_leftovers(&path));
         let s = Store::open(&path, Some(&key)).unwrap();
-        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        assert_eq!(bare(&s.list(Collection::Hosts).unwrap()[0]), HOST);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1237,7 +1458,7 @@ mod tests {
         assert!(with_suffix(&path, "-wal").exists());
         drop(other);
         let s = Store::open(&path, Some(&key)).unwrap();
-        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        assert_eq!(bare(&s.list(Collection::Hosts).unwrap()[0]), HOST);
         drop(s);
         assert_ne!(head(&path), b"SQLite format 3\0");
         let written: String = connect(&path, Some(&key))
@@ -1334,8 +1555,8 @@ mod tests {
         let hosts: Vec<_> = s
             .list(Collection::Hosts)
             .unwrap()
-            .into_iter()
-            .map(|r| r.json)
+            .iter()
+            .map(bare)
             .collect();
         assert_eq!(hosts.len(), 2, "{hosts:?}");
         assert!(hosts.contains(&HOST.to_string()) && hosts.contains(&later.to_string()));
@@ -1358,7 +1579,7 @@ mod tests {
             let open = || {
                 start.wait();
                 match Store::open(&path, Some(&key)) {
-                    Ok(s) => assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST),
+                    Ok(s) => assert_eq!(bare(&s.list(Collection::Hosts).unwrap()[0]), HOST),
                     Err(StoreError::Busy) => {}
                     Err(e) => panic!("{e}"),
                 }
@@ -1370,7 +1591,7 @@ mod tests {
         });
         assert!(no_leftovers(&path));
         let s = Store::open(&path, Some(&key)).unwrap();
-        assert_eq!(s.list(Collection::Hosts).unwrap()[0].json, HOST);
+        assert_eq!(bare(&s.list(Collection::Hosts).unwrap()[0]), HOST);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -831,6 +831,30 @@ class FakeEngine implements Engine {
     syncStream.add(sync);
   }
 
+  /// Another device's changes arrive: the status's count of them moves on.
+  void landChanges() {
+    final s = sync;
+    sync = SyncStatus(
+      attention: s.attention,
+      configured: s.configured,
+      kind: s.kind,
+      location: s.location,
+      vaultId: s.vaultId,
+      deviceId: s.deviceId,
+      deviceName: s.deviceName,
+      syncing: s.syncing,
+      lastSyncAt: s.lastSyncAt,
+      lastError: s.lastError,
+      warnings: s.warnings,
+      pendingOps: s.pendingOps,
+      devices: s.devices,
+      vaultBytes: s.vaultBytes,
+      recoveryHint: s.recoveryHint,
+      changes: s.changes + 1,
+    );
+    syncStream.add(sync);
+  }
+
   @override
   SyncStatus syncStatus() => sync;
   @override
@@ -1994,6 +2018,22 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(engine.syncCalls.where((c) => c == 'wake').length, 1);
+  });
+
+  testWidgets('settings changed on another device show once its changes land', (tester) async {
+    final engine = FakeEngine()..configured();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode, ThemeMode.system);
+
+    // The other device's choice is in the store, but nothing has said so yet.
+    engine.settings['theme_mode'] = '"dark"';
+    await tester.pumpAndSettle();
+    expect(tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode, ThemeMode.system);
+
+    engine.landChanges();
+    await tester.pumpAndSettle();
+    expect(tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode, ThemeMode.dark);
   });
 
   testWidgets('the sync screen shows files that could not be read yet in plain words', (tester) async {
