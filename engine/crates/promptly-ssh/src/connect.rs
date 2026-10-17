@@ -117,14 +117,30 @@ impl ConnectParams {
         }
     }
 
+    /// A host's startup command as it should be typed: line endings made
+    /// `\n`, other control characters (which a terminal would act on rather
+    /// than pass along) removed, and blank space trimmed. `None` when
+    /// nothing is left.
+    pub fn startup_text(raw: &str) -> Option<String> {
+        let text: String = raw
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .chars()
+            .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+            .collect();
+        let text = text.trim();
+        (!text.is_empty()).then(|| text.to_string())
+    }
+
     /// The command that attaches to (or starts) the tmux session `name` on
     /// the server, falling back to a plain login shell where tmux is not
     /// installed.
     ///
     /// `startup` is the host's startup command, which the caller also sends
-    /// as `startup_input`. Without tmux it is left for the login shell to
-    /// read, so it runs in the shell the person goes on using, as on a
-    /// plain connection. With tmux the script reads it first and throws it
+    /// as `startup_input`, both as [`Self::startup_text`] gives it, so the
+    /// lines the script reads are the lines the terminal passes on. Without
+    /// tmux it is left for the login shell to read, so it runs in the shell
+    /// the person goes on using, as on a plain connection. With tmux the script reads it first and throws it
     /// away: tmux types it only into a session it has just created, so a
     /// reconnect that reattaches never types it into whatever is running
     /// there (an editor, say).
@@ -133,9 +149,12 @@ impl ConnectParams {
         let target = q(&format!("={name}"));
         let mut new_session = format!("exec tmux new-session -s {}", q(name));
         let mut discard = String::new();
-        if let Some(cmd) = startup.map(str::trim).filter(|c| !c.is_empty()) {
-            new_session.push_str(&format!(" \\; send-keys -l {} \\; send-keys Enter", q(cmd)));
-            discard = "IFS= read -r _; ".repeat(cmd.lines().count());
+        if let Some(cmd) = startup.and_then(Self::startup_text) {
+            new_session.push_str(&format!(
+                " \\; send-keys -l {} \\; send-keys Enter",
+                q(&cmd)
+            ));
+            discard = "IFS= read -r _; ".repeat(cmd.split('\n').count());
         }
         let script = format!(
             "if tmux has-session -t {target} 2>/dev/null; then {discard}exec tmux attach-session -t {target}; fi\n\
@@ -1255,6 +1274,8 @@ mod tests {
             }
             String::from_utf8_lossy(&out).into_owned()
         });
+        // What the app sends as `startup_input`.
+        let startup = ConnectParams::startup_text(startup).unwrap();
         let mut writer = pty.master.take_writer().unwrap();
         writer
             .write_all(format!("{startup}\n{typed}").as_bytes())
@@ -1288,6 +1309,23 @@ mod tests {
         assert!(attach.contains("attach-session then read:next"), "{attach}");
         let new = run_persistent(Some("1"), "make dev", "next\n");
         assert!(new.contains("new-session then read:next"), "{new}");
+
+        // Several lines, with Windows and old Mac line endings, a blank line
+        // and a stray control character, are all read and dropped too.
+        let messy = "cd /srv\r\nmake dev\rgit status\n\n\u{4}echo done";
+        for (has_session, branch) in [("0", "attach-session"), ("1", "new-session")] {
+            let out = run_persistent(Some(has_session), messy, "next\n");
+            assert!(out.contains(&format!("{branch} then read:next")), "{out}");
+        }
+    }
+
+    #[test]
+    fn startup_text_types_what_the_terminal_passes_on() {
+        assert_eq!(
+            ConnectParams::startup_text("  cd /srv\r\nmake\rls\u{3}\tx \n").as_deref(),
+            Some("cd /srv\nmake\nls\tx")
+        );
+        assert_eq!(ConnectParams::startup_text(" \r\n\u{4} "), None);
     }
 
     #[test]
