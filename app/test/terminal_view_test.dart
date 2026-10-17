@@ -166,6 +166,8 @@ class RecordingEngine implements Engine {
   @override
   int filesUpload(int id, String local, String remote) => 1;
   @override
+  void filesCancelTransfer(int id, int transfer) {}
+  @override
   List<FileTransfer> filesTransfers(int id) => const [];
   @override
   void filesClearTransfers(int id) {}

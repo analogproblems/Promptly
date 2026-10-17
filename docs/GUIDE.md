@@ -577,18 +577,30 @@ Each item's **⋮** menu offers:
 |---|---|
 | **Open** | Opens a folder. |
 | **Edit** | Opens a text file in the editor. |
-| **Download to this device** / **Upload to the server** | Copies the file to the other side (on a computer). |
+| **Download to this device** | Saves a copy of the file on your phone or computer (see below). |
+| **Upload to the server** | Copies a file from your computer to the server (on a computer, with two panes). |
+| **Open in another app** | Fetches the file and opens it in the app your device uses for that kind of file. On a phone, pick the app from the share sheet. |
 | **Rename** | Renames the file or folder. |
 | **Permissions** | Sets who can read, write and run it (see below). |
 | **Delete** | Deletes it. Deleting a folder deletes everything inside it. This can't be undone. |
 
 ### Copying files between your computer and the server
 
-On a computer, the file browser shows two panes: your own files on the left and the server's on the right. **Drag** a file from one side to the other to copy it into the folder open there, or use **Download to this device** or **Upload to the server** from its **⋮** menu. A **Transfers** bar at the bottom shows each copy's progress; tap **Clear finished** to tidy it.
+On a computer, the file browser shows two panes: your own files on the left and the server's on the right. **Drag** a file from one side to the other to copy it into the folder open there, or use **Download to this device** or **Upload to the server** from its **⋮** menu. A **Transfers** bar at the bottom shows each copy's progress; tap **✕** beside one to stop it, or **Clear finished** to tidy the list. A stopped copy doesn't leave a half-written file behind.
 
 <img src="screenshots/m3-files-dual-pane.png" alt="The file browser on a computer: this device's files on the left, the server's on the right, and a finished transfer" width="640">
 
 Folders can't be copied in one go yet. Open the folder and copy its files.
+
+### Copying files on a phone
+
+On a phone (or a narrow window) the browser shows only the server's files.
+
+- **To upload,** open the server folder you want the files in and tap **Upload files from this device** (the upload icon beside the path). Pick one or more files. If the folder already has a file with the same name, Promptly asks before replacing it.
+- **To download,** choose **Download to this device** from a file's **⋮** menu. When the file has arrived, the share sheet opens: choose **Save to Files** (iPhone and iPad) or the app you want to keep it in, such as Files or Drive. In a narrow window on a computer, you're asked where to save it instead.
+- **To open a file in another app,** such as a PDF viewer or a photo editor, choose **Open in another app**.
+
+The **Transfers** bar shows each copy's progress. Tap **✕** to stop one.
 
 ### Setting permissions
 

@@ -14,6 +14,7 @@ import 'package:promptly/core/version.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/core/file_picker.dart';
 import 'package:promptly/core/platform.dart';
+import 'package:promptly/features/files/device_files.dart';
 import 'package:promptly/features/files/files_screen.dart';
 import 'package:promptly/features/files/fs.dart';
 import 'package:promptly/features/help/about_screen.dart';
@@ -473,38 +474,60 @@ class FakeEngine implements Engine {
     remoteText[path] = text;
   }
 
+  /// Copies finish at once unless a test wants to watch one run.
+  bool finishTransfers = true;
+  int _nextTransfer = 1;
+
+  FileTransfer _transfer(String remote, {required bool upload, required int size}) {
+    final t = FileTransfer(
+      id: _nextTransfer++,
+      name: remote.split('/').last,
+      upload: upload,
+      done: BigInt.from(finishTransfers ? size : 0),
+      total: BigInt.from(size),
+      finished: finishTransfers,
+      cancelled: false,
+      error: null,
+    );
+    transfers.add(t);
+    return t;
+  }
+
   @override
   int filesDownload(int id, String remote, String local) {
     fileCalls.add('download $remote $local');
-    transfers.add(
-      FileTransfer(
-        id: transfers.length + 1,
-        name: remote.split('/').last,
-        upload: false,
-        done: BigInt.from(2048),
-        total: BigInt.from(2048),
-        finished: true,
-        error: null,
-      ),
-    );
-    return transfers.length;
+    return _transfer(remote, upload: false, size: 2048).id;
   }
 
   @override
   int filesUpload(int id, String local, String remote) {
     fileCalls.add('upload $local $remote');
-    transfers.add(
-      FileTransfer(
-        id: transfers.length + 1,
-        name: remote.split('/').last,
-        upload: true,
-        done: BigInt.from(10),
-        total: BigInt.from(10),
-        finished: true,
-        error: null,
-      ),
-    );
-    return transfers.length;
+    return _transfer(remote, upload: true, size: 10).id;
+  }
+
+  FileTransfer _settled(FileTransfer t, {required bool cancelled}) => FileTransfer(
+    id: t.id,
+    name: t.name,
+    upload: t.upload,
+    done: cancelled ? t.done : t.total,
+    total: t.total,
+    finished: true,
+    cancelled: cancelled,
+    error: null,
+  );
+
+  @override
+  void filesCancelTransfer(int id, int transfer) {
+    fileCalls.add('cancel $transfer');
+    final i = transfers.indexWhere((t) => t.id == transfer && !t.finished);
+    if (i >= 0) transfers[i] = _settled(transfers[i], cancelled: true);
+  }
+
+  /// Let every running copy finish.
+  void finishAll() {
+    for (var i = 0; i < transfers.length; i++) {
+      if (!transfers[i].finished) transfers[i] = _settled(transfers[i], cancelled: false);
+    }
   }
 
   @override
@@ -953,6 +976,7 @@ Widget appWith(
   UpdateService? updates,
   Authenticator? authenticator,
   SaveTextFile? fileSaver,
+  DeviceFiles? deviceFiles,
 }) {
   engine ??= FakeEngine();
   if (onboarded) engine.settings.putIfAbsent('onboarding_done', () => 'true');
@@ -970,6 +994,7 @@ Widget appWith(
       // No system check and no passcode unless a test brings one: nothing
       // to ask, so keys and the app open as before.
       authenticatorProvider.overrideWithValue(authenticator ?? NoChecks()),
+      if (deviceFiles != null) deviceFilesProvider.overrideWithValue(deviceFiles),
     ],
     child: const PromptlyApp(),
   );
