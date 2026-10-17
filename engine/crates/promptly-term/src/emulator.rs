@@ -7,7 +7,7 @@ use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
+use alacritty_terminal::term::search::{RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{self, Processor};
 use std::sync::LazyLock;
@@ -64,11 +64,12 @@ pub struct SearchHit {
     pub line: i32,
 }
 
-/// An active search: the compiled query, and the match the person is on.
+/// An active search: the compiled query, and whether the selection is the
+/// match the person is on.
 struct Search {
     grid: RegexSearch,
     row: regex::Regex,
-    focus: Option<Match>,
+    focused: bool,
 }
 
 /// Plain-text URLs worth a click. Trailing punctuation is trimmed when the
@@ -76,8 +77,6 @@ struct Search {
 static URL: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r#"(?i)\b(?:https?|ftp|ssh|git|file)://[^\s<>"'`]+"#).expect("url regex")
 });
-
-const MAX_MATCHES: usize = 10_000;
 
 #[derive(Clone, Default)]
 struct Listener(Arc<Mutex<Vec<Event>>>);
@@ -132,13 +131,13 @@ impl Emulator {
     /// `search_step` moves between them.
     pub fn search_set(&mut self, query: Option<&str>) {
         let query = query.map(str::trim).filter(|q| !q.is_empty());
-        let had_focus = self.search.as_ref().is_some_and(|s| s.focus.is_some());
+        let had_focus = self.search.as_ref().is_some_and(|s| s.focused);
         self.search = query.and_then(|q| {
             let pattern = format!("(?i){}", regex::escape(q));
             Some(Search {
                 grid: RegexSearch::new(&pattern).ok()?,
                 row: regex::Regex::new(&pattern).ok()?,
-                focus: None,
+                focused: false,
             })
         });
         if had_focus {
@@ -152,48 +151,66 @@ impl Emulator {
     /// towards the newest output. Starts from the bottom of the viewport.
     /// The match becomes the selection and is scrolled into view.
     ///
-    /// Steps through the same list of matches that is counted, so the
-    /// focus is always one of the highlighted matches. (Searching backwards
-    /// cell by cell can land on an overlapping match instead, such as the
+    /// Walks the matches in the same order they are counted, so the focus
+    /// is always one of the highlighted matches. (Searching backwards cell
+    /// by cell can land on an overlapping match instead, such as the
     /// second "22" inside "222".)
     pub fn search_step(&mut self, backward: bool) -> Option<SearchHit> {
-        let matches = self.matches();
         let search = self.search.as_mut()?;
-        if matches.is_empty() {
-            search.focus = None;
-            return None;
-        }
-        let at = match &search.focus {
-            Some(m) => *m.start(),
-            None => {
-                let display_offset = self.term.grid().display_offset() as i32;
-                if backward {
-                    let bottom = Line(self.term.screen_lines() as i32 - 1 - display_offset);
-                    Point::new(bottom, self.term.last_column())
-                } else {
-                    Point::new(Line(-display_offset), Column(0))
-                }
-            }
+        // The focus is the selection, which the terminal keeps on the same
+        // text as output scrolls it.
+        let focus = if search.focused {
+            self.term
+                .selection
+                .as_ref()
+                .and_then(|s| s.to_range(&self.term))
+                .map(|r| r.start)
+        } else {
+            None
         };
+        let at = focus.unwrap_or_else(|| {
+            let display_offset = self.term.grid().display_offset() as i32;
+            if backward {
+                let bottom = Line(self.term.screen_lines() as i32 - 1 - display_offset);
+                Point::new(bottom, self.term.last_column())
+            } else {
+                Point::new(Line(-display_offset), Column(0))
+            }
+        });
         // Without a focus the match at `at` itself counts; with one, it is
         // the match being left.
-        let include_at = search.focus.is_none();
-        let n = matches.len();
-        let i = if backward {
-            let before =
-                matches.partition_point(|m| *m.start() < at || (include_at && *m.start() == at));
-            before.checked_sub(1).unwrap_or(n - 1)
-        } else {
-            let after =
-                matches.partition_point(|m| *m.start() < at || (!include_at && *m.start() == at));
-            if after == n {
-                0
+        let include_at = focus.is_none();
+
+        // One pass over every match, oldest first: the count, the next
+        // match each way, and the ends to wrap round to.
+        let start = Point::new(self.term.topmost_line(), Column(0));
+        let end = Point::new(self.term.bottommost_line(), self.term.last_column());
+        let mut total = 0u32;
+        let mut first = None;
+        let mut last = None;
+        let mut next = None;
+        for m in RegexIter::new(start, end, Direction::Right, &self.term, &mut search.grid) {
+            total += 1;
+            let s = *m.start();
+            let hit = if backward {
+                s < at || (include_at && s == at)
             } else {
-                after
+                next.is_none() && (s > at || (include_at && s == at))
+            };
+            if hit {
+                next = Some((total, m.clone()));
             }
+            if first.is_none() {
+                first = Some(m.clone());
+            }
+            last = Some(m);
+        }
+        let (index, found) = match next {
+            Some(n) => n,
+            None if backward => (total, last?),
+            None => (1, first?),
         };
-        let found = matches[i].clone();
-        search.focus = Some(found.clone());
+        search.focused = true;
 
         let mut selection = Selection::new(SelectionType::Simple, *found.start(), Side::Left);
         selection.update(*found.end(), Side::Right);
@@ -213,22 +230,10 @@ impl Emulator {
         self.force_full = true;
 
         Some(SearchHit {
-            index: i as u32 + 1,
-            total: n as u32,
+            index,
+            total,
             line: line + offset,
         })
-    }
-
-    /// Every match in the grid, oldest first.
-    fn matches(&mut self) -> Vec<Match> {
-        let Some(search) = self.search.as_mut() else {
-            return Vec::new();
-        };
-        let start = Point::new(self.term.topmost_line(), Column(0));
-        let end = Point::new(self.term.bottommost_line(), self.term.last_column());
-        RegexIter::new(start, end, Direction::Right, &self.term, &mut search.grid)
-            .take(MAX_MATCHES)
-            .collect()
     }
 
     // ---- Links -------------------------------------------------------------
@@ -277,6 +282,7 @@ impl Emulator {
             SelectKind::Block => SelectionType::Block,
         };
         self.term.selection = Some(Selection::new(ty, point, side(side_right)));
+        self.unfocus();
     }
 
     /// Move the free end of the selection.
@@ -289,6 +295,18 @@ impl Emulator {
 
     pub fn select_clear(&mut self) {
         self.term.selection = None;
+        self.unfocus();
+    }
+
+    /// The selection is no longer the search match: the person made or
+    /// dropped one themselves.
+    fn unfocus(&mut self) {
+        if let Some(search) = self.search.as_mut() {
+            if search.focused {
+                search.focused = false;
+                self.force_full = true;
+            }
+        }
     }
 
     /// The selected text, with trailing blanks trimmed and lines joined by
@@ -459,7 +477,7 @@ impl Emulator {
         // Search matches and plain URLs are found on the row's text once.
         let (text, columns, wide) = row_text(grid, line);
         let mut marks = vec![0u16; cols];
-        let focus = self.search.as_ref().and_then(|s| s.focus.as_ref());
+        let focused_sel = selection.filter(|_| self.search.as_ref().is_some_and(|s| s.focused));
         if let Some(search) = &self.search {
             for m in search.row.find_iter(&text) {
                 mark(
@@ -550,11 +568,13 @@ impl Emulator {
                 out |= frame::flags::LINK;
             }
             // The match the search bar is on is solid yellow; the others
-            // are a softer yellow so it stands out among them.
+            // are a softer yellow so it stands out among them. It is the
+            // selection, but only where the text still matches: output can
+            // overwrite it.
             let point = Point::new(line, Column(col));
-            let focused = focus.is_some_and(|m| m.contains(&point));
+            let focused = out & frame::flags::MATCH != 0
+                && focused_sel.is_some_and(|sel| sel.contains(point));
             if focused {
-                out |= frame::flags::MATCH;
                 b = self.palette.ansi[3];
                 f = self.palette.background;
             } else if out & frame::flags::MATCH != 0 {
@@ -811,6 +831,83 @@ mod tests {
         assert_eq!(row.bg[9], p.ansi[3], "the newest 9 is focused");
         assert_eq!(row.bg[8], mix(p.ansi[3], p.background, 0.45));
         assert_eq!(row.flags[8] & frame::flags::SELECTED, 0);
+    }
+
+    #[test]
+    fn search_reaches_every_match_in_a_long_history() {
+        let mut e = emu();
+        for i in 0..6_000 {
+            e.feed(format!("{i} x x\r\n").as_bytes());
+        }
+        e.feed(b"newest x");
+        e.search_set(Some("x"));
+        let hit = e.search_step(true).unwrap();
+        assert_eq!((hit.index, hit.total), (12_001, 12_001), "the newest first");
+        assert_eq!(hit.line, 3);
+        assert_eq!(e.search_step(true).unwrap().index, 12_000);
+        // Forwards past the newest wraps to the oldest still kept.
+        e.search_step(false).unwrap();
+        assert_eq!(e.search_step(false).unwrap().index, 1);
+    }
+
+    fn row(e: &mut Emulator, line: u16) -> RowUpdate {
+        e.invalidate();
+        e.frame()
+            .rows_changed
+            .into_iter()
+            .find(|r| r.line == line)
+            .unwrap()
+    }
+
+    #[test]
+    fn the_focused_match_follows_output() {
+        let p = Palette::promptly_dark();
+        let mut e = emu();
+        e.feed(b"a needle\r\nb");
+        e.search_set(Some("needle"));
+        assert_eq!(e.search_step(true).unwrap().line, 0);
+        assert_eq!(row(&mut e, 0).bg[2], p.ansi[3]);
+
+        // Output scrolls it up a row: the highlight moves with the text.
+        e.feed(b"\r\nc\r\nd\r\ne");
+        assert_eq!(
+            row(&mut e, 0).bg[2],
+            p.background,
+            "c, d and e are not matches"
+        );
+        e.scroll(1);
+        assert_eq!(row(&mut e, 0).bg[2], p.ansi[3]);
+        e.scroll(-1);
+
+        // Overwritten text is not drawn as a match any more.
+        let mut e = emu();
+        e.feed(b"a needle");
+        e.search_set(Some("needle"));
+        e.search_step(true).unwrap();
+        e.feed(b"\rabcdefgh");
+        let r = row(&mut e, 0);
+        assert!(r.flags.iter().all(|f| f & frame::flags::MATCH == 0));
+        assert_ne!(r.bg[2], p.ansi[3]);
+    }
+
+    #[test]
+    fn selecting_by_hand_drops_the_search_focus() {
+        let p = Palette::promptly_dark();
+        let mut e = emu();
+        e.feed(b"needle needle");
+        e.search_set(Some("needle"));
+        e.search_step(true).unwrap();
+        assert_eq!(row(&mut e, 0).bg[7], p.ansi[3]);
+        e.select_begin(0, 0, false, SelectKind::Simple);
+        e.select_update(12, 0, true);
+        let r = row(&mut e, 0);
+        assert_eq!(
+            r.bg[7], p.selection,
+            "a selection made by hand looks like one"
+        );
+        e.select_clear();
+        // Stepping again starts from the bottom of the screen.
+        assert_eq!(e.search_step(true).unwrap().index, 2);
     }
 
     #[test]
