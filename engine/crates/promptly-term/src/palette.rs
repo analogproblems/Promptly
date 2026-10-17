@@ -193,6 +193,14 @@ pub fn dim(c: Rgb) -> Rgb {
     (scale((c >> 16) & 0xFF) << 16) | (scale((c >> 8) & 0xFF) << 8) | scale(c & 0xFF)
 }
 
+/// `a` moved `t` of the way towards `b`.
+pub(crate) fn mix(a: Rgb, b: Rgb, t: f64) -> Rgb {
+    let m = |x: u32, y: u32| ((x as f64) * (1.0 - t) + (y as f64) * t).round() as u32;
+    m(a >> 16 & 0xFF, b >> 16 & 0xFF) << 16
+        | m(a >> 8 & 0xFF, b >> 8 & 0xFF) << 8
+        | m(a & 0xFF, b & 0xFF)
+}
+
 pub(crate) fn pack(c: alacritty_terminal::vte::ansi::Rgb) -> Rgb {
     rgb(c.r, c.g, c.b)
 }

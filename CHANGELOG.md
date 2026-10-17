@@ -4,6 +4,7 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 
 ## Unreleased
 
+- Search highlights the match it is on in solid yellow, with the other matches in a softer yellow, so the current one is easy to spot. Searching for text that repeats inside itself, such as "22" in "222", no longer shows "0 of 1" or a half-highlighted match.
 - Hosts have a *None* authentication option for servers that let you in without a password or key, such as Tailscale SSH. *Ask each time* now goes straight in on those servers too, instead of prompting.
 - The mouse works in full-screen programs that ask for it, such as vim with `mouse=a`, tmux and htop: clicks, drags and the wheel go to the program. Hold Shift to select text or scroll as before.
 - Sync no longer loses changes when a synced folder delivers files out of order, or when a device leaves the vault and joins again. Removing a device waits until all of its changes have arrived, and changing the vault passphrase can no longer leave the folder without its key file.

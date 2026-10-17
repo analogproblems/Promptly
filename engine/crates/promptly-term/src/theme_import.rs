@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::palette::{Palette, Rgb};
+use crate::palette::{mix, Palette, Rgb};
 
 /// Which kind of file this looks like, from its content and name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,13 +125,6 @@ fn luminance(c: Rgb) -> f64 {
         }
     };
     0.2126 * ch(c >> 16 & 0xFF) + 0.7152 * ch(c >> 8 & 0xFF) + 0.0722 * ch(c & 0xFF)
-}
-
-fn mix(a: Rgb, b: Rgb, t: f64) -> Rgb {
-    let m = |x: u32, y: u32| ((x as f64) * (1.0 - t) + (y as f64) * t).round() as u32;
-    m(a >> 16 & 0xFF, b >> 16 & 0xFF) << 16
-        | m(a >> 8 & 0xFF, b >> 8 & 0xFF) << 8
-        | m(a & 0xFF, b & 0xFF)
 }
 
 /// The colours every format must supply, assembled into a palette.

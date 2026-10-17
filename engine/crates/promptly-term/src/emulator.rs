@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Boundary, Column, Direction, Line, Point, Side};
+use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::search::{Match, RegexIter, RegexSearch};
@@ -13,7 +13,7 @@ use alacritty_terminal::vte::ansi::{self, Processor};
 use std::sync::LazyLock;
 
 use crate::frame::{self, CursorShape, CursorState, Frame, RowUpdate};
-use crate::palette::{dim, pack, unpack, Palette, Rgb};
+use crate::palette::{dim, mix, pack, unpack, Palette, Rgb};
 use crate::TermSize;
 
 /// Things the program running in the terminal asked for that the session or
@@ -151,36 +151,48 @@ impl Emulator {
     /// Move to the next match: up into history when `backward`, else down
     /// towards the newest output. Starts from the bottom of the viewport.
     /// The match becomes the selection and is scrolled into view.
+    ///
+    /// Steps through the same list of matches that is counted, so the
+    /// focus is always one of the highlighted matches. (Searching backwards
+    /// cell by cell can land on an overlapping match instead, such as the
+    /// second "22" inside "222".)
     pub fn search_step(&mut self, backward: bool) -> Option<SearchHit> {
+        let matches = self.matches();
         let search = self.search.as_mut()?;
-        let term = &self.term;
-        let (origin, direction, side) = match (&search.focus, backward) {
-            (Some(m), true) => (
-                m.start().sub(term, Boundary::None, 1),
-                Direction::Left,
-                Side::Right,
-            ),
-            (Some(m), false) => (
-                m.end().add(term, Boundary::None, 1),
-                Direction::Right,
-                Side::Left,
-            ),
-            (None, backward) => {
-                let display_offset = term.grid().display_offset() as i32;
-                let bottom = Line(term.screen_lines() as i32 - 1 - display_offset);
-                let top = Line(-display_offset);
+        if matches.is_empty() {
+            search.focus = None;
+            return None;
+        }
+        let at = match &search.focus {
+            Some(m) => *m.start(),
+            None => {
+                let display_offset = self.term.grid().display_offset() as i32;
                 if backward {
-                    (
-                        Point::new(bottom, term.last_column()),
-                        Direction::Left,
-                        Side::Right,
-                    )
+                    let bottom = Line(self.term.screen_lines() as i32 - 1 - display_offset);
+                    Point::new(bottom, self.term.last_column())
                 } else {
-                    (Point::new(top, Column(0)), Direction::Right, Side::Left)
+                    Point::new(Line(-display_offset), Column(0))
                 }
             }
         };
-        let found = term.search_next(&mut search.grid, origin, direction, side, None)?;
+        // Without a focus the match at `at` itself counts; with one, it is
+        // the match being left.
+        let include_at = search.focus.is_none();
+        let n = matches.len();
+        let i = if backward {
+            let before =
+                matches.partition_point(|m| *m.start() < at || (include_at && *m.start() == at));
+            before.checked_sub(1).unwrap_or(n - 1)
+        } else {
+            let after =
+                matches.partition_point(|m| *m.start() < at || (!include_at && *m.start() == at));
+            if after == n {
+                0
+            } else {
+                after
+            }
+        };
+        let found = matches[i].clone();
         search.focus = Some(found.clone());
 
         let mut selection = Selection::new(SelectionType::Simple, *found.start(), Side::Left);
@@ -200,33 +212,23 @@ impl Emulator {
         }
         self.force_full = true;
 
-        let (index, total) = self.match_position(&found);
         Some(SearchHit {
-            index,
-            total,
+            index: i as u32 + 1,
+            total: n as u32,
             line: line + offset,
         })
     }
 
-    /// Every match in the grid, oldest first, and where `focus` sits among
-    /// them.
-    fn match_position(&mut self, focus: &Match) -> (u32, u32) {
+    /// Every match in the grid, oldest first.
+    fn matches(&mut self) -> Vec<Match> {
         let Some(search) = self.search.as_mut() else {
-            return (0, 0);
+            return Vec::new();
         };
         let start = Point::new(self.term.topmost_line(), Column(0));
         let end = Point::new(self.term.bottommost_line(), self.term.last_column());
-        let mut index = 0;
-        let mut total = 0;
-        for m in RegexIter::new(start, end, Direction::Right, &self.term, &mut search.grid)
+        RegexIter::new(start, end, Direction::Right, &self.term, &mut search.grid)
             .take(MAX_MATCHES)
-        {
-            total += 1;
-            if m.start() == focus.start() {
-                index = total;
-            }
-        }
-        (index, total)
+            .collect()
     }
 
     // ---- Links -------------------------------------------------------------
@@ -457,6 +459,7 @@ impl Emulator {
         // Search matches and plain URLs are found on the row's text once.
         let (text, columns, wide) = row_text(grid, line);
         let mut marks = vec![0u16; cols];
+        let focus = self.search.as_ref().and_then(|s| s.focus.as_ref());
         if let Some(search) = &self.search {
             for m in search.row.find_iter(&text) {
                 mark(
@@ -546,16 +549,28 @@ impl Emulator {
             if cell.hyperlink().is_some() {
                 out |= frame::flags::LINK;
             }
-            if out & frame::flags::MATCH != 0 {
+            // The match the search bar is on is solid yellow; the others
+            // are a softer yellow so it stands out among them.
+            let point = Point::new(line, Column(col));
+            let focused = focus.is_some_and(|m| m.contains(&point));
+            if focused {
+                out |= frame::flags::MATCH;
                 b = self.palette.ansi[3];
                 f = self.palette.background;
+            } else if out & frame::flags::MATCH != 0 {
+                b = mix(self.palette.ansi[3], self.palette.background, 0.45);
+                f = self.palette.foreground;
             }
             if let Some(sel) = selection {
-                if sel.contains(Point::new(line, Column(col))) {
+                if sel.contains(point) {
                     out |= frame::flags::SELECTED;
-                    b = self.palette.selection;
-                    if out & frame::flags::MATCH != 0 {
-                        f = self.palette.foreground;
+                    // The focused match is also the selection (so Copy
+                    // works); it keeps its highlight.
+                    if !focused {
+                        b = self.palette.selection;
+                        if out & frame::flags::MATCH != 0 {
+                            f = self.palette.foreground;
+                        }
                     }
                 }
             }
@@ -715,7 +730,8 @@ mod tests {
             "matches ignore case"
         );
         assert_eq!(last.flags[4] & frame::flags::MATCH, 0);
-        assert_eq!(last.bg[5], Palette::promptly_dark().ansi[3]);
+        let p = Palette::promptly_dark();
+        assert_eq!(last.bg[5], mix(p.ansi[3], p.background, 0.45));
 
         // Up from the bottom: the newest match first, then older ones,
         // scrolling into history when needed.
@@ -748,6 +764,53 @@ mod tests {
             .iter()
             .all(|r| r.flags.iter().all(|f| f & frame::flags::MATCH == 0)));
         assert!(e.search_step(true).is_none());
+    }
+
+    #[test]
+    fn focused_match_is_one_of_the_counted_matches_and_stands_out() {
+        // Typing "22" with "10.99.1.222" on screen: stepping back from the
+        // bottom used to land on the overlapping second "22", which the
+        // counter did not know ("0 of 1") and which was drawn half as a
+        // match, half as a selection.
+        let mut e = Emulator::new(TermSize::new(30, 3), Palette::promptly_dark());
+        let p = Palette::promptly_dark();
+        e.feed(b"addr 10.99.1.222");
+        let _ = e.frame();
+
+        e.search_set(Some("22"));
+        let hit = e.search_step(true).unwrap();
+        assert_eq!((hit.index, hit.total), (1, 1));
+        assert_eq!(e.selection_text().as_deref(), Some("22"));
+        let f = e.frame();
+        let row = f.rows_changed.iter().find(|r| r.line == 0).unwrap();
+        // "addr 10.99.1." is 13 columns; the match is columns 13 and 14.
+        for col in [13, 14] {
+            assert_eq!(row.bg[col], p.ansi[3], "column {col} is the focused match");
+            assert_eq!(row.fg[col], p.background);
+            assert_ne!(row.flags[col] & frame::flags::SELECTED, 0, "still copyable");
+        }
+        assert_eq!(row.flags[15] & frame::flags::MATCH, 0);
+        assert_eq!(row.bg[15], p.background, "the last 2 is not part of it");
+
+        // Typing one more character keeps the focus drawn as the focus, not
+        // in the selection colour.
+        e.search_set(Some("222"));
+        let hit = e.search_step(true).unwrap();
+        assert_eq!((hit.index, hit.total), (1, 1));
+        let f = e.frame();
+        let row = f.rows_changed.iter().find(|r| r.line == 0).unwrap();
+        for col in 13..16 {
+            assert_eq!(row.bg[col], p.ansi[3]);
+        }
+
+        // Other matches are softer than the focused one.
+        e.search_set(Some("9"));
+        e.search_step(true).unwrap();
+        let f = e.frame();
+        let row = f.rows_changed.iter().find(|r| r.line == 0).unwrap();
+        assert_eq!(row.bg[9], p.ansi[3], "the newest 9 is focused");
+        assert_eq!(row.bg[8], mix(p.ansi[3], p.background, 0.45));
+        assert_eq!(row.flags[8] & frame::flags::SELECTED, 0);
     }
 
     #[test]
