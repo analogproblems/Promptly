@@ -13,6 +13,7 @@ use russh::client::{self, AuthResult, ChannelOpenHandle, KeyboardInteractiveAuth
 use russh::keys::{self, PrivateKeyWithHashAlg, PublicKey};
 use russh::{Channel, ChannelOpenFailure, MethodKind, MethodSet};
 use tokio::net::TcpStream;
+use zeroize::Zeroizing;
 
 use crate::endpoint::Endpoint;
 use crate::forward::{Connection, ForwardSpec};
@@ -21,7 +22,9 @@ use crate::transport::{SshReader, SshTransport};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-#[derive(Debug, Clone)]
+/// How to sign in. Passwords, keys and passphrases are wiped from memory
+/// when the value is dropped, and never appear in `Debug` output.
+#[derive(Clone)]
 pub enum AuthMethod {
     /// A stored password, or ask when `None`.
     Password { password: Option<String> },
@@ -36,6 +39,39 @@ pub enum AuthMethod {
     /// Whatever keys the running SSH agent holds (`SSH_AUTH_SOCK`), then
     /// the server's other methods with prompts.
     Agent,
+}
+
+impl std::fmt::Debug for AuthMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let stored = |s: &Option<String>| if s.is_some() { "stored" } else { "ask" };
+        match self {
+            AuthMethod::Password { password } => {
+                write!(f, "Password({})", stored(password))
+            }
+            AuthMethod::Key { passphrase, .. } => {
+                write!(f, "Key(passphrase {})", stored(passphrase))
+            }
+            AuthMethod::Interactive => f.write_str("Interactive"),
+            AuthMethod::Agent => f.write_str("Agent"),
+        }
+    }
+}
+
+impl Drop for AuthMethod {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        match self {
+            AuthMethod::Password { password } => password.zeroize(),
+            AuthMethod::Key {
+                private_key,
+                passphrase,
+            } => {
+                private_key.zeroize();
+                passphrase.zeroize();
+            }
+            AuthMethod::Interactive | AuthMethod::Agent => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -81,12 +117,59 @@ impl ConnectParams {
         }
     }
 
-    /// The command that attaches to (or starts) the tmux session Promptly
-    /// keeps on the server, falling back to a plain login shell where tmux
-    /// is not installed.
-    pub fn persistent_command() -> String {
-        "tmux new-session -A -s promptly 2>/dev/null || exec \"${SHELL:-/bin/sh}\" -l".to_string()
+    /// A host's startup command as it should be typed: line endings made
+    /// `\n`, other control characters (which a terminal would act on rather
+    /// than pass along) removed, and blank space trimmed. `None` when
+    /// nothing is left.
+    pub fn startup_text(raw: &str) -> Option<String> {
+        let text: String = raw
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .chars()
+            .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+            .collect();
+        let text = text.trim();
+        (!text.is_empty()).then(|| text.to_string())
     }
+
+    /// The command that attaches to (or starts) the tmux session `name` on
+    /// the server, falling back to a plain login shell where tmux is not
+    /// installed.
+    ///
+    /// `startup` is the host's startup command, which the caller also sends
+    /// as `startup_input`, both as [`Self::startup_text`] gives it, so the
+    /// lines the script reads are the lines the terminal passes on. Without
+    /// tmux it is left for the login shell to read, so it runs in the shell
+    /// the person goes on using, as on a plain connection. With tmux the script reads it first and throws it
+    /// away: tmux types it only into a session it has just created, so a
+    /// reconnect that reattaches never types it into whatever is running
+    /// there (an editor, say).
+    pub fn persistent_command(name: &str, startup: Option<&str>) -> String {
+        let q = shell_quote;
+        let target = q(&format!("={name}"));
+        let mut new_session = format!("exec tmux new-session -s {}", q(name));
+        let mut discard = String::new();
+        if let Some(cmd) = startup.and_then(Self::startup_text) {
+            new_session.push_str(&format!(
+                " \\; send-keys -l {} \\; send-keys Enter",
+                q(&cmd)
+            ));
+            discard = "IFS= read -r _; ".repeat(cmd.split('\n').count());
+        }
+        let script = format!(
+            "if tmux has-session -t {target} 2>/dev/null; then {discard}exec tmux attach-session -t {target}; fi\n\
+             if command -v tmux >/dev/null 2>&1; then {discard}{new_session}; fi\n\
+             exec \"${{SHELL:-/bin/sh}}\" -l"
+        );
+        // The server runs this with the user's own shell, which may be fish
+        // or csh; sh reads the script the same everywhere.
+        format!("sh -c {}", q(&script))
+    }
+}
+
+/// `s` as one word for a POSIX shell.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Progress shown inside the terminal area while connecting.
@@ -871,25 +954,26 @@ async fn load_key(
     passphrase: Option<&str>,
     prompter: &Arc<dyn Prompter>,
 ) -> Result<keys::PrivateKey, ConnectError> {
-    let mut passphrase = passphrase.map(str::to_string);
+    // Typed passphrases are wiped once the key is open or given up on.
+    let mut passphrase = passphrase.map(|p| Zeroizing::new(p.to_string()));
     for _ in 0..3 {
-        match keys::decode_secret_key(private_key, passphrase.as_deref()) {
+        match keys::decode_secret_key(private_key, passphrase.as_ref().map(|p| p.as_str())) {
             Ok(key) => return Ok(key),
             Err(keys::Error::KeyIsEncrypted) => {
-                passphrase = Some(
+                passphrase = Some(Zeroizing::new(
                     prompter
                         .ask_secret("Passphrase for the private key".into())
                         .await
                         .ok_or(ConnectError::Cancelled)?,
-                );
+                ));
             }
             Err(e) if passphrase.is_some() && is_wrong_passphrase(&e) => {
-                passphrase = Some(
+                passphrase = Some(Zeroizing::new(
                     prompter
                         .ask_secret("Wrong passphrase. Passphrase for the private key".into())
                         .await
                         .ok_or(ConnectError::Cancelled)?,
-                );
+                ));
             }
             Err(e) => return Err(ConnectError::BadKey(e.to_string())),
         }
@@ -1124,6 +1208,126 @@ mod tests {
         );
     }
 
+    /// Runs `persistent_command` in a real terminal, with `tmux` in PATH
+    /// a stand-in that says which branch ran and what it read next. Types
+    /// `typed` as the app would, and returns everything the terminal shows.
+    #[cfg(unix)]
+    fn run_persistent(tmux: Option<&str>, startup: &str, typed: &str) -> String {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+        use std::io::{Read, Write};
+
+        static RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = RUN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("promptly-tmux-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for tool in ["sh", "bash"] {
+            let found = ["/bin", "/usr/bin"]
+                .iter()
+                .map(|d| std::path::Path::new(d).join(tool))
+                .find(|p| p.exists())
+                .unwrap();
+            std::os::unix::fs::symlink(found, dir.join(tool)).unwrap();
+        }
+        if let Some(has_session) = tmux {
+            let stub = dir.join("tmux");
+            std::fs::write(
+                &stub,
+                format!(
+                    "#!/bin/sh\n\
+                     case \"$1\" in\n\
+                     has-session) exit {has_session} ;;\n\
+                     *) IFS= read -r line; echo \"$1 then read:$line\" ;;\n\
+                     esac\n"
+                ),
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let pty = native_pty_system()
+            .openpty(PtySize {
+                rows: 24,
+                cols: 200,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .unwrap();
+        let mut cmd = CommandBuilder::new(dir.join("sh"));
+        cmd.arg("-c");
+        cmd.arg(ConnectParams::persistent_command("it's", Some(startup)));
+        cmd.env_clear();
+        cmd.env("PATH", &dir);
+        cmd.env("HOME", &dir);
+        cmd.env("SHELL", dir.join("bash"));
+        cmd.env("TERM", "dumb");
+        let mut child = pty.slave.spawn_command(cmd).unwrap();
+        drop(pty.slave);
+        let mut reader = pty.master.try_clone_reader().unwrap();
+        let reading = std::thread::spawn(move || {
+            let mut out = Vec::new();
+            let mut buf = [0u8; 4096];
+            // A closed terminal reads as an error on Linux, not as the end.
+            while let Ok(n @ 1..) = reader.read(&mut buf) {
+                out.extend_from_slice(&buf[..n]);
+            }
+            String::from_utf8_lossy(&out).into_owned()
+        });
+        // What the app sends as `startup_input`.
+        let startup = ConnectParams::startup_text(startup).unwrap();
+        let mut writer = pty.master.take_writer().unwrap();
+        writer
+            .write_all(format!("{startup}\n{typed}").as_bytes())
+            .unwrap();
+        child.wait().unwrap();
+        drop(writer);
+        drop(pty.master);
+        let out = reading.join().unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        out
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn without_tmux_the_startup_runs_in_the_shell_the_person_keeps() {
+        // An alias only lives in the shell that defined it.
+        let out = run_persistent(
+            None,
+            "alias project='echo from-$((40+2))'",
+            "project\nexit\n",
+        );
+        assert!(out.contains("from-42"), "{out}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn tmux_never_gets_the_startup_typed_into_it() {
+        // Reattaching, and making a new session (which types the startup
+        // itself), both skip the copy the app typed.
+        let attach = run_persistent(Some("0"), "make dev", "next\n");
+        assert!(attach.contains("attach-session then read:next"), "{attach}");
+        let new = run_persistent(Some("1"), "make dev", "next\n");
+        assert!(new.contains("new-session then read:next"), "{new}");
+
+        // Several lines, with Windows and old Mac line endings, a blank line
+        // and a stray control character, are all read and dropped too.
+        let messy = "cd /srv\r\nmake dev\rgit status\n\n\u{4}echo done";
+        for (has_session, branch) in [("0", "attach-session"), ("1", "new-session")] {
+            let out = run_persistent(Some(has_session), messy, "next\n");
+            assert!(out.contains(&format!("{branch} then read:next")), "{out}");
+        }
+    }
+
+    #[test]
+    fn startup_text_types_what_the_terminal_passes_on() {
+        assert_eq!(
+            ConnectParams::startup_text("  cd /srv\r\nmake\rls\u{3}\tx \n").as_deref(),
+            Some("cd /srv\nmake\nls\tx")
+        );
+        assert_eq!(ConnectParams::startup_text(" \r\n\u{4} "), None);
+    }
+
     #[test]
     fn persistent_command_attaches_tmux() {
         let Some((endpoint, password)) = test_server() else {
@@ -1136,7 +1340,7 @@ mod tests {
             },
             TermSize::new(60, 8),
         );
-        params.command = Some(ConnectParams::persistent_command());
+        params.command = Some(ConnectParams::persistent_command("promptly-test", None));
         // tmux restores the screen when it ends, so the proof goes to a
         // file; the test server is this machine.
         let marker = std::env::temp_dir().join(format!("promptly-tmux-{}", std::process::id()));

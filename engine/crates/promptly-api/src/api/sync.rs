@@ -94,7 +94,9 @@ pub fn sync_default_device_name() -> String {
 }
 
 fn kdf() -> KdfParams {
-    if std::env::var_os("PROMPTLY_FAST_KDF").is_some() {
+    // Development builds only: a release app always stretches properly,
+    // whatever its environment says.
+    if cfg!(debug_assertions) && std::env::var_os("PROMPTLY_FAST_KDF").is_some() {
         KdfParams::fast_for_tests()
     } else {
         KdfParams::default()

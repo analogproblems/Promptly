@@ -41,6 +41,12 @@ impl Dek {
     }
 }
 
+impl Drop for Dek {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
 impl std::fmt::Debug for Dek {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Dek(…)")
