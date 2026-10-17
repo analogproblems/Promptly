@@ -4,6 +4,7 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 
 ## Unreleased
 
+- Pasting text with more than one line shows it first, with how many lines it has, and offers *Paste*, *Paste without final newline* and *Cancel*, since each line runs as a command. It can be turned off in Settings, Terminal. Pasted text also loses any control characters, so a copied snippet can no longer slip commands past a program's paste protection.
 - A new user guide covers installing Promptly and every feature, step by step, and **User guide** in Help now opens it.
 - Windows has an installer. It installs for you alone, with no administrator prompt, and adds Promptly to the Start menu and to Settings, Apps for uninstalling. The zip is still there for anyone who prefers it.
 - Promptly can tell you about new versions. Press *Check* on the About page, or turn on *Check for updates automatically* in Settings to have it look once a day (off by default). On Windows, when installed with the installer, *Update and restart* installs the new version and opens it again; elsewhere it opens the download page.

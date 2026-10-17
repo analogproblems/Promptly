@@ -24,6 +24,7 @@ class TerminalView extends StatefulWidget {
     this.onFind,
     this.onOpenLink,
     this.imeInput,
+    this.confirmPaste,
   });
 
   /// The view that last took focus, so the keyboard bar can show or hide
@@ -49,6 +50,10 @@ class TerminalView extends StatefulWidget {
   /// Take typed text from the platform's soft keyboard (the IME) as well
   /// as from hardware key events. On by default on phones and tablets.
   final bool? imeInput;
+
+  /// Look at clipboard text before it is pasted. Returns the text to paste,
+  /// or null to paste nothing. Without one, text is pasted as it is.
+  final Future<String?> Function(String text)? confirmPaste;
 
   @override
   State<TerminalView> createState() => _TerminalViewState();
@@ -365,7 +370,14 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
 
   Future<void> _pasteFromClipboard() async {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
-    final text = data?.text;
+    var text = data?.text;
+    if (text == null || text.isEmpty) return;
+    final confirm = widget.confirmPaste;
+    if (confirm != null) {
+      text = await confirm(text);
+      if (!mounted) return;
+      _focus.requestFocus();
+    }
     if (text != null && text.isNotEmpty) widget.controller.paste(text);
   }
 

@@ -350,6 +350,7 @@ With a mouse:
 - **Ctrl+Shift+C** copies the selection, and **Ctrl+Shift+V** pastes. On a Mac, Cmd+C and Cmd+V also work.
 - **Right-click** for a menu with **Copy** and **Paste**.
 - **Middle-click** pastes.
+- When what you paste has more than one line, Promptly shows it first with a line count, because each line runs as a command. Choose **Paste**, **Paste without final newline** (so the last line waits for you to press Enter) or **Cancel**. Turn this off with **Show text before pasting several lines** in Settings, Terminal.
 
 Typing clears the selection, as in other terminals.
 

@@ -11,6 +11,7 @@ import '../../core/theme/tokens.dart';
 import '../hosts/host_colors.dart';
 import '../settings/settings_providers.dart';
 import '../terminal/keyboard_bar.dart';
+import '../terminal/paste_guard.dart';
 import '../terminal/terminal_view.dart';
 import '../workspace/workspace.dart' show findRequestProvider;
 import 'connecting_view.dart';
@@ -295,6 +296,8 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                                   autofocus: widget.focused,
                                   onFind: _openSearch,
                                   onOpenLink: _openLink,
+                                  confirmPaste: (text) =>
+                                      confirmPaste(context, text, warn: ref.read(pasteWarningProvider)),
                                 ),
                                 if (entry.reconnecting)
                                   _ReconnectOverlay(

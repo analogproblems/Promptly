@@ -98,7 +98,12 @@ impl Session {
 
     /// Paste text the way the running program expects: wrapped in bracketed
     /// paste markers when it asked for them, with newlines as carriage returns.
+    ///
+    /// Control characters other than tab and newlines are dropped first, so
+    /// pasted text cannot end bracketed paste early (an embedded `ESC[201~`)
+    /// or press keys such as Ctrl+C on the user's behalf.
     pub fn paste(&self, text: &str) -> io::Result<()> {
+        let text = sanitize_paste(text);
         let bracketed = self.emulator.lock().unwrap().bracketed_paste();
         let mut t = self.transport.lock().unwrap();
         if bracketed {
@@ -315,10 +320,28 @@ pub fn pump(
         .expect("spawn session thread")
 }
 
+/// Text as it may be pasted: everything but C0 and C1 control characters
+/// (and DEL), keeping tab, line feed and carriage return.
+pub fn sanitize_paste(text: &str) -> String {
+    text.chars()
+        .filter(|&c| matches!(c, '\t' | '\n' | '\r') || !c.is_control())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn paste_cannot_escape_bracketed_mode_or_press_keys() {
+        assert_eq!(sanitize_paste("ls\x1b[201~rm -rf ~\n"), "ls[201~rm -rf ~\n");
+        assert_eq!(sanitize_paste("a\x03b\x7fc\u{9b}d"), "abcd");
+        assert_eq!(
+            sanitize_paste("tab\there\r\nnext ünïcode ✓"),
+            "tab\there\r\nnext ünïcode ✓"
+        );
+    }
 
     #[test]
     #[cfg(unix)]
