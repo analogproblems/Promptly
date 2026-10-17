@@ -10,7 +10,7 @@ import 'package:promptly/features/lock/app_lock.dart';
 import 'package:promptly/features/lock/lock_gate.dart';
 import 'package:promptly/features/sessions/connect_flow.dart';
 
-import 'widget_test.dart' show FakeEngine, appWith, hostJson, scrollTap;
+import 'widget_test.dart' show FakeEngine, appWith, hostJson, scrollTap, tapVisible;
 
 class FakeAuthenticator implements Authenticator {
   FakeAuthenticator({this.system = true, this.answer = true});
@@ -22,8 +22,14 @@ class FakeAuthenticator implements Authenticator {
   /// When set, the system check is only known once this completes.
   Completer<bool>? probe;
 
+  /// When true, asking whether there is a system check fails.
+  bool fails = false;
+
   @override
-  Future<bool> systemAvailable() async => probe != null ? probe!.future : system;
+  Future<bool> systemAvailable() async {
+    if (fails) throw StateError('could not tell');
+    return probe != null ? probe!.future : system;
+  }
 
   @override
   Future<bool> systemCheck(String reason) async {
@@ -271,5 +277,71 @@ void main() {
     await scrollTap(tester, find.byKey(const Key('key-unlock')));
     await tester.pumpAndSettle();
     expect(engine.settings['key_unlock'], 'false');
+  });
+
+  testWidgets('keys stay locked when Promptly cannot tell whether there is a system check', (tester) async {
+    final engine = FakeEngine();
+    final auth = FakeAuthenticator()..fails = true;
+    await tester.pumpWidget(appWith(engine, authenticator: auth));
+    await tester.pumpAndSettle();
+    final lock = ProviderScope.containerOf(tester.element(find.byType(LockGate))).read(appLockProvider.notifier);
+
+    final flow = ConnectFlow(engine: engine, request: _request(key: 'KEY'), unlock: lock.unlockKeys);
+    await flow.start();
+    expect(engine.requests, isEmpty, reason: 'the key never reached the engine');
+    expect(flow.error, contains('stays locked'));
+
+    // Once the check can be found, it is asked: nothing was taken as passed.
+    auth
+      ..fails = false
+      ..answer = false;
+    expect(await lock.unlockKeys(), isFalse);
+    expect(auth.asked, ['Unlock your SSH key']);
+    auth.answer = true;
+    expect(await lock.unlockKeys(), isTrue);
+  });
+
+  testWidgets('on a device with no check and no passcode, keys are used as before', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(appWith(engine, authenticator: FakeAuthenticator(system: false)));
+    await tester.pumpAndSettle();
+    final lock = ProviderScope.containerOf(tester.element(find.byType(LockGate))).read(appLockProvider.notifier);
+    expect(await lock.unlockKeys(), isTrue);
+  });
+
+  testWidgets("setting sync up asks before a jump host's key is used, and stops when refused", (tester) async {
+    final engine = FakeEngine();
+    engine.records['identities'] = {
+      'k1': '{"id":"k1","label":"laptop","key_type":"ed25519","public_key":"ssh-ed25519 AAAA","private_key_secret_id":"s1"}',
+    };
+    engine.secrets['s1'] = '-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----';
+    engine.records['hosts'] = {
+      'h1': hostJson(
+        'h1',
+        'web-1',
+        auth: '{"kind":"password","password_secret_id":"0192f3a0-0000-7000-8000-000000000002"}',
+      ).replaceFirst('"jump_host_id":null', '"jump_host_id":"b1"'),
+      'b1': hostJson('b1', 'bastion', auth: '{"kind":"identity","identity_id":"k1"}'),
+    };
+    final auth = FakeAuthenticator(answer: false);
+    await tester.pumpWidget(appWith(engine, authenticator: auth));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.text('Set up'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sync-option-sftp')));
+    await tapVisible(tester, find.byKey(const Key('sync-continue')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sync-host')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('web-1').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('sync-remote')), 'vaults/promptly');
+    await tapVisible(tester, find.byKey(const Key('sync-server-continue')));
+    await tester.pumpAndSettle();
+    expect(auth.asked, ['Unlock your SSH key']);
+    expect(engine.syncCalls, isEmpty, reason: 'no sync connection started');
+    expect(find.textContaining('stays locked'), findsOneWidget);
   });
 }

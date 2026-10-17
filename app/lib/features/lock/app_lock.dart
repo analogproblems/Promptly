@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,7 +12,8 @@ import '../../src/rust/api/lock.dart' as rust_lock;
 /// Who-is-there checks: the system's own (fingerprint, face, device PIN,
 /// Windows Hello) where it has one, otherwise a passcode Promptly keeps.
 abstract class Authenticator {
-  /// Whether the system can check who is there on this device.
+  /// Whether the system can check who is there on this device. Throws
+  /// when it cannot tell, which is not the same as no.
   Future<bool> systemAvailable();
 
   /// Ask the system. True when the person passed.
@@ -28,12 +30,9 @@ class PlatformAuthenticator implements Authenticator {
 
   @override
   Future<bool> systemAvailable() async {
-    try {
-      return await _auth.isDeviceSupported();
-    } catch (_) {
-      // Linux, or a platform the plugin does not cover.
-      return false;
-    }
+    // Linux has no check apps can use; it gets the app passcode instead.
+    if (Platform.isLinux) return false;
+    return _auth.isDeviceSupported();
   }
 
   @override
@@ -113,7 +112,7 @@ class LockState {
   /// Waiting for the app passcode.
   final PasscodeRequest? passcodeRequest;
 
-  /// Null until known.
+  /// Null until known, and when asking failed.
   final bool? systemAvailable;
 
   LockState copyWith({
@@ -154,8 +153,18 @@ class AppLock extends Notifier<LockState> {
   }
 
   Future<void> _probe() async {
-    final available = await ref.read(authenticatorProvider).systemAvailable();
-    state = state.copyWith(systemAvailable: available);
+    bool? available;
+    try {
+      available = await ref.read(authenticatorProvider).systemAvailable();
+    } catch (_) {
+      // Could not tell: left unknown, so nothing takes it for "no check".
+    }
+    state = LockState(
+      settings: state.settings,
+      locked: state.locked,
+      passcodeRequest: state.passcodeRequest,
+      systemAvailable: available,
+    );
   }
 
   bool get _recent {
@@ -165,10 +174,12 @@ class AppLock extends Notifier<LockState> {
     return DateTime.now().difference(last) < Duration(minutes: minutes);
   }
 
-  /// Check who is there now. With nothing to check with (no system check,
-  /// no passcode) the answer is [whenNothingToAsk]: yes where there is
-  /// nothing to protect, such as a key on a device with no check, but no
-  /// for the app lock, which stays shut until a check can pass.
+  /// Check who is there now. On a device with nothing to check with (no
+  /// system check, no passcode) the answer is [whenNothingToAsk]: yes where
+  /// there is nothing to protect with, such as a key on Linux with no
+  /// passcode, but no for the app lock, which stays shut until a check can
+  /// pass. When Promptly could not even tell whether there is a system
+  /// check, the answer is no.
   Future<bool> check(String reason, {bool whenNothingToAsk = false}) async {
     if (_checking) return false;
     _checking = true;
@@ -185,7 +196,7 @@ class AppLock extends Notifier<LockState> {
         passed = await request.done.future;
         state = state.copyWith(clearRequest: true);
       } else {
-        passed = whenNothingToAsk;
+        passed = state.systemAvailable == false && whenNothingToAsk;
       }
       if (passed) _lastPassed = DateTime.now();
       return passed;

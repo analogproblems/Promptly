@@ -143,8 +143,9 @@ class _SetupWizardState extends ConsumerState<SetupWizard> {
     }
     // Setting sync up is the person's own use of the host's key, so it is
     // unlocked like any other; after that, sync uses it in the background.
-    final host = ref.read(hostsProvider).where((h) => h.id == hostId).firstOrNull;
-    final usesKey = host != null && Inherited(host, ref.read(groupsProvider)).auth.kind == AuthKind.identity;
+    final hosts = ref.read(hostsProvider);
+    final host = hosts.where((h) => h.id == hostId).firstOrNull;
+    final usesKey = host != null && reachingUsesKey(host, hosts, ref.read(groupsProvider));
     if (usesKey && !await ref.read(appLockProvider.notifier).unlockKeys()) {
       setState(() => _error = 'The host\'s SSH key stays locked, so Promptly did not connect.');
       return;
