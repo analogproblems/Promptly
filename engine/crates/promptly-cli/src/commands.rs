@@ -13,6 +13,11 @@ use serde_json::{json, Map, Value};
 /// the environment, or a prompt.
 pub trait Credentials {
     fn passphrase(&self) -> Option<&str>;
+    /// Unlock with a recovery code: [`Self::recovery_code`] when given,
+    /// otherwise asked for.
+    fn wants_recovery_code(&self) -> bool {
+        self.recovery_code().is_some()
+    }
     fn recovery_code(&self) -> Option<&str>;
 }
 
@@ -27,14 +32,23 @@ pub struct Unlocked {
 pub fn unlock(args: &(impl Credentials + HasFolder)) -> Result<Option<Unlocked>> {
     let backend = LocalFolder::new(args.folder());
     let manifest = Vault::read_manifest(&backend).map_err(|e| anyhow!("{e}"))?;
-    let dek = if let Some(code) = args.recovery_code() {
+    let dek = if args.wants_recovery_code() {
+        let typed;
+        let code = match args.recovery_code() {
+            Some(c) => c,
+            None if std::io::IsTerminal::is_terminal(&std::io::stdin()) => {
+                typed = zeroize::Zeroizing::new(rpassword::prompt_password("Recovery code: ")?);
+                typed.as_str()
+            }
+            None => return Ok(None),
+        };
         let code =
             RecoveryCode::parse(code).ok_or_else(|| anyhow!("that is not a recovery code"))?;
         manifest.unlock_with_recovery(&code)?
     } else if let Some(p) = args.passphrase() {
         manifest.unlock(p)?
     } else if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        let p = rpassword::prompt_password("Vault passphrase: ")?;
+        let p = zeroize::Zeroizing::new(rpassword::prompt_password("Vault passphrase: ")?);
         manifest.unlock(&p)?
     } else {
         return Ok(None);
@@ -460,6 +474,13 @@ pub fn change_passphrase(folder: &Path, unlocked: &Unlocked, new_passphrase: &st
         "the vault's manifest changed under us; try again"
     );
     manifest.change_passphrase(&unlocked.dek, new_passphrase);
+    // Key stretching takes a moment; look again right before writing, so
+    // a change made meanwhile on another device is not overwritten.
+    let current = Vault::read_manifest(&backend).map_err(|e| anyhow!("{e}"))?;
+    anyhow::ensure!(
+        current == unlocked.manifest,
+        "the vault's manifest changed under us; try again"
+    );
     // Write the new manifest beside the old one and rename it over, so the
     // folder always holds one whole manifest, old or new, whatever happens.
     let target = folder.join(promptly_vault::sync::MANIFEST_NAME);

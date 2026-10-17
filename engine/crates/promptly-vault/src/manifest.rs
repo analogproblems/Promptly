@@ -160,8 +160,8 @@ impl RecoveryCode {
         self.0.chars().take(4).collect()
     }
 
-    fn secret_bytes(&self) -> Vec<u8> {
-        self.0.replace('-', "").into_bytes()
+    fn secret_bytes(&self) -> zeroize::Zeroizing<Vec<u8>> {
+        zeroize::Zeroizing::new(self.0.replace('-', "").into_bytes())
     }
 }
 
@@ -171,7 +171,10 @@ impl std::fmt::Debug for RecoveryCode {
     }
 }
 
-fn derive(secret: &[u8], kdf: &Kdf) -> Result<[u8; 32], ManifestError> {
+/// The wrapping key; wiped when dropped.
+type WrapKey = zeroize::Zeroizing<[u8; 32]>;
+
+fn derive(secret: &[u8], kdf: &Kdf) -> Result<WrapKey, ManifestError> {
     if kdf.alg != "argon2id" {
         return Err(ManifestError::Invalid(format!("unknown kdf {}", kdf.alg)));
     }
@@ -180,9 +183,9 @@ fn derive(secret: &[u8], kdf: &Kdf) -> Result<[u8; 32], ManifestError> {
         .map_err(|e| ManifestError::Invalid(format!("salt: {e}")))?;
     let params = Params::new(kdf.memory_kib, kdf.iterations, kdf.parallelism, Some(32))
         .map_err(|e| ManifestError::Invalid(format!("kdf parameters: {e}")))?;
-    let mut out = [0u8; 32];
+    let mut out = zeroize::Zeroizing::new([0u8; 32]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-        .hash_password_into(secret, &salt, &mut out)
+        .hash_password_into(secret, &salt, out.as_mut())
         .map_err(|e| ManifestError::Invalid(format!("kdf: {e}")))?;
     Ok(out)
 }

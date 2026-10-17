@@ -739,7 +739,7 @@ These shortcuts work on Linux, Windows and macOS. Every other key combination go
 
 Promptly's vault format is open and documented, and the `promptly` command-line tool reads and writes the same vault. You can use it to back up your data, script changes, or move to another app at any time. It isn't included in the release downloads yet; it's built from the source code (see the [developer guide](DEVELOPMENT.md)).
 
-Every vault command takes the vault folder, and asks for the passphrase (or reads it from `--passphrase` or the `PROMPTLY_PASSPHRASE` environment variable). Use `--recovery-code` instead if you've forgotten the passphrase.
+Every vault command takes the vault folder, and asks for the passphrase, or reads it from the `PROMPTLY_PASSPHRASE` environment variable. Add `--recovery-code` to unlock with the recovery code instead if you've forgotten the passphrase; it's asked for, or read from `PROMPTLY_RECOVERY_CODE`. Neither can be typed on the command line itself, where other people on the same computer could see it in the list of running programs.
 
 | Command | What it does |
 |---|---|

@@ -25,12 +25,16 @@ struct Cli {
 struct VaultArgs {
     /// The vault folder.
     folder: std::path::PathBuf,
-    /// The vault passphrase. Otherwise PROMPTLY_PASSPHRASE, else a prompt.
-    #[arg(long, env = "PROMPTLY_PASSPHRASE", hide_env_values = true)]
-    passphrase: Option<String>,
-    /// A recovery code instead of the passphrase.
+    /// Unlock with the recovery code instead of the passphrase (asked for,
+    /// or read from PROMPTLY_RECOVERY_CODE).
     #[arg(long)]
-    recovery_code: Option<String>,
+    recovery_code: bool,
+    /// Read from PROMPTLY_PASSPHRASE, never from the command line, where
+    /// anyone on the machine could see it in the process list.
+    #[arg(skip = std::env::var("PROMPTLY_PASSPHRASE").ok())]
+    passphrase: Option<String>,
+    #[arg(skip = std::env::var("PROMPTLY_RECOVERY_CODE").ok())]
+    recovery_code_env: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -149,7 +153,10 @@ impl commands::Credentials for VaultArgs {
     fn passphrase(&self) -> Option<&str> {
         self.passphrase.as_deref()
     }
+    fn wants_recovery_code(&self) -> bool {
+        self.recovery_code || self.recovery_code_env.is_some()
+    }
     fn recovery_code(&self) -> Option<&str> {
-        self.recovery_code.as_deref()
+        self.recovery_code_env.as_deref()
     }
 }

@@ -200,6 +200,60 @@ pub fn ssh_connect_begin(request: SshConnectRequest) -> u32 {
     id
 }
 
+/// Who holds which tmux session name on which server: a connection attempt
+/// while it runs, then the terminal session it made. One name per open
+/// session, so two sessions to one host are two tmux sessions, not two
+/// views of the same one, and a reconnect goes back to its own.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TmuxHolder {
+    Attempt(u32),
+    Session(u32),
+}
+
+static TMUX_NAMES: Mutex<std::collections::BTreeMap<TmuxHolder, (String, String)>> =
+    Mutex::new(std::collections::BTreeMap::new());
+
+fn tmux_name_for(attempt_id: u32, server: &str, reattach: Option<u32>) -> String {
+    // Read before taking TMUX_NAMES: the connect task holds ATTEMPTS while
+    // it calls claim_tmux_name, so the locks must not nest the other way.
+    let live: std::collections::BTreeSet<u32> = ATTEMPTS.lock().unwrap().keys().copied().collect();
+    let mut names = TMUX_NAMES.lock().unwrap();
+    names.retain(|holder, _| match holder {
+        TmuxHolder::Attempt(a) => live.contains(a),
+        TmuxHolder::Session(s) => session_exists(*s),
+    });
+    let name = reattach
+        .and_then(|id| names.get(&TmuxHolder::Session(id)))
+        .filter(|(s, _)| s == server)
+        .map(|(_, n)| n.clone())
+        .unwrap_or_else(|| {
+            let used: std::collections::BTreeSet<&str> = names
+                .values()
+                .filter(|(s, _)| s == server)
+                .map(|(_, n)| n.as_str())
+                .collect();
+            (1..)
+                .map(|i| match i {
+                    1 => "promptly".to_string(),
+                    i => format!("promptly-{i}"),
+                })
+                .find(|n| !used.contains(n.as_str()))
+                .expect("an unused name")
+        });
+    names.insert(
+        TmuxHolder::Attempt(attempt_id),
+        (server.to_string(), name.clone()),
+    );
+    name
+}
+
+fn claim_tmux_name(attempt_id: u32, session_id: u32) {
+    let mut names = TMUX_NAMES.lock().unwrap();
+    if let Some(v) = names.remove(&TmuxHolder::Attempt(attempt_id)) {
+        names.insert(TmuxHolder::Session(session_id), v);
+    }
+}
+
 /// Subscribe to an attempt's events; this starts the connection.
 pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow::Result<()> {
     let attempt = attempt(attempt_id).map_err(anyhow::Error::msg)?;
@@ -214,7 +268,14 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
         port: request.port,
     };
     let size = TermSize::new(request.cols, request.rows);
-    let params = params_for(&request, endpoint.clone(), size);
+    let tmux = request.persistent.then(|| {
+        tmux_name_for(
+            attempt_id,
+            &endpoint.to_string(),
+            request.reattach_session_id,
+        )
+    });
+    let params = params_for(&request, endpoint.clone(), size, tmux.as_deref());
     let label = request
         .label
         .clone()
@@ -257,6 +318,7 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
                     }
                 };
                 remember_connection(session_id, connection);
+                claim_tmux_name(attempt_id, session_id);
                 let mut e = SshEvent::blank(SshEventKind::Connected);
                 e.session_id = Some(session_id);
                 attempt.emit(e);
@@ -314,7 +376,12 @@ fn forward_spec(f: &SshForward) -> ForwardSpec {
 }
 
 /// The engine's connection parameters for a request, jump chain included.
-fn params_for(request: &SshConnectRequest, endpoint: Endpoint, size: TermSize) -> ConnectParams {
+fn params_for(
+    request: &SshConnectRequest,
+    endpoint: Endpoint,
+    size: TermSize,
+    tmux_session: Option<&str>,
+) -> ConnectParams {
     let keepalive = std::time::Duration::from_secs(u64::from(request.keepalive_seconds));
     let mut jump: Option<Box<ConnectParams>> = None;
     for hop in &request.jumps {
@@ -344,15 +411,19 @@ fn params_for(request: &SshConnectRequest, endpoint: Endpoint, size: TermSize) -
         params.keepalive = keepalive;
     }
     params.jump = jump;
-    if request.persistent {
-        params.command = Some(ConnectParams::persistent_command());
-    }
-    params.startup_input = request
+    let startup = request
         .startup_command
         .as_ref()
         .map(|c| c.trim())
-        .filter(|c| !c.is_empty())
-        .map(|c| format!("{c}\n"));
+        .filter(|c| !c.is_empty());
+    match tmux_session {
+        Some(name) => {
+            // tmux types the startup command itself, and only into a session
+            // it has just made.
+            params.command = Some(ConnectParams::persistent_command(name, startup));
+        }
+        None => params.startup_input = startup.map(|c| format!("{c}\n")),
+    }
     params.env = request
         .env
         .iter()
@@ -389,7 +460,7 @@ pub fn ssh_exec(
         .label
         .clone()
         .unwrap_or_else(|| endpoint.to_string());
-    let params = params_for(&request, endpoint, TermSize::default());
+    let params = params_for(&request, endpoint, TermSize::default(), None);
     let known_hosts = Arc::new(crate::sync_engine::VaultKnownHosts::new());
     let prompter: Arc<dyn Prompter> = Arc::new(QuietPrompter);
     let timeout = std::time::Duration::from_secs(u64::from(timeout_seconds.max(1)));

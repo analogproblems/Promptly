@@ -12,6 +12,7 @@ name = "promptly"
 path = "src/main.rs"
 
 [dependencies]
+zeroize = { workspace = true }
 anyhow = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
 promptly-vault = { workspace = true }

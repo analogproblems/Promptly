@@ -21,7 +21,7 @@ impl KeyKind {
 }
 
 /// A freshly generated key pair in OpenSSH text form.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Generated {
     pub kind: KeyKind,
     pub private_openssh: String,
@@ -29,8 +29,18 @@ pub struct Generated {
     pub fingerprint: String,
 }
 
+impl std::fmt::Debug for Generated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Generated")
+            .field("kind", &self.kind)
+            .field("public_openssh", &self.public_openssh)
+            .field("fingerprint", &self.fingerprint)
+            .finish_non_exhaustive()
+    }
+}
+
 /// What can be read from a private key without using it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Inspected {
     /// `ed25519`, `ecdsa` or `rsa`.
     pub kind: String,
@@ -46,6 +56,18 @@ pub struct Inspected {
     /// True when the text was not OpenSSH to begin with (PuTTY `.ppk`,
     /// PEM), so `private_openssh` is a conversion worth storing.
     pub converted: bool,
+}
+
+impl std::fmt::Debug for Inspected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inspected")
+            .field("kind", &self.kind)
+            .field("public_openssh", &self.public_openssh)
+            .field("fingerprint", &self.fingerprint)
+            .field("encrypted", &self.encrypted)
+            .field("converted", &self.converted)
+            .finish_non_exhaustive()
+    }
 }
 
 pub fn generate(kind: KeyKind, comment: &str) -> Result<Generated, String> {

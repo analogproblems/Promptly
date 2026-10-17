@@ -21,7 +21,9 @@ use crate::transport::{SshReader, SshTransport};
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-#[derive(Debug, Clone)]
+/// How to sign in. Passwords, keys and passphrases are wiped from memory
+/// when the value is dropped, and never appear in `Debug` output.
+#[derive(Clone)]
 pub enum AuthMethod {
     /// A stored password, or ask when `None`.
     Password { password: Option<String> },
@@ -36,6 +38,39 @@ pub enum AuthMethod {
     /// Whatever keys the running SSH agent holds (`SSH_AUTH_SOCK`), then
     /// the server's other methods with prompts.
     Agent,
+}
+
+impl std::fmt::Debug for AuthMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let stored = |s: &Option<String>| if s.is_some() { "stored" } else { "ask" };
+        match self {
+            AuthMethod::Password { password } => {
+                write!(f, "Password({})", stored(password))
+            }
+            AuthMethod::Key { passphrase, .. } => {
+                write!(f, "Key(passphrase {})", stored(passphrase))
+            }
+            AuthMethod::Interactive => f.write_str("Interactive"),
+            AuthMethod::Agent => f.write_str("Agent"),
+        }
+    }
+}
+
+impl Drop for AuthMethod {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        match self {
+            AuthMethod::Password { password } => password.zeroize(),
+            AuthMethod::Key {
+                private_key,
+                passphrase,
+            } => {
+                private_key.zeroize();
+                passphrase.zeroize();
+            }
+            AuthMethod::Interactive | AuthMethod::Agent => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -81,12 +116,39 @@ impl ConnectParams {
         }
     }
 
-    /// The command that attaches to (or starts) the tmux session Promptly
-    /// keeps on the server, falling back to a plain login shell where tmux
-    /// is not installed.
-    pub fn persistent_command() -> String {
-        "tmux new-session -A -s promptly 2>/dev/null || exec \"${SHELL:-/bin/sh}\" -l".to_string()
+    /// The command that attaches to (or starts) the tmux session `name` on
+    /// the server, falling back to a plain login shell where tmux is not
+    /// installed.
+    ///
+    /// `startup` is typed into the session only when tmux creates it, so a
+    /// reconnect that reattaches never types it into whatever is running
+    /// there (an editor, say). Without tmux it runs before the shell.
+    pub fn persistent_command(name: &str, startup: Option<&str>) -> String {
+        let q = shell_quote;
+        let target = q(&format!("={name}"));
+        let mut new_session = format!("exec tmux new-session -s {}", q(name));
+        let mut fallback = String::new();
+        if let Some(cmd) = startup.map(str::trim).filter(|c| !c.is_empty()) {
+            new_session.push_str(&format!(
+                " \\; send-keys -l {} \\; send-keys Enter",
+                q(cmd)
+            ));
+            fallback = format!("{cmd}\n");
+        }
+        let script = format!(
+            "tmux has-session -t {target} 2>/dev/null && exec tmux attach-session -t {target}\n\
+             if command -v tmux >/dev/null 2>&1; then {new_session}; fi\n\
+             {fallback}exec \"${{SHELL:-/bin/sh}}\" -l"
+        );
+        // The server runs this with the user's own shell, which may be fish
+        // or csh; sh reads the script the same everywhere.
+        format!("sh -c {}", q(&script))
     }
+}
+
+/// `s` as one word for a POSIX shell.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Progress shown inside the terminal area while connecting.
@@ -1125,6 +1187,33 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn persistent_command_without_tmux_runs_startup_then_the_shell() {
+        // A PATH with sh but no tmux.
+        let dir = std::env::temp_dir().join(format!("promptly-notmux-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for tool in ["sh", "echo"] {
+            let found = ["/bin", "/usr/bin"]
+                .iter()
+                .map(|d| std::path::Path::new(d).join(tool))
+                .find(|p| p.exists())
+                .unwrap();
+            std::os::unix::fs::symlink(found, dir.join(tool)).unwrap();
+        }
+        let cmd = ConnectParams::persistent_command("it's", Some("echo 'started' $((40+2))"));
+        let out = std::process::Command::new(dir.join("sh"))
+            .arg("-c")
+            .arg(&cmd)
+            .env("PATH", &dir)
+            .env("SHELL", dir.join("echo"))
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "started 42\n-l\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn persistent_command_attaches_tmux() {
         let Some((endpoint, password)) = test_server() else {
             return;
@@ -1136,7 +1225,7 @@ mod tests {
             },
             TermSize::new(60, 8),
         );
-        params.command = Some(ConnectParams::persistent_command());
+        params.command = Some(ConnectParams::persistent_command("promptly-test", None));
         // tmux restores the screen when it ends, so the proof goes to a
         // file; the test server is this machine.
         let marker = std::env::temp_dir().join(format!("promptly-tmux-{}", std::process::id()));
