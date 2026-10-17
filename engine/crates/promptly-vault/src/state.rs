@@ -209,7 +209,10 @@ impl State {
         })
     }
 
-    /// The whole state as a snapshot written by `device` at `seq`.
+    /// The whole state as a snapshot written by `device` at `seq`. Fields a
+    /// deletion hides are left out: no reader could ever see them again,
+    /// so a deleted password or a record kept on one device does not
+    /// linger in the vault. The tombstone itself stays.
     pub fn to_snapshot(&self, device: DeviceId, seq: u64, clock: u64) -> Snapshot {
         Snapshot {
             format: FORMAT,
@@ -226,6 +229,7 @@ impl State {
                     fields: r
                         .fields
                         .iter()
+                        .filter(|(_, f)| r.deleted.as_ref().is_none_or(|d| f.ts > *d))
                         .map(|(k, f)| (k.clone(), (f.value.clone(), f.ts.clone())))
                         .collect(),
                 })
@@ -403,7 +407,17 @@ mod tests {
         assert!(json.contains(r#""fields":{"label":["web",[1,""#), "{json}");
         let back: Snapshot = serde_json::from_str(&json).unwrap();
         let b = State::from_snapshot(&back);
-        assert_eq!(a, b);
+        // The same records show, and the deleted one is only a tombstone.
+        assert_eq!(b.list(Collection::Hosts), a.list(Collection::Hosts));
+        assert_eq!(b.list(Collection::Hosts).len(), 1);
+        let g = b.record(Collection::Hosts, "g").unwrap();
+        assert_eq!(g.deleted, Some(Timestamp(3, dev('a'))));
+        assert!(g.fields.is_empty(), "hidden fields are not carried");
+        assert!(!json.contains("prod"), "{json}");
+        // A field set after the deletion brings the record back, and travels.
+        a.apply(&put("g", 4, 'a', json!({"label": "back"})));
+        let again = State::from_snapshot(&a.to_snapshot(dev('a'), 2, 4));
+        assert_eq!(again.list(Collection::Hosts), a.list(Collection::Hosts));
         // Applying it again on top of a state that moved on changes nothing old.
         let mut c = b.clone();
         c.apply(&put("h", 9, 'b', json!({"label": "newer"})));

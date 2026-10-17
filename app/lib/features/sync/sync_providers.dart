@@ -123,6 +123,7 @@ String syncSummary(SyncStatus? s) {
       SyncAttention.passphraseChanged => 'Sync paused: type the new passphrase',
       SyncAttention.vaultMissing => 'Sync paused: the vault folder is missing',
       SyncAttention.differentVault => 'Sync paused: a different vault is in the folder',
+      SyncAttention.removed => 'Sync stopped: this device was removed',
     };
   }
   if (s.lastError != null) return 'Sync problem: ${s.lastError}';

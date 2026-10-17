@@ -15,7 +15,9 @@ pub fn new_id() -> RecordId {
     Uuid::now_v7()
 }
 
-/// Whether a record travels in the vault or stays on this device.
+/// Whether a record travels in the vault or stays on this device. Hosts
+/// and keys carry it; a saved password or private key follows the host or
+/// key that uses it. See [`crate::policy`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncPolicy {
@@ -310,6 +312,24 @@ pub struct Device {
     pub last_seen_at: Option<OffsetDateTime>,
     #[serde(default)]
     pub app_version: String,
+    /// Set by another device when this one is removed. Only other devices
+    /// may set it: what a device writes about its own removal is ignored.
+    #[serde(
+        default,
+        with = "time::serde::rfc3339::option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub removed_at: Option<OffsetDateTime>,
+    /// With `removed_at`: the last of its files the remover had read. Its
+    /// files numbered above this are ignored by every device.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_after: Option<u64>,
+}
+
+impl Device {
+    pub fn is_removed(&self) -> bool {
+        self.removed_after.is_some()
+    }
 }
 
 #[cfg(test)]

@@ -30,6 +30,11 @@ impl DeviceId {
         &self.0
     }
 
+    /// The device whose record id is `id`: the inverse of [`Self::as_uuid`].
+    pub fn from_uuid(id: &uuid::Uuid) -> Self {
+        Self(id.as_bytes().iter().map(|b| format!("{b:02x}")).collect())
+    }
+
     /// The same 16 bytes as a UUID, for the device's own record id.
     pub fn as_uuid(&self) -> uuid::Uuid {
         let mut bytes = [0u8; 16];
@@ -117,6 +122,8 @@ mod tests {
         assert!(DeviceId::parse(&"G".repeat(32)).is_none());
         assert!(DeviceId::parse(&"a".repeat(32)).is_some());
         assert!(DeviceId::parse(DeviceId::generate().as_str()).is_some());
+        let d = DeviceId::generate();
+        assert_eq!(DeviceId::from_uuid(&d.as_uuid()), d, "record id and back");
     }
 
     #[test]

@@ -172,6 +172,7 @@ class Host {
     bool? persistentSession,
     bool? agentForwarding,
     List<PortForward>? portForwards,
+    String? sync,
   }) =>
       Host(
         id: id,
@@ -194,9 +195,9 @@ class Host {
         portForwards: portForwards ?? this.portForwards,
         lastConnectedAt: lastConnectedAt == _unset ? this.lastConnectedAt : lastConnectedAt as DateTime?,
         favourite: favourite ?? this.favourite,
+        sync: sync ?? this.sync,
         production: production ?? this.production,
         productionLabel: productionLabel ?? this.productionLabel,
-        sync: sync,
       );
 
   Map<String, dynamic> toJson() => {
@@ -305,6 +306,19 @@ class Identity {
   final String? privateKeySecretId;
   final String? passphraseSecretId;
   final String sync;
+
+  /// Kept on this device only: never synced, and gone from the vault.
+  bool get localOnly => sync == 'local_only';
+
+  Identity copyWith({String? sync}) => Identity(
+        id: id,
+        label: label,
+        keyType: keyType,
+        publicKey: publicKey,
+        privateKeySecretId: privateKeySecretId,
+        passphraseSecretId: passphraseSecretId,
+        sync: sync ?? this.sync,
+      );
 
   Map<String, dynamic> toJson() => {
         'id': id,

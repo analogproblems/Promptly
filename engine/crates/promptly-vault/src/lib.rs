@@ -9,6 +9,7 @@
 //! - [`ops`] and [`state`]: operations, the merge rules and snapshots.
 //! - [`crypto`] and [`manifest`]: the file envelope and the key hierarchy.
 //! - [`backend`]: the four calls a storage needs, and the local folder.
+//! - [`policy`]: what stays on this device, and which devices are cut off.
 //! - [`sync`]: pull, push and compaction over any backend.
 
 pub mod backend;
@@ -17,6 +18,7 @@ pub mod crypto;
 pub mod manifest;
 pub mod model;
 pub mod ops;
+pub mod policy;
 pub mod state;
 pub mod sync;
 
@@ -25,5 +27,6 @@ pub use clock::{Clock, DeviceId, Timestamp};
 pub use crypto::Dek;
 pub use manifest::{KdfParams, Manifest, RecoveryCode};
 pub use ops::{Op, Segment};
+pub use policy::{Kept, KeptPlan};
 pub use state::{Snapshot, State};
 pub use sync::{Marker, PullReport, SyncError, SyncState, Vault};

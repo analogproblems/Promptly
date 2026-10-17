@@ -219,7 +219,14 @@ abstract class Engine {
   /// Set the vault up again in its place after its folder was deleted.
   Future<rust_sync.SyncSetupResult> syncRecreateVault(String passphrase);
   void syncDisconnect();
+
+  /// Mark another device removed: what it writes from now on is ignored.
   Future<void> syncRemoveDevice(String deviceRecordId);
+
+  /// Give the vault a new key, locked with [passphrase] and a new recovery
+  /// code (returned, to show once). Devices with only the old key, removed
+  /// ones included, can read nothing written from now on.
+  Future<rust_sync.SyncSetupResult> syncRotateKey(String passphrase);
   String? syncQrPayload();
 }
 
@@ -552,6 +559,9 @@ class RustEngine implements Engine {
 
   @override
   Future<void> syncRemoveDevice(String deviceRecordId) => rust_sync.syncRemoveDevice(deviceRecordId: deviceRecordId);
+
+  @override
+  Future<rust_sync.SyncSetupResult> syncRotateKey(String passphrase) => rust_sync.syncRotateKey(passphrase: passphrase);
 
   @override
   String? syncQrPayload() => rust_sync.syncQrPayload();

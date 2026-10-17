@@ -490,7 +490,13 @@ class FakeEngine implements Engine {
   }
 
   @override
-  void recordPut(String collection, String id, String json) => (records[collection] ??= {})[id] = json;
+  void recordPut(String collection, String id, String json) {
+    writes.add('record $collection');
+    (records[collection] ??= {})[id] = json;
+  }
+
+  /// Records and secrets in the order they were saved.
+  final List<String> writes = [];
   @override
   bool recordDelete(String collection, String id) => (records[collection] ?? {}).remove(id) != null;
   @override
@@ -498,7 +504,10 @@ class FakeEngine implements Engine {
   @override
   void settingSet(String key, String json) => settings[key] = json;
   @override
-  void secretPut(String id, String kind, String value) => secrets[id] = value;
+  void secretPut(String id, String kind, String value) {
+    writes.add('secret');
+    secrets[id] = value;
+  }
   @override
   String? secretGet(String id) => secrets[id];
   @override
@@ -653,6 +662,9 @@ class FakeEngine implements Engine {
   /// Folders that already hold a vault, for the join path.
   final Set<String> foldersWithVaults = {};
 
+  /// Set up and synced, with this device and a phone.
+  void configured() => _configured('/shared/vault', 'test-box (Linux)');
+
   /// Set up, but stopped on a problem with the vault itself.
   void needsAttention(SyncAttention attention, String message) => _configured(
         '/shared/vault',
@@ -788,6 +800,11 @@ class FakeEngine implements Engine {
 
   @override
   Future<void> syncRemoveDevice(String deviceRecordId) async => syncCalls.add('remove $deviceRecordId');
+  @override
+  Future<SyncSetupResult> syncRotateKey(String passphrase) async {
+    syncCalls.add('rekey $passphrase');
+    return const SyncSetupResult(vaultId: 'vault-1', recoveryCode: 'REKE-YED0-0000-0000-0000-0000-0000-0002');
+  }
   @override
   String? syncQrPayload() => sync.configured ? '{"v":1}' : null;
 }
@@ -1300,7 +1317,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Sync paused: type the new passphrase'), findsOneWidget, reason: 'the hosts status line');
     await openSync(tester);
-    expect(find.text('The vault passphrase changed'), findsOneWidget);
+    expect(find.text('The vault passphrase or key changed'), findsOneWidget);
     expect(find.text('The vault\'s passphrase was changed on another device.'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('sync-unlock-passphrase')), 'old passphrase');
     await tapVisible(tester, find.byKey(const Key('sync-unlock')));
@@ -1362,6 +1379,158 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Write this down'), findsOneWidget);
     expect(find.text('NEWC-ODE0-0000-0000-0000-0000-0000-0001'), findsOneWidget);
+  });
+
+  testWidgets('removing a device asks whether to re-key too, and re-keying shows the new recovery code', (tester) async {
+    final engine = FakeEngine()..configured();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await openSync(tester);
+
+    // Remove on its own.
+    await tapVisible(tester, find.byTooltip('Remove device'));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove Phone?'), findsOneWidget);
+    expect(find.textContaining('lost or stolen'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('sync-remove-confirm')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['remove other']);
+
+    // Remove and re-key, changing your mind at the passphrase: nothing happens.
+    await tapVisible(tester, find.byTooltip('Remove device'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sync-remove-rekey')));
+    await tester.pumpAndSettle();
+    expect(find.text('Re-key the vault'), findsWidgets);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['remove other']);
+
+    // And through to the end.
+    await tapVisible(tester, find.byTooltip('Remove device'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sync-remove-rekey')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('sync-rekey-passphrase')), 'short');
+    await tester.enterText(find.byKey(const Key('sync-rekey-confirm')), 'short');
+    await tester.tap(find.byKey(const Key('sync-rekey-confirm-button')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('at least eight'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('sync-rekey-passphrase')), 'a brand new passphrase');
+    await tester.enterText(find.byKey(const Key('sync-rekey-confirm')), 'a brand new passphrase');
+    await tester.tap(find.byKey(const Key('sync-rekey-confirm-button')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['remove other', 'remove other', 'rekey a brand new passphrase']);
+    expect(find.text('Write this down'), findsOneWidget);
+    expect(find.text('REKE-YED0-0000-0000-0000-0000-0000-0002'), findsOneWidget);
+  });
+
+  testWidgets('the vault can be re-keyed on its own from the sync screen', (tester) async {
+    final engine = FakeEngine()..configured();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await openSync(tester);
+    await tapVisible(tester, find.byKey(const Key('sync-rekey')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('sync-rekey-passphrase')), 'a brand new passphrase');
+    await tester.enterText(find.byKey(const Key('sync-rekey-confirm')), 'a brand new passphrase');
+    await tester.tap(find.byKey(const Key('sync-rekey-confirm-button')));
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['rekey a brand new passphrase']);
+    expect(find.text('REKE-YED0-0000-0000-0000-0000-0000-0002'), findsOneWidget);
+  });
+
+  testWidgets('a device removed elsewhere says so plainly and can disconnect', (tester) async {
+    final engine = FakeEngine()
+      ..needsAttention(SyncAttention.removed, 'This device was removed from the vault on another device, so it no longer syncs.');
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.text('Sync stopped: this device was removed'), findsOneWidget, reason: 'the hosts status line');
+    await openSync(tester);
+    expect(find.text('This device was removed from the vault'), findsOneWidget);
+    expect(find.byKey(const Key('sync-unlock-passphrase')), findsNothing, reason: 'no passphrase helps here');
+    await scrollTo(tester, find.byKey(const Key('sync-rekey')));
+    final rekey = tester.widget<TextButton>(find.byKey(const Key('sync-rekey')));
+    expect(rekey.onPressed, isNull, reason: 'not while sync is stopped');
+    final disconnect = find.byKey(const Key('sync-removed-disconnect'));
+    await tester.scrollUntilVisible(disconnect, -150, scrollable: find.byType(Scrollable).first);
+    await tapVisible(tester, disconnect);
+    await tester.pumpAndSettle();
+    expect(engine.syncCalls, ['disconnect']);
+    expect(find.text('Where should Promptly keep your vault?'), findsOneWidget, reason: 'ready to join again');
+  });
+
+  testWidgets('a host kept on this device only is saved that way, before its password', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Add host'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('host-label')), 'nas');
+    await tester.enterText(find.byKey(const Key('host-hostname')), 'nas.local');
+    await tester.enterText(find.byKey(const Key('host-username')), 'admin');
+    await tester.tap(find.text('Password'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('host-password')), 'hunter2');
+    await scrollTap(tester, find.text('Remember the password on this device'));
+    await tester.pumpAndSettle();
+    final local = find.byKey(const Key('host-local-only'));
+    expect(tester.widget<SwitchListTile>(local).value, isFalse, reason: 'hosts sync by default');
+    await scrollTap(tester, local);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-save')));
+    await tester.pumpAndSettle();
+    expect(engine.records['hosts']!.values.single, contains('"sync":"local_only"'));
+    expect(engine.secrets.values.single, 'hunter2');
+    expect(engine.writes, ['record hosts', 'secret'], reason: 'the host says where its password may go first');
+
+    // Editing it again shows the switch on; turning it off lets it sync.
+    await tester.tap(find.byTooltip('Host actions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await scrollTo(tester, local);
+    expect(tester.widget<SwitchListTile>(local).value, isTrue);
+    await scrollTap(tester, local);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-save')));
+    await tester.pumpAndSettle();
+    expect(engine.records['hosts']!.values.single, contains('"sync":"vault"'));
+    expect(engine.secrets.values.single, 'hunter2', reason: 'nothing is lost switching');
+  });
+
+  testWidgets('a key can be kept on this device only, and switched either way later', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Keys').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('keys-generate')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('key-label')), 'yubi-ish');
+    expect(tester.widget<SwitchListTile>(find.byKey(const Key('key-local-only'))).value, isFalse,
+        reason: 'keys go in the vault by default');
+    await tester.tap(find.byKey(const Key('key-local-only')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('key-generate-ok')));
+    await tester.pumpAndSettle();
+    String json() => engine.records['identities']!.values.single;
+    expect(json(), contains('"sync":"local_only"'));
+    expect(engine.writes, ['record identities', 'secret'], reason: 'the key says where it may go first');
+    expect(find.textContaining('this device only'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Key actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Sync with the vault'));
+    await tester.pumpAndSettle();
+    expect(json(), contains('"sync":"vault"'));
+    expect(engine.secrets.length, 1, reason: 'nothing is deleted');
+    await tester.tap(find.byTooltip('Key actions'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Keep on this device only'));
+    await tester.pumpAndSettle();
+    expect(json(), contains('"sync":"local_only"'));
+    expect(engine.secrets.length, 1);
   });
 
   testWidgets('a vault from a newer Promptly says to update and points at the update check', (tester) async {

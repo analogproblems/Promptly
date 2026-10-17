@@ -126,6 +126,15 @@ Two devices editing the same host at the same time: field by field, the later lo
 
 Record-level conflicts that matter to the user (both devices renamed the same host while offline) are rare enough that no conflict UI is planned. The last edit wins, and the `at` timestamps make it visible in a future history view.
 
+### Records kept on one device
+
+A host or key whose `sync` is `local_only` stays on the device that has it, and so do hardware keys, the secrets these refer to (a host's saved password, a key's private half) and any secret marked `local_only` itself. The device works out this set before every sync and keeps it, with a tombstone timestamp for each record: the record's newest `ts` when it was first kept.
+
+- Its operations on these records are never pushed. Its snapshots carry only a tombstone for each, at that timestamp, so a record that was in the vault before disappears from the other devices, and nothing of what is in it now leaves the device.
+- Whatever other devices write about these records is not applied here. The local copy is the only one that counts.
+- A snapshot goes out as soon as a record joins the set, carrying its tombstone.
+- When a record leaves the set (the user switched it back to sync), the device deletes it and writes it again in full straight away. Every field is then newer than the tombstone, so the whole record arrives on the other devices.
+
 ## 8. Snapshots
 
 A snapshot is the full merged state as the writing device knew it:
@@ -144,7 +153,7 @@ A snapshot is the full merged state as the writing device knew it:
 }
 ```
 
-Every field keeps its `ts` and tombstones are kept, so a snapshot is simply a pre-merged bag of operations. Readers apply it with the same rules as segments.
+Every field keeps its `ts` and tombstones are kept, so a snapshot is simply a pre-merged bag of operations. Readers apply it with the same rules as segments. A field hidden by the record's deletion (set before it) is left out: it can never show again, and leaving it out means a deleted record's old values do not travel on in every snapshot.
 
 A device writes a snapshot when it has more than 20 segments or its segments total more than 256 KiB, and always after enrolling, so a new device immediately provides a complete copy. After writing `NNNNNN.snap` it deletes its own `.seg` files numbered at or below NNNNNN and any of its own older `.snap` files.
 
@@ -168,7 +177,10 @@ Each device stores locally, per other device, the snapshot it last applied, the 
 1. List `devices/`.
 2. For each device folder other than our own: list it, find the newest `.snap` (if any) and all `.seg` files numbered above the last one applied. If a snapshot is newer than what was applied, apply it first.
 3. Download, verify, decrypt and apply each segment not applied yet. Merging does not depend on order, so a segment that cannot be read (damaged, still being copied, or not arrived: a mirror can deliver files out of order) is skipped with a warning and the ones after it still apply. The marker only moves past numbers that have all been applied, so the skipped one is tried again next time; once it, or a snapshot covering it, is applied, the marker catches up.
-4. Listing is cheap and file reads happen only for new files, so a steady-state pull is one list call per device folder.
+4. Files from a removed device (section 11) numbered above its cut-off are not applied, and a snapshot of its numbered above the cut-off is not applied either. The cut-offs are worked out from everything read in this pull, before anything is applied, so a removal and the files written after it can arrive together. What a device writes about its own removal is ignored.
+5. Listing is cheap and file reads happen only for new files, so a steady-state pull is one list call per device folder.
+
+A device that finds its own record marked removed stops syncing at once, before it writes anything, and says so. Everything on it stays and keeps working.
 
 **Push**
 
@@ -191,8 +203,11 @@ trait Backend {
     async fn get(&self, path: &str) -> Result<Vec<u8>>;
     async fn put_new(&self, path: &str, bytes: &[u8]) -> Result<()>; // must not overwrite
     async fn delete(&self, path: &str) -> Result<()>;
+    async fn replace(&self, path: &str, bytes: &[u8]) -> Result<()>; // the manifest only
 }
 ```
+
+`replace` is used only for `vault.json`, when the passphrase changes or the vault gets a new `dek`. It writes the new file under a temporary name and renames it over the old one where it can, so the folder always holds one whole manifest. Before replacing, the writer reads the manifest again and gives up if it changed since this device last saw it.
 
 `put_new` is the only subtle one. Where the backend supports it, a conditional write is used (`If-None-Match: *` on S3 and WebDAV, a rename that refuses to replace on SFTP). On a filesystem the file is written under a temporary name and hard-linked into place, which fails if the name exists; where hard links are not supported it is created with `O_EXCL` instead, so an existing file is never replaced either way. Where a backend offers no condition at all, the per-device naming already guarantees there is no other writer, so a plain write is safe; the condition is belt and braces.
 
@@ -225,7 +240,19 @@ Two ways, both ending with the new device holding the `dek` and knowing where th
 
 On enrolment the new device writes a `devices` record (name, platform, enrolled time) and, once its first pull completes, a snapshot, so from then on it is as good a source of truth as any other.
 
-**Removing a device.** From any device, the user marks a device removed. This writes a `del` on its `devices` record. The removed device's folder is deleted by the next device to write a snapshot that already contains everything from it. If the removed device was stolen, the user should also rotate the vault: Promptly generates a new `dek`, rewrites all of this device's data as a fresh snapshot under the new key, writes a new manifest, and deletes the old files. Other legitimate devices see the manifest change and ask for the passphrase again.
+**Removing a device.** From any device, the user marks a device removed. This syncs first, then writes a `put` on its `devices` record with two fields: `removed_at` (wall-clock time, for display) and `removed_after`, the number of the last of its files the removing device had applied. From then on every device ignores its files numbered above that cut-off (section 9). Only other devices can set these fields; what a device writes about its own removal is ignored, so it cannot put itself back.
+
+Its folder is tidied up later, not at once: a device writing a snapshot deletes a removed device's folder when it has applied every one of that device's files up to the cut-off, because its snapshot then holds everything that counted. Files it could not read yet hold the folder back until they can be read.
+
+The removed device notices its record on its next sync and stops, telling the user. Its data stays on it. To sync it again, the user disconnects it and joins the vault again, and it joins as a new device, with a new folder and a new device id, kept from then on. Whatever it changed in the meantime goes in with it.
+
+**A new data key.** Removing a device does not take the `dek` away from it, and changing the passphrase does not either: the `dek` stays the same. For a lost or stolen device, the user also gives the vault a new key, from the remove dialog (*Remove and re-key*) or on its own. The device doing it:
+
+1. syncs, so it holds everything every device wrote;
+2. generates a new `dek`, wraps it under a passphrase the user picks now and a new recovery code, and replaces `vault.json` (giving up if the manifest changed since it last looked);
+3. keeps the new `dek` on the device, encrypts every secret again under it, and writes a snapshot under it, which also deletes its own files under the old key. If that write fails, the next sync writes it.
+
+From then on nothing written can be read with the old key, by a removed device or anyone else who has it. The other devices see the changed keys on their next sync and ask for the passphrase (the same prompt as after a passphrase change). It unwraps the new `dek`. They keep what they have already read, encrypt their secrets again, and write a snapshot under the new key, which replaces their old files. Files under the old key still waiting in another device's folder are reported as unreadable until that device catches up.
 
 ## 12. Sharing (teams)
 
@@ -233,13 +260,16 @@ A shared vault is just a second vault in a folder that several people can access
 
 ## 13. Export, import and the CLI
 
-`promptly-cli` reads a vault folder and a passphrase and can:
+`promptly-cli` reads a vault folder and a passphrase and can, as a device of its own (it keeps records marked `local_only` to itself and stops if another device removes it):
 
 - `inspect`: list devices, segment counts, clock values and warnings.
 - `export --json`: produce a single plaintext JSON document of the merged state, including secrets only if `--with-secrets` is passed, with a loud warning.
 - `import`: merge a JSON document in as new operations.
 - `sync`: run a pull and push against any backend from a script.
-- `rotate-passphrase` and `rotate-dek`: as described above.
+- `change-passphrase`: wrap the same `dek` under a new passphrase.
+- `rotate-dek`: give the vault a new `dek`, under a new passphrase and recovery code, as in section 11.
+- `devices list`: every device, with when it joined and was last seen, and whether it was removed. Folders with no record (older copies of the CLI, which keeps no record of its own) are listed too.
+- `devices remove <id or name>`, with `--rekey` to run `rotate-dek` straight after: mark a device removed, as in section 11.
 - `ssh-config`: emit an OpenSSH `config` file from the vault, so the same hosts work in a plain terminal.
 
 The JSON export format is the natural one: the data model from DESIGN.md section 6, one array per collection. It is also how Promptly imports from other apps.
@@ -256,6 +286,8 @@ The JSON export format is the natural one: the data model from DESIGN.md section
 | Backend credentials expire | Sync pauses with a notice; everything else works. |
 | Manifest rewritten by two devices at once (a passphrase change race) | The second writer notices the manifest changed under it, aborts, and asks the user to retry. |
 | Passphrase changed on another device | Every other device notices the rewrapped keys on its next sync, pauses, and asks for the new passphrase. The same `dek` comes out, so it carries on where it was. |
+| New `dek` made on another device | Every other device notices the changed keys and asks for the passphrase, as above. A different `dek` for the same vault comes out: the device keeps what it has read, encrypts its secrets again, and writes a snapshot under the new key. |
+| A removed device keeps writing | Its files above its cut-off are ignored by every device; once it syncs it sees it was removed and stops. If it still has the old `dek` it can read what was written before a new `dek` was made, never after. |
 | Passphrase forgotten | Recovery key. Failing that, the data is unrecoverable by design. The app says this at setup, twice. |
 | Vault folder deleted on the provider | Sync pauses and nothing is written, so the folder is not half recreated without its manifest. Every device still has the full state locally and offers to set the vault up again: a new manifest for the same `vault_id` and `dek`, wrapped under a passphrase the user picks, with a new recovery code, and a full snapshot beside it. The other devices then see changed keys and ask for that passphrase. |
 | Old app version meets a newer format | The manifest `format` number gates reading, on every sync; the app asks the user to update and keeps working locally. |

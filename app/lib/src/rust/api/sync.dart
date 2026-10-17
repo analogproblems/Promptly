@@ -116,12 +116,22 @@ Future<SyncSetupResult> syncRecreateVault({required String passphrase}) =>
 /// Forget the vault on this device. Everything stays usable locally.
 void syncDisconnect() => RustLib.instance.api.crateApiSyncSyncDisconnect();
 
-/// Remove another device: its record goes, a snapshot of ours is written
-/// so nothing of its is lost, and its folder is deleted.
+/// Remove another device. It is marked removed, so every device ignores
+/// what it writes from now on and it stops syncing once it finds out; its
+/// folder in the vault is tidied away later. It keeps the copy of the
+/// vault it has: re-key the vault too if it was lost or stolen.
 Future<void> syncRemoveDevice({required String deviceRecordId}) => RustLib
     .instance
     .api
     .crateApiSyncSyncRemoveDevice(deviceRecordId: deviceRecordId);
+
+/// Re-key the vault: a new key, locked with `passphrase` and a new
+/// recovery code (returned, shown once; the old code stops working).
+/// Removed devices, and anyone else with only the old key, can read
+/// nothing written from now on. The other devices ask for the passphrase
+/// once.
+Future<SyncSetupResult> syncRotateKey({required String passphrase}) =>
+    RustLib.instance.api.crateApiSyncSyncRotateKey(passphrase: passphrase);
 
 /// What a QR code for enrolling another device carries, as JSON, or
 /// `None` when sync is not set up. Whoever reads it can read the vault.
@@ -142,6 +152,10 @@ enum SyncAttention {
 
   /// The folder now holds another vault: join it, or disconnect.
   differentVault,
+
+  /// Another device removed this one, so nothing it writes counts:
+  /// disconnect, and join again to sync here once more.
+  removed,
 }
 
 enum SyncBackendKind { localFolder, sftp }

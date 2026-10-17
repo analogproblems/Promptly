@@ -66,6 +66,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
   String? _color;
   late bool _favourite;
   late bool _production;
+  late bool _localOnly;
   String? _error;
 
   bool get _isNew => widget.hostId == null;
@@ -103,6 +104,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     _groupId = _original.groupId;
     _color = _original.color;
     _favourite = _original.favourite;
+    _localOnly = _original.sync == 'local_only';
   }
 
   @override
@@ -157,6 +159,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     startupCommand: _startup.text.trim().isEmpty ? null : _startup.text.trim(),
     env: _parseEnv(_env.text),
     portForwards: [for (final f in _forwards) if (f.bindPort > 0) f],
+    sync: _localOnly ? 'local_only' : 'vault',
   );
 
   /// Connect with what the form says, without saving: the real steps, any
@@ -230,6 +233,9 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     HostAuth auth;
     // A password that is no longer remembered, forgotten once the host saves.
     String? retiredSecretId;
+    // A password to remember, saved after the host: the host says first
+    // whether it may leave this device.
+    (String, String)? newSecret;
     switch (_auth) {
       case _AuthChoice.key:
         if (_identityId == null) {
@@ -240,12 +246,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
       case _AuthChoice.password:
         final secretId = _original.auth.passwordSecretId ?? newRecordId();
         if (_rememberPassword && _password.text.isNotEmpty) {
-          try {
-            engine.secretPut(secretId, 'password', _password.text);
-          } catch (e) {
-            setState(() => _error = 'Could not save the password: $e');
-            return;
-          }
+          newSecret = (secretId, _password.text);
           auth = HostAuth(kind: AuthKind.password, passwordSecretId: secretId);
         } else if (_rememberPassword && _original.auth.passwordSecretId != null) {
           auth = HostAuth(kind: AuthKind.password, passwordSecretId: secretId);
@@ -262,11 +263,24 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     }
 
     final host = _formHost(auth);
+    final hosts = ref.read(hostsProvider.notifier);
     try {
-      ref.read(hostsProvider.notifier).save(host);
+      hosts.save(host);
     } catch (e) {
       setState(() => _error = e is String ? e : e.toString());
       return;
+    }
+    if (newSecret case (final id, final value)) {
+      try {
+        engine.secretPut(id, 'password', value);
+      } catch (e) {
+        // Saved without it, so the host never points at a password that is not there.
+        try {
+          hosts.save(host.copyWith(auth: _original.auth.kind == AuthKind.password ? _original.auth : const HostAuth(kind: AuthKind.password)));
+        } catch (_) {}
+        setState(() => _error = 'Could not save the password: $e');
+        return;
+      }
     }
     if (retiredSecretId != null) {
       try {
@@ -473,6 +487,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                     const SizedBox(height: 12),
                     if (_auth == _AuthChoice.password) ...[
                       TextFormField(
+                        key: const Key('host-password'),
                         controller: _password,
                         obscureText: true,
                         style: monoStyle(context, size: 14),
@@ -644,6 +659,16 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                           hintText: 'Production',
                         ),
                       ),
+                    SwitchListTile(
+                      key: const Key('host-local-only'),
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Keep on this device only'),
+                      subtitle: const Text(
+                        'It is not synced. It stays here, with its saved password, and is removed from the vault and your other devices.',
+                      ),
+                      value: _localOnly,
+                      onChanged: (v) => setState(() => _localOnly = v),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 16),

@@ -14,13 +14,15 @@ class KeysScreen extends ConsumerWidget {
   const KeysScreen({super.key});
 
   Future<void> _generate(BuildContext context, WidgetRef ref) async {
-    final result = await showDialog<({String label, SshKeyKind kind})>(
+    final result = await showDialog<({String label, SshKeyKind kind, bool localOnly})>(
       context: context,
       builder: (_) => const _GenerateDialog(),
     );
     if (result == null || !context.mounted) return;
     try {
-      ref.read(identitiesProvider.notifier).generate(label: result.label, kind: result.kind);
+      ref
+          .read(identitiesProvider.notifier)
+          .generate(label: result.label, kind: result.kind, localOnly: result.localOnly);
       notYet(context, 'Generated ${result.label}.');
     } catch (e) {
       notYet(context, 'Could not generate a key: $e');
@@ -53,6 +55,20 @@ class KeysScreen extends ConsumerWidget {
       ),
     );
     if (ok == true) ref.read(identitiesProvider.notifier).delete(identity.id);
+  }
+
+  void _setLocalOnly(BuildContext context, WidgetRef ref, Identity identity, bool localOnly) {
+    try {
+      ref.read(identitiesProvider.notifier).setLocalOnly(identity.id, localOnly);
+      notYet(
+        context,
+        localOnly
+            ? '${identity.label} stays on this device only. It is removed from the vault and your other devices.'
+            : '${identity.label} syncs with the vault again.',
+      );
+    } catch (e) {
+      notYet(context, 'Could not change it: $e');
+    }
   }
 
   @override
@@ -113,7 +129,7 @@ class KeysScreen extends ConsumerWidget {
                         leading: Icon(Icons.key_outlined, color: t.accent),
                         title: Text(id.label, style: monoStyle(context, size: 14, weight: FontWeight.w600)),
                         subtitle: Text(
-                          '${id.keyType.toUpperCase()} · $fingerprint',
+                          '${id.keyType.toUpperCase()}${id.localOnly ? ' · this device only' : ''} · $fingerprint',
                           style: monoStyle(context, size: 11, color: t.muted),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -125,13 +141,20 @@ class KeysScreen extends ConsumerWidget {
                               case 'copy':
                                 Clipboard.setData(ClipboardData(text: id.publicKey));
                                 notYet(context, 'Public key copied.');
+                              case 'local':
+                                _setLocalOnly(context, ref, id, !id.localOnly);
                               case 'delete':
                                 _delete(context, ref, id);
                             }
                           },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(value: 'copy', child: Text('Copy public key')),
-                            PopupMenuItem(value: 'delete', child: Text('Delete')),
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(value: 'copy', child: Text('Copy public key')),
+                            PopupMenuItem(
+                              key: const Key('key-toggle-local-only'),
+                              value: 'local',
+                              child: Text(id.localOnly ? 'Sync with the vault' : 'Keep on this device only'),
+                            ),
+                            const PopupMenuItem(value: 'delete', child: Text('Delete')),
                           ],
                         ),
                       ),
@@ -154,6 +177,7 @@ class _GenerateDialog extends StatefulWidget {
 class _GenerateDialogState extends State<_GenerateDialog> {
   final _label = TextEditingController(text: 'promptly');
   SshKeyKind _kind = SshKeyKind.ed25519;
+  bool _localOnly = false;
 
   @override
   void dispose() {
@@ -164,7 +188,7 @@ class _GenerateDialogState extends State<_GenerateDialog> {
   void _submit() {
     final label = _label.text.trim();
     if (label.isEmpty) return;
-    Navigator.pop(context, (label: label, kind: _kind));
+    Navigator.pop(context, (label: label, kind: _kind, localOnly: _localOnly));
   }
 
   @override
@@ -172,6 +196,7 @@ class _GenerateDialogState extends State<_GenerateDialog> {
     final t = context.tokens;
     return AlertDialog(
       title: const Text('Generate a key'),
+      scrollable: true,
       content: SizedBox(
         width: 380,
         child: Column(
@@ -216,6 +241,14 @@ class _GenerateDialogState extends State<_GenerateDialog> {
                 ],
               ),
             ),
+            SwitchListTile(
+              key: const Key('key-local-only'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Keep on this device only'),
+              subtitle: const Text('It is not synced. The private key stays here and never goes into the vault.'),
+              value: _localOnly,
+              onChanged: (v) => setState(() => _localOnly = v),
+            ),
           ],
         ),
       ),
@@ -238,6 +271,7 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
   final _label = TextEditingController();
   final _key = TextEditingController();
   final _passphrase = TextEditingController();
+  bool _localOnly = false;
   String? _error;
 
   @override
@@ -267,7 +301,12 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
     try {
       ref
           .read(identitiesProvider.notifier)
-          .import(label: label, privateKey: _key.text, passphrase: _passphrase.text.isEmpty ? null : _passphrase.text);
+          .import(
+            label: label,
+            privateKey: _key.text,
+            passphrase: _passphrase.text.isEmpty ? null : _passphrase.text,
+            localOnly: _localOnly,
+          );
       Navigator.pop(context);
     } catch (e) {
       setState(() => _error = e is String ? e : e.toString());
@@ -279,6 +318,7 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
     final t = context.tokens;
     return AlertDialog(
       title: const Text('Import a private key'),
+      scrollable: true,
       content: SizedBox(
         width: 480,
         child: Column(
@@ -316,6 +356,14 @@ class _ImportDialogState extends ConsumerState<_ImportDialog> {
               controller: _passphrase,
               obscureText: true,
               decoration: const InputDecoration(labelText: 'Passphrase, if the key has one'),
+            ),
+            SwitchListTile(
+              key: const Key('key-import-local-only'),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Keep on this device only'),
+              subtitle: const Text('It is not synced. The private key stays here and never goes into the vault.'),
+              value: _localOnly,
+              onChanged: (v) => setState(() => _localOnly = v),
             ),
             if (_error != null) ...[
               const SizedBox(height: 10),

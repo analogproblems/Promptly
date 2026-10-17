@@ -18,7 +18,8 @@ use promptly_term::TermSize;
 use promptly_vault::backend::LocalFolder;
 use promptly_vault::manifest::ManifestError;
 use promptly_vault::model::{Device, Host, KnownHost};
-use promptly_vault::{crypto, Backend, Dek, SyncError, Vault};
+use promptly_vault::policy::{self, Kept, KeptPlan};
+use promptly_vault::{crypto, Backend, Dek, DeviceId, Marker, SyncError, Vault};
 use serde::{Deserialize, Serialize};
 
 use crate::api::sync::{SyncAttention, SyncBackendKind, SyncDevice, SyncStatus};
@@ -27,6 +28,11 @@ use crate::frb_generated::StreamSink;
 pub const META_VAULT: &str = "vault";
 pub const META_SECRET_MARKERS: &str = "secret_markers";
 pub const META_KNOWN_HOST_MARKER: &str = "known_hosts_applied";
+/// The records kept on this device last time, with their tombstones.
+pub const META_KEPT: &str = "kept_on_device";
+/// The folder this device writes in the vault, once it is not the store's
+/// own id: a device removed from a vault joins it again as a new one.
+pub const META_DEVICE: &str = "vault_device";
 pub const DEK_SECRET_ID: &str = "vault-dek";
 
 /// Settle time after a local change before pushing.
@@ -183,6 +189,10 @@ pub struct VaultConfig {
     /// [`Manifest::keys_fingerprint`]: promptly_vault::Manifest::keys_fingerprint
     #[serde(default)]
     pub manifest_keys: Option<String>,
+    /// A full snapshot is still owed: the key was changed and the snapshot
+    /// under the new one could not be written yet.
+    #[serde(default)]
+    pub snapshot_due: bool,
 }
 
 impl VaultConfig {
@@ -273,7 +283,7 @@ fn manifest_failure(e: SyncError) -> Failure {
         ),
         SyncError::KeysChanged => (
             SyncAttention::PassphraseChanged,
-            "The vault's passphrase was changed on another device. Type the new one to keep syncing.",
+            "The vault's passphrase or key was changed on another device. Type the vault's passphrase to keep syncing.",
         ),
         SyncError::DifferentVault => (
             SyncAttention::DifferentVault,
@@ -285,6 +295,103 @@ fn manifest_failure(e: SyncError) -> Failure {
         message: message.into(),
         attention: Some(attention),
     }
+}
+
+/// Another device removed this one: nothing it writes counts any more.
+fn removed_failure() -> Failure {
+    Failure {
+        message: "This device was removed from the vault on another device, so it no longer syncs. Everything on it stays here and keeps working. To sync it again, disconnect it and join the vault again.".into(),
+        attention: Some(SyncAttention::Removed),
+    }
+}
+
+/// The folder this device writes in the vault: the store's own id, unless
+/// it was removed once and joined again as a new device.
+pub fn vault_device(store: &Store) -> DeviceId {
+    store
+        .meta_get(META_DEVICE)
+        .ok()
+        .flatten()
+        .and_then(|s| DeviceId::parse(&s))
+        .unwrap_or_else(|| store.device_id().clone())
+}
+
+/// Whether this device's record says another device removed it.
+fn is_removed(store: &Store, device: &DeviceId) -> bool {
+    store
+        .get(Collection::Devices, &device.as_uuid().to_string())
+        .ok()
+        .flatten()
+        .and_then(|r| serde_json::from_str::<Device>(&r.json).ok())
+        .is_some_and(|d| d.is_removed())
+}
+
+/// A vault handle writing as a new device, kept from now on, for a device
+/// that was removed and is joining again.
+fn as_new_device<'a>(store: &Store, vault: &Vault<'a>) -> Result<Vault<'a>, String> {
+    let device = DeviceId::generate();
+    store
+        .meta_set(META_DEVICE, device.as_str())
+        .map_err(|e| e.to_string())?;
+    Ok(vault.for_device(device))
+}
+
+fn saved_kept(store: &Store) -> Result<Kept, String> {
+    Ok(store
+        .meta_get(META_KEPT)
+        .map_err(|e| e.to_string())?
+        .map(|s| policy::kept_from_json(&s))
+        .unwrap_or_default())
+}
+
+fn save_kept(store: &Store, kept: &Kept) -> Result<(), String> {
+    store
+        .meta_set(META_KEPT, &policy::kept_to_json(kept))
+        .map_err(|e| e.to_string())
+}
+
+/// What a secret's bytes are: keys announce themselves.
+fn secret_kind(value: &[u8]) -> &'static str {
+    if value.starts_with(b"-----BEGIN") || value.starts_with(b"PuTTY-User-Key") {
+        "private_key"
+    } else {
+        "password"
+    }
+}
+
+/// Work out what stays on this device (see [`policy`]) and give the vault
+/// handle that. A record going back into the vault was tombstoned there,
+/// so it is written again in full, newer than the tombstone: deleted and
+/// put back at once, which changes nothing here.
+fn keep_on_device<'a>(
+    store: &Store,
+    dek: &Dek,
+    vault: Vault<'a>,
+) -> Result<(Vault<'a>, KeptPlan), String> {
+    let previous = saved_kept(store)?;
+    let plan = store.with_state(|state| policy::plan_kept(state, &previous));
+    for (col, id) in &plan.back {
+        match store.get(*col, id).map_err(|e| e.to_string())? {
+            Some(record) => {
+                store.delete(*col, id).map_err(|e| e.to_string())?;
+                store
+                    .put(*col, id, &record.json)
+                    .map_err(|e| e.to_string())?;
+                if *col == Collection::Secrets {
+                    mark_secret(store, id, store.newest_ts(*col, id).as_ref())?;
+                }
+            }
+            // A password kept here from the start has no record yet.
+            None if *col == Collection::Secrets => {
+                if let Some(value) = secrets().get(id).map_err(|e| e.to_string())? {
+                    put_secret_record(store, dek, id, secret_kind(&value), &value)?;
+                }
+            }
+            None => {}
+        }
+    }
+    let vault = vault.with_kept(plan.kept.clone());
+    Ok((vault, plan))
 }
 
 fn store() -> Result<Arc<Store>, String> {
@@ -419,68 +526,84 @@ pub fn location_for(config: &VaultConfig) -> String {
     }
 }
 
-fn device_record(store: &Store, name: &str) -> Device {
-    Device {
-        id: store.device_id().as_uuid(),
+fn put_device_record(store: &Store, device: &DeviceId, name: &str) -> Result<(), String> {
+    let record = Device {
+        id: device.as_uuid(),
         name: name.to_string(),
         platform: std::env::consts::OS.to_string(),
         enrolled_at: time::OffsetDateTime::now_utc(),
         last_seen_at: Some(time::OffsetDateTime::now_utc()),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
-    }
+        removed_at: None,
+        removed_after: None,
+    };
+    store
+        .put(
+            Collection::Devices,
+            &record.id.to_string(),
+            &serde_json::to_string(&record).expect("device serialises"),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Store the configuration and key after a successful create or join, and
-/// enrol this device: its record, every local secret, and a first sync.
+/// enrol this device: its record, every local secret that may travel, and
+/// a first sync. `keep_markers` is for the same vault under a new key:
+/// everything read before stays read.
 pub fn finish_setup(
     config: VaultConfig,
     dek: &Dek,
     vault: &Vault,
     first_snapshot: bool,
+    keep_markers: bool,
 ) -> Result<(), String> {
     let store = store()?;
     secrets()
         .put(DEK_SECRET_ID, B64.encode(dek.0).as_bytes())
         .map_err(|e| format!("could not keep the vault key: {e}"))?;
     save_config(&store, &config)?;
-    store.reset_sync_state().map_err(|e| e.to_string())?;
-    store
-        .meta_delete(META_SECRET_MARKERS)
-        .map_err(|e| e.to_string())?;
-
-    let device = device_record(&store, &config.device_name);
-    store
-        .put(
-            Collection::Devices,
-            &device.id.to_string(),
-            &serde_json::to_string(&device).expect("device serialises"),
-        )
-        .map_err(|e| e.to_string())?;
-    // Every secret this device already has travels in the vault.
+    if !keep_markers {
+        store.reset_sync_state().map_err(|e| e.to_string())?;
+    }
+    for key in [META_SECRET_MARKERS, META_KEPT] {
+        store.meta_delete(key).map_err(|e| e.to_string())?;
+    }
+    // Removed from this vault before: join as a new device, since nothing
+    // written in the old one's name counts any more.
+    let mut vault = vault.clone();
+    if is_removed(&store, vault.device()) {
+        vault = as_new_device(&store, &vault)?;
+    }
+    put_device_record(&store, vault.device(), &config.device_name)?;
+    // Every secret this device already has travels in the vault, except
+    // those of hosts and keys kept on this device.
+    let kept = store.with_state(policy::kept_on_device);
     for id in secrets().list().map_err(|e| e.to_string())? {
-        if id == DEK_SECRET_ID {
+        if id == DEK_SECRET_ID || kept.contains(&(Collection::Secrets, id.clone())) {
             continue;
         }
         if let Some(value) = secrets().get(&id).map_err(|e| e.to_string())? {
-            // The files do not record what they hold; keys announce themselves.
-            let kind = if value.starts_with(b"-----BEGIN") || value.starts_with(b"PuTTY-User-Key") {
-                "private_key"
-            } else {
-                "password"
-            };
-            put_secret_record(&store, dek, &id, kind, &value)?;
+            put_secret_record(&store, dek, &id, secret_kind(&value), &value)?;
         }
     }
     {
         let _guard = ENGINE.run.lock().unwrap();
-        let report = store.pull(vault).map_err(|e| e.to_string())?;
+        let (mut vault, plan) = keep_on_device(&store, dek, vault)?;
+        let report = store.pull(&vault).map_err(|e| e.to_string())?;
         ENGINE.status.lock().unwrap().changes += report.ops_applied as u32;
+        // The vault knew of the removal when this device did not.
+        if is_removed(&store, vault.device()) {
+            vault = as_new_device(&store, &vault)?;
+            put_device_record(&store, vault.device(), &config.device_name)?;
+        }
         apply_pulled_secrets(&store, dek)?;
         apply_pulled_known_hosts(&store)?;
-        store.push(vault).map_err(|e| e.to_string())?;
+        store.push(&vault).map_err(|e| e.to_string())?;
         store
-            .compact(vault, first_snapshot)
+            .compact(&vault, first_snapshot || plan.newly_kept)
             .map_err(|e| e.to_string())?;
+        save_kept(&store, &plan.kept)?;
     }
     {
         let mut st = ENGINE.status.lock().unwrap();
@@ -495,6 +618,8 @@ pub fn finish_setup(
 }
 
 /// Encrypt a secret under the vault key and store it as a `secrets` record.
+/// Whether it travels follows the host or key that uses it (see
+/// [`policy`]); a record marked local only itself stays so.
 pub fn put_secret_record(
     store: &Store,
     dek: &Dek,
@@ -504,11 +629,17 @@ pub fn put_secret_record(
 ) -> Result<(), String> {
     let aad = format!("secret/{id}");
     let ciphertext = crypto::seal(dek, aad.as_bytes(), value).map_err(|e| e.to_string())?;
+    let sync = store
+        .get(Collection::Secrets, id)
+        .map_err(|e| e.to_string())?
+        .and_then(|r| serde_json::from_str::<serde_json::Value>(&r.json).ok())
+        .and_then(|v| v.get("sync")?.as_str().map(str::to_string))
+        .unwrap_or_else(|| "vault".into());
     let record = serde_json::json!({
         "id": id,
         "kind": kind,
         "ciphertext": ciphertext,
-        "sync": "vault",
+        "sync": sync,
     });
     store
         .put(Collection::Secrets, id, &record.to_string())
@@ -623,10 +754,11 @@ fn apply_pulled_secrets(store: &Store, dek: &Dek) -> Result<(), String> {
 
 /// One full round: pull, secrets, push, compact. Returns the warnings.
 pub fn sync_once() -> Result<(), String> {
+    let _guard = ENGINE.run.lock().unwrap();
+    // Read after the lock: a key change that held it may have just saved a new one.
     let Some(config) = config()? else {
         return Err("sync is not set up".into());
     };
-    let _guard = ENGINE.run.lock().unwrap();
     {
         let mut st = ENGINE.status.lock().unwrap();
         st.syncing = true;
@@ -635,29 +767,42 @@ pub fn sync_once() -> Result<(), String> {
     emit();
     let result = (|| {
         let store = store()?;
+        let device = vault_device(&store);
+        // Removed on another device: this one's writes no longer count, so
+        // it does not go near the vault at all.
+        if is_removed(&store, &device) {
+            return Err(removed_failure());
+        }
         let dek = dek()?;
         let backend = backend_for(&config)?;
-        let vault = Vault::with_dek(
-            &*backend,
-            store.device_id().clone(),
-            config.vault_id.clone(),
-            dek.clone(),
-        );
+        let vault = Vault::with_dek(&*backend, device, config.vault_id.clone(), dek.clone());
         // The manifest first, every time: writing into a folder whose vault
         // is gone, newer, or locked differently now would only do harm.
         let keys = vault
             .check_manifest(config.manifest_keys.as_deref())
             .map_err(manifest_failure)?;
+        let mut config = config.clone();
         if config.manifest_keys.is_none() {
-            let mut config = config.clone();
             config.manifest_keys = Some(keys);
             save_config(&store, &config)?;
         }
+        let (vault, plan) = keep_on_device(&store, &dek, vault)?;
         let report = store.pull(&vault).map_err(|e| e.to_string())?;
+        if is_removed(&store, vault.device()) {
+            return Err(removed_failure());
+        }
         apply_pulled_secrets(&store, &dek)?;
         apply_pulled_known_hosts(&store)?;
         store.push(&vault).map_err(|e| e.to_string())?;
-        store.compact(&vault, false).map_err(|e| e.to_string())?;
+        // A snapshot now when records just left the vault (it carries their
+        // tombstones) or one is owed after a key change.
+        let force = plan.newly_kept || config.snapshot_due;
+        store.compact(&vault, force).map_err(|e| e.to_string())?;
+        save_kept(&store, &plan.kept)?;
+        if config.snapshot_due {
+            config.snapshot_due = false;
+            save_config(&store, &config)?;
+        }
         Ok::<(Vec<String>, usize), Failure>((report.warnings, report.ops_applied))
     })();
     let mut st = ENGINE.status.lock().unwrap();
@@ -712,17 +857,19 @@ fn current_vault<'a>(
 ) -> Result<Vault<'a>, String> {
     Ok(Vault::with_dek(
         backend,
-        store.device_id().clone(),
+        vault_device(store),
         config.vault_id.clone(),
         dek()?,
     ))
 }
 
-/// After the passphrase changed elsewhere, or the folder took a different
-/// vault: unlock what is there now with its passphrase or recovery code.
-/// Same vault and key: this device carries on where it was, and writes a
-/// full snapshot in case its folder was lost along the way. Otherwise this
-/// is joining afresh, as setup would.
+/// After the passphrase or key changed elsewhere, or the folder took a
+/// different vault: unlock what is there now with its passphrase or
+/// recovery code. Same vault and key: this device carries on where it was,
+/// and writes a full snapshot in case its folder was lost along the way.
+/// Same vault, new key: everything is encrypted again with the new key and
+/// a snapshot under it replaces this device's old files; what was read
+/// before stays read. Otherwise this is joining afresh, as setup would.
 pub fn unlock_again(
     passphrase: Option<String>,
     recovery_code: Option<String>,
@@ -732,7 +879,7 @@ pub fn unlock_again(
     };
     let store = store()?;
     let backend = backend_for(&config)?;
-    let device = store.device_id().clone();
+    let device = vault_device(&store);
     let manifest = Vault::read_manifest(&*backend).map_err(|e| e.to_string())?;
     let vault = match (passphrase, recovery_code) {
         (Some(p), _) => Vault::open(&*backend, device, &p).map_err(|e| e.to_string())?,
@@ -746,16 +893,19 @@ pub fn unlock_again(
     };
     config.manifest_keys = Some(manifest.keys_fingerprint());
     config.recovery_hint = manifest.recovery_hint().map(str::to_string);
-    let same = vault.vault_id() == config.vault_id && dek().ok().as_ref() == Some(vault.dek());
-    if !same {
+    let same_vault = vault.vault_id() == config.vault_id;
+    if !same_vault || dek().ok().as_ref() != Some(vault.dek()) {
         config.vault_id = vault.vault_id().to_string();
-        return finish_setup(config, vault.dek(), &vault, true);
+        return finish_setup(config, vault.dek(), &vault, true, same_vault);
     }
     save_config(&store, &config)?;
     {
         let _guard = ENGINE.run.lock().unwrap();
+        let dek = vault.dek().clone();
+        let (vault, plan) = keep_on_device(&store, &dek, vault)?;
         store.push(&vault).map_err(|e| e.to_string())?;
         store.compact(&vault, true).map_err(|e| e.to_string())?;
+        save_kept(&store, &plan.kept)?;
     }
     sync_now()
 }
@@ -773,6 +923,9 @@ pub fn recreate(passphrase: &str, params: promptly_vault::KdfParams) -> Result<S
     let vault = current_vault(&store, &config, &*backend)?;
     let (manifest, code) = {
         let _guard = ENGINE.run.lock().unwrap();
+        // What stays on this device is settled before the manifest is
+        // written, so nothing after that can stop the code being returned.
+        let (vault, plan) = keep_on_device(&store, &dek()?, vault)?;
         let (manifest, code) =
             vault
                 .recreate_manifest(passphrase, params)
@@ -786,8 +939,11 @@ pub fn recreate(passphrase: &str, params: promptly_vault::KdfParams) -> Result<S
         // the person: what follows is best effort. The snapshot that brings
         // the records back stays owed until it is written, so a failure
         // here is retried, and reported, by the next sync.
-        let _ = store.push(&vault);
+        let pushed = store.push(&vault).is_ok();
         let _ = store.compact(&vault, true);
+        if pushed {
+            let _ = save_kept(&store, &plan.kept);
+        }
         (manifest, code)
     };
     config.manifest_keys = Some(manifest.keys_fingerprint());
@@ -795,6 +951,148 @@ pub fn recreate(passphrase: &str, params: promptly_vault::KdfParams) -> Result<S
     let _ = save_config(&store, &config);
     let _ = sync_now();
     Ok(code.as_str().to_string())
+}
+
+/// Encrypt every saved secret again under `new`, from the record (opened
+/// with `old`) or, failing that, from the copy on this device.
+fn reseal_secrets(store: &Store, old: &Dek, new: &Dek) -> Result<(), String> {
+    for r in store.list(Collection::Secrets).map_err(|e| e.to_string())? {
+        let fields: serde_json::Value = serde_json::from_str(&r.json).map_err(|e| e.to_string())?;
+        let kind = fields
+            .get("kind")
+            .and_then(|k| k.as_str())
+            .unwrap_or("password")
+            .to_string();
+        let aad = format!("secret/{}", r.id);
+        let from_record = fields
+            .get("ciphertext")
+            .and_then(|v| serde_json::from_value::<Vec<u8>>(v.clone()).ok())
+            .and_then(|ct| crypto::open(old, aad.as_bytes(), &ct).ok());
+        let value = match from_record {
+            Some(v) => Some(v),
+            None => secrets().get(&r.id).map_err(|e| e.to_string())?,
+        };
+        match value {
+            Some(v) => put_secret_record(store, new, &r.id, &kind, &v)?,
+            None => ENGINE.status.lock().unwrap().warnings.push(format!(
+                "secret {}: could not be read to lock it again",
+                r.id
+            )),
+        }
+    }
+    Ok(())
+}
+
+/// Give the vault a new key (VAULT.md section 11), wrapped under
+/// `passphrase` and a new recovery code, which is returned to show once.
+/// Everything is synced first, the secrets are encrypted again, and a full
+/// snapshot under the new key replaces this device's files. A device that
+/// holds only the old key, a removed one included, reads nothing written
+/// from now on. The other devices ask for the passphrase once.
+const SAME_PASSPHRASE: &str = "Choose a passphrase the vault does not have now: whoever knows the current one could open the new key with it.";
+
+pub fn rotate_key(passphrase: &str, params: promptly_vault::KdfParams) -> Result<String, String> {
+    // Everything every device wrote, so the new snapshot leaves nothing out.
+    sync_once()?;
+    let Some(mut config) = config()? else {
+        return Err("sync is not set up".into());
+    };
+    let store = store()?;
+    let backend = backend_for(&config)?;
+    // The passphrase it has now would hand the new key to whoever knows it.
+    let current = Vault::read_manifest(&*backend).map_err(|e| e.to_string())?;
+    if current.unlock(passphrase).is_ok() {
+        return Err(SAME_PASSPHRASE.into());
+    }
+    let guard = ENGINE.run.lock().unwrap();
+    let old_dek = dek()?;
+    let (old, plan) = keep_on_device(&store, &old_dek, current_vault(&store, &config, &*backend)?)?;
+    let known = config
+        .manifest_keys
+        .clone()
+        .ok_or("Sync once before changing the key.")?;
+    let (vault, manifest, code) = old
+        .rotate(&known, passphrase, params)
+        .map_err(|e| match e {
+            SyncError::KeysChanged => "The vault's passphrase or key was changed on another device just now. Sync, then try again.".to_string(),
+            other => other.to_string(),
+        })?;
+    // The vault is locked with the new key from here on; keep it first.
+    secrets()
+        .put(DEK_SECRET_ID, B64.encode(vault.dek().0).as_bytes())
+        .map_err(|e| {
+            format!("The vault has a new key, but this device could not keep it ({e}). Type the passphrase on the Sync screen to unlock it again.")
+        })?;
+    config.manifest_keys = Some(manifest.keys_fingerprint());
+    config.recovery_hint = Some(code.hint());
+    config.snapshot_due = true;
+    save_config(&store, &config)?;
+    reseal_secrets(&store, &old_dek, vault.dek())?;
+    // Written now if the storage allows; otherwise the next sync does it.
+    let written = store
+        .push(&vault)
+        .and_then(|_| store.compact(&vault, true))
+        .map_err(|e| e.to_string());
+    match written {
+        Ok(_) => {
+            config.snapshot_due = false;
+            save_config(&store, &config)?;
+            save_kept(&store, &plan.kept)?;
+            let mut st = ENGINE.status.lock().unwrap();
+            st.last_sync_at = Some(promptly_vault::ops::now_rfc3339());
+            st.last_error = None;
+            st.attention = None;
+        }
+        Err(e) => ENGINE.status.lock().unwrap().last_error = Some(e),
+    }
+    drop(guard);
+    emit();
+    Ok(code.as_str().to_string())
+}
+
+/// Remove another device (VAULT.md section 11): its record is marked
+/// removed, with the last of its files this device has read. Every device
+/// then ignores whatever it writes after that, and it stops syncing once
+/// it finds out. Its folder is tidied away by a later snapshot that holds
+/// everything it had. It keeps the copy it has; [`rotate_key`] stops it
+/// reading anything new.
+pub fn remove_device(record_id: &str) -> Result<(), String> {
+    let store = store()?;
+    if config()?.is_none() {
+        return Err("sync is not set up".into());
+    }
+    if record_id == vault_device(&store).as_uuid().to_string() {
+        return Err("To remove this device, disconnect it instead.".into());
+    }
+    let folder = uuid::Uuid::parse_str(record_id)
+        .map(|u| DeviceId::from_uuid(&u))
+        .map_err(|_| "That is not one of the vault's devices.".to_string())?;
+    // Everything it has written so far first: that much still counts.
+    sync_once()?;
+    let record = store
+        .get(Collection::Devices, record_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("That device is no longer in the vault.")?;
+    let mut device: Device = serde_json::from_str(&record.json).map_err(|e| e.to_string())?;
+    let after = store
+        .sync_state()
+        .map_err(|e| e.to_string())?
+        .markers
+        .get(&folder)
+        .map_or(0, Marker::highest);
+    device.removed_at = Some(time::OffsetDateTime::now_utc());
+    device.removed_after = Some(after);
+    store
+        .put(
+            Collection::Devices,
+            record_id,
+            &serde_json::to_string(&device).expect("device serialises"),
+        )
+        .map_err(|e| e.to_string())?;
+    // Out at once, so the others stop listening to it soon. If it cannot
+    // go yet, the status says so and it goes with the next sync.
+    let _ = sync_once();
+    Ok(())
 }
 
 /// Called after any local change to a record or secret.
@@ -866,6 +1164,7 @@ pub fn disconnect() -> Result<(), String> {
     store
         .meta_delete(META_KNOWN_HOST_MARKER)
         .map_err(|e| e.to_string())?;
+    store.meta_delete(META_KEPT).map_err(|e| e.to_string())?;
     store.reset_sync_state().map_err(|e| e.to_string())?;
     secrets().delete(DEK_SECRET_ID).map_err(|e| e.to_string())?;
     forget_sftp();
@@ -894,12 +1193,13 @@ pub fn status() -> Result<SyncStatus, String> {
     let store = store()?;
     let config = config()?;
     let st = ENGINE.status.lock().unwrap().clone();
-    let this = store.device_id().as_uuid().to_string();
+    let this = vault_device(&store).as_uuid().to_string();
     let mut devices: Vec<SyncDevice> = store
         .list(Collection::Devices)
         .map_err(|e| e.to_string())?
         .into_iter()
         .filter_map(|r| serde_json::from_str::<Device>(&r.json).ok())
+        .filter(|d| !d.is_removed())
         .map(|d| SyncDevice {
             id: d.id.to_string(),
             name: d.name,
@@ -930,7 +1230,7 @@ pub fn status() -> Result<SyncStatus, String> {
                 .and_then(|b| {
                     let v = Vault::with_dek(
                         &*b,
-                        store.device_id().clone(),
+                        vault_device(&store),
                         c.vault_id.clone(),
                         Dek([0; 32]),
                     );
@@ -967,9 +1267,13 @@ pub fn status() -> Result<SyncStatus, String> {
 mod tests {
     use super::*;
     use crate::api::sync::{
-        sync_create_local_folder, sync_recreate_vault, sync_unlock, SyncAttention,
+        sync_create_local_folder, sync_join_local_folder, sync_recreate_vault, sync_unlock,
+        SyncAttention,
     };
-    use promptly_vault::{Clock, DeviceId, KdfParams, Manifest, RecoveryCode, State, SyncState};
+    use promptly_vault::{
+        Clock, DeviceId, KdfParams, Manifest, Marker, RecoveryCode, State, SyncState,
+    };
+    use serde_json::json;
 
     #[test]
     fn retries_back_off_from_ten_seconds_to_an_hour() {
@@ -995,7 +1299,8 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         let path = folder.to_string_lossy().into_owned();
         let setup =
-            sync_create_local_folder(path, "first passphrase".into(), "Test box".into()).unwrap();
+            sync_create_local_folder(path.clone(), "first passphrase".into(), "Test box".into())
+                .unwrap();
         let store = store().unwrap();
         let attention = || status().unwrap().attention;
         let failures = || *ENGINE.failures.lock().unwrap();
@@ -1051,16 +1356,18 @@ mod tests {
         let again = sync_recreate_vault("third passphrase".into()).unwrap();
         assert_eq!(again.vault_id, setup.vault_id, "the same vault");
         assert_eq!(attention(), None);
-        let fresh = |vault: &Vault| {
+        // What a brand new device reading the vault with `vault` gets.
+        let listed = |vault: &Vault, col: Collection| {
             let (mut sync, mut state) = (SyncState::default(), State::new());
             let mut clock = Clock::new(DeviceId::generate());
             vault.pull(&mut sync, &mut state, &mut clock).unwrap();
             state
-                .list(Collection::Snippets)
+                .list(col)
                 .into_iter()
                 .map(|(id, _)| id)
                 .collect::<Vec<_>>()
         };
+        let fresh = |vault: &Vault| listed(vault, Collection::Snippets);
         let code = RecoveryCode::parse(&again.recovery_code).unwrap();
         let joiner = Vault::open_with_recovery(&backend, DeviceId::generate(), &code).unwrap();
         assert_eq!(fresh(&joiner), ["s1", "s2"], "a new device gets everything");
@@ -1083,6 +1390,166 @@ mod tests {
         assert_ne!(config().unwrap().unwrap().vault_id, setup.vault_id);
         let other = Vault::open(&backend, DeviceId::generate(), "other passphrase").unwrap();
         assert_eq!(fresh(&other), ["s1", "s2"], "this device's records went in");
+
+        // A host kept on this device never reaches the vault. Switched to
+        // this device only, it leaves the vault but stays here; switched
+        // back, it is there again in full.
+        let host = |id: &str, sync: &str| {
+            let json = json!({"id": id, "label": id, "hostname": "h", "sync": sync});
+            store.put(Collection::Hosts, id, &json.to_string()).unwrap();
+        };
+        host("h1", "vault");
+        host("h2", "local_only");
+        sync_once().unwrap();
+        assert_eq!(listed(&other, Collection::Hosts), ["h1"]);
+        host("h1", "local_only");
+        sync_once().unwrap();
+        assert!(listed(&other, Collection::Hosts).is_empty());
+        assert!(store.get(Collection::Hosts, "h1").unwrap().is_some());
+        host("h1", "vault");
+        sync_once().unwrap();
+        assert_eq!(listed(&other, Collection::Hosts), ["h1"]);
+
+        // Another device, a phone, joins; then this one removes it. What
+        // it wrote before counts, nothing after does.
+        let vault_id = config().unwrap().unwrap().vault_id;
+        let other_device = |name: &str| {
+            let s = Store::open(&root.join(format!("{name}.db")), None).unwrap();
+            let id = s.device_id().as_uuid().to_string();
+            let record = json!({"id": id, "name": name, "platform": "ios",
+                "enrolled_at": "2026-01-01T00:00:00Z"});
+            s.put(Collection::Devices, &id, &record.to_string())
+                .unwrap();
+            s
+        };
+        let phone = other_device("phone");
+        let phone_vault = Vault::with_dek(
+            &backend,
+            phone.device_id().clone(),
+            vault_id.clone(),
+            dek().unwrap(),
+        );
+        let phone_id = phone.device_id().as_uuid().to_string();
+        let put_snippet = |s: &Store, id: &str| {
+            let json = json!({"id": id, "label": id, "command": "ls"});
+            s.put(Collection::Snippets, id, &json.to_string()).unwrap();
+        };
+        put_snippet(&phone, "p1");
+        phone.push(&phone_vault).unwrap();
+        sync_once().unwrap();
+        let listed_devices = || {
+            status()
+                .unwrap()
+                .devices
+                .into_iter()
+                .map(|d| d.id)
+                .collect::<Vec<_>>()
+        };
+        assert!(listed_devices().contains(&phone_id));
+        let me = vault_device(&store);
+        assert!(remove_device(&me.as_uuid().to_string()).is_err());
+        remove_device(&phone_id).unwrap();
+        assert!(!listed_devices().contains(&phone_id));
+        phone.pull(&phone_vault).unwrap();
+        put_snippet(&phone, "p2");
+        phone.push(&phone_vault).unwrap();
+        sync_once().unwrap();
+        assert!(store.get(Collection::Snippets, "p1").unwrap().is_some());
+        assert!(store.get(Collection::Snippets, "p2").unwrap().is_none());
+
+        // A laptop removes this device. It stops syncing and says why;
+        // everything stays here, and joining again makes it a new device.
+        let laptop = other_device("laptop");
+        let laptop_vault = Vault::with_dek(
+            &backend,
+            laptop.device_id().clone(),
+            vault_id.clone(),
+            dek().unwrap(),
+        );
+        laptop.pull(&laptop_vault).unwrap();
+        let my_id = me.as_uuid().to_string();
+        let mut record: serde_json::Value = serde_json::from_str(
+            &laptop
+                .get(Collection::Devices, &my_id)
+                .unwrap()
+                .unwrap()
+                .json,
+        )
+        .unwrap();
+        record["removed_at"] = json!("2026-02-01T00:00:00Z");
+        record["removed_after"] = json!(laptop
+            .sync_state()
+            .unwrap()
+            .markers
+            .get(&me)
+            .map_or(0, Marker::highest));
+        laptop
+            .put(Collection::Devices, &my_id, &record.to_string())
+            .unwrap();
+        laptop.push(&laptop_vault).unwrap();
+        snippet("s3");
+        assert!(sync_once().is_err());
+        assert_eq!(attention(), Some(SyncAttention::Removed));
+        assert!(sync_once().is_err(), "it stays stopped");
+        assert!(store.get(Collection::Snippets, "s3").unwrap().is_some());
+        disconnect().unwrap();
+        sync_join_local_folder(
+            path.clone(),
+            Some("other passphrase".into()),
+            None,
+            "Test box".into(),
+        )
+        .unwrap();
+        assert_ne!(vault_device(&store), me);
+        assert_eq!(attention(), None);
+        assert_eq!(fresh(&other), ["p1", "s1", "s2", "s3"]);
+
+        // This device gives the vault a new key: the old key and
+        // passphrase open nothing new; the new ones open everything.
+        let old_keys = config().unwrap().unwrap().manifest_keys.unwrap();
+        assert_eq!(
+            rotate_key("other passphrase", KdfParams::fast_for_tests()).unwrap_err(),
+            SAME_PASSPHRASE
+        );
+        let code = rotate_key("fourth passphrase", KdfParams::fast_for_tests()).unwrap();
+        assert_eq!(attention(), None);
+        assert!(Vault::open(&backend, DeviceId::generate(), "other passphrase").is_err());
+        assert!(matches!(
+            phone_vault.check_manifest(Some(&old_keys)),
+            Err(SyncError::KeysChanged)
+        ));
+        let rotated = Vault::open(&backend, DeviceId::generate(), "fourth passphrase").unwrap();
+        assert_ne!(rotated.dek(), other.dek());
+        assert_eq!(fresh(&rotated), ["p1", "s1", "s2", "s3"]);
+        let by_code = Vault::open_with_recovery(
+            &backend,
+            DeviceId::generate(),
+            &RecoveryCode::parse(&code).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(by_code.dek(), rotated.dek());
+        let mine = |dir: &DeviceId| backend.list(&format!("devices/{dir}")).unwrap();
+        let only_snapshots = |dir: &DeviceId| mine(dir).iter().all(|e| e.name.ends_with(".snap"));
+        assert!(only_snapshots(&vault_device(&store)));
+
+        // Then the laptop gives it another: this device asks for the
+        // passphrase, and with it carries on under the newest key.
+        let laptop_vault =
+            Vault::open(&backend, laptop.device_id().clone(), "fourth passphrase").unwrap();
+        laptop.pull(&laptop_vault).unwrap();
+        let known = laptop_vault.check_manifest(None).unwrap();
+        let (laptop_vault, _, _) = laptop_vault
+            .rotate(&known, "fifth passphrase", KdfParams::fast_for_tests())
+            .unwrap();
+        laptop.compact(&laptop_vault, true).unwrap();
+        snippet("s4");
+        assert!(sync_once().is_err());
+        assert_eq!(attention(), Some(SyncAttention::PassphraseChanged));
+        sync_unlock(Some("fifth passphrase".into()), None).unwrap();
+        assert_eq!(attention(), None);
+        assert_eq!(&dek().unwrap(), laptop_vault.dek());
+        assert!(only_snapshots(&vault_device(&store)));
+        assert_eq!(fresh(&laptop_vault), ["p1", "s1", "s2", "s3", "s4"]);
 
         let _ = std::fs::remove_dir_all(&root);
     }
