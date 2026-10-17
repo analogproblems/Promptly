@@ -1023,17 +1023,34 @@ struct PasswordFill<'a> {
     where_: &'a str,
 }
 
-/// One hidden question that does not ask for a code: the server's own
-/// password prompt ("Password:", "Passwort:", "user@host's password:").
+/// One hidden question that names a password: the server's own password
+/// prompt ("Password:", "Passwort:", "user@host's password:"). Anything
+/// else, such as "Response:" or "Enter PIN", goes to the person, since
+/// only the words say what a hidden question wants.
 fn asks_for_password(prompts: &[russh::client::Prompt]) -> bool {
     let [only] = prompts else {
         return false;
     };
     let prompt = only.prompt.to_lowercase();
-    let code_like = ["code", "token", "otp", "one-time", "verification", "pin:"]
+    let names_password = [
+        "password",
+        "passwort",
+        "passwd",
+        "mot de passe",
+        "contraseña",
+        "senha",
+        "wachtwoord",
+        "пароль",
+        "パスワード",
+        "密码",
+        "密碼",
+    ]
+    .iter()
+    .any(|w| prompt.contains(w));
+    let code_like = ["code", "token", "otp", "one-time", "verification"]
         .iter()
         .any(|w| prompt.contains(w));
-    !only.echo && !code_like
+    !only.echo && names_password && !code_like
 }
 
 async fn keyboard_interactive(
@@ -1741,6 +1758,10 @@ mod tests {
         /// Keyboard-interactive with two questions: "pw", then the code
         /// "123456".
         PamTwoQuestions,
+        /// Keyboard-interactive in two rounds: first a hidden "Response: "
+        /// whose meaning is only in the instructions, wanting "123456",
+        /// then "Password: " wanting "pw".
+        PamChallengeThenPassword,
     }
 
     /// A server on a loopback port that checks logins the given way.
@@ -1758,6 +1779,8 @@ mod tests {
 
         struct Server {
             mode: ServerAuth,
+            /// The challenge round was answered.
+            challenged: bool,
         }
         impl server::Handler for Server {
             type Error = russh::Error;
@@ -1765,7 +1788,9 @@ mod tests {
                 let methods: &[MethodKind] = match self.mode {
                     ServerAuth::Open => return Ok(Auth::Accept),
                     ServerAuth::Password => &[MethodKind::Password],
-                    ServerAuth::PamPassword | ServerAuth::PamTwoQuestions => {
+                    ServerAuth::PamPassword
+                    | ServerAuth::PamTwoQuestions
+                    | ServerAuth::PamChallengeThenPassword => {
                         &[MethodKind::PublicKey, MethodKind::KeyboardInteractive]
                     }
                 };
@@ -1787,6 +1812,26 @@ mod tests {
                 _submethods: &str,
                 response: Option<Response<'a>>,
             ) -> Result<Auth, Self::Error> {
+                if matches!(self.mode, ServerAuth::PamChallengeThenPassword) {
+                    let answers: Option<Vec<String>> = response.map(|r| {
+                        r.map(|b| String::from_utf8_lossy(&b).into_owned())
+                            .collect()
+                    });
+                    let ask = |instructions, prompt| Auth::Partial {
+                        name: Cow::Borrowed(""),
+                        instructions: Cow::Borrowed(instructions),
+                        prompts: Cow::Owned(vec![(Cow::Borrowed(prompt), false)]),
+                    };
+                    return Ok(match answers.as_deref() {
+                        None => ask("Enter the code shown on your token.", "Response: "),
+                        Some([code]) if code == "123456" => {
+                            self.challenged = true;
+                            ask("", "Password: ")
+                        }
+                        Some([pw]) if pw == "pw" && self.challenged => Auth::Accept,
+                        _ => Auth::reject(),
+                    });
+                }
                 let questions: &'static [(Cow<'static, str>, bool)] = match self.mode {
                     ServerAuth::PamPassword => &[(Cow::Borrowed("Password: "), false)],
                     ServerAuth::PamTwoQuestions => &[
@@ -1833,7 +1878,15 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         crate::runtime().spawn(async move {
             while let Ok((tcp, _)) = listener.accept().await {
-                if let Ok(session) = server::run_stream(config.clone(), tcp, Server { mode }).await
+                if let Ok(session) = server::run_stream(
+                    config.clone(),
+                    tcp,
+                    Server {
+                        mode,
+                        challenged: false,
+                    },
+                )
+                .await
                 {
                     tokio::spawn(session);
                 }
@@ -2044,6 +2097,30 @@ mod tests {
     }
 
     #[test]
+    fn a_hidden_challenge_that_is_not_a_password_goes_to_the_person() {
+        let port = auth_only_server(ServerAuth::PamChallengeThenPassword);
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let prompter = Arc::new(Answering {
+            asked: asked.clone(),
+            answers: vec!["123456".into()],
+        });
+        let saved = AuthMethod::Password {
+            password: Some("pw".into()),
+        };
+        let result = auth_with(port, saved, prompter);
+        assert!(result.is_ok(), "{:?}", result.err());
+        // The person sees the challenge with its instructions, and the
+        // saved password answers the password round that follows.
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec![
+                "Enter the code shown on your token.".to_string(),
+                "Response: ".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn a_rejected_login_says_which_methods_the_server_takes() {
         let port = auth_only_server(ServerAuth::PamPassword);
         let prompter = Arc::new(Answering {
@@ -2083,7 +2160,11 @@ mod tests {
         };
         assert!(asks_for_password(&[prompt("Password: ", false)]));
         assert!(asks_for_password(&[prompt("Passwort: ", false)]));
+        assert!(asks_for_password(&[prompt("me@web-1's password: ", false)]));
         assert!(!asks_for_password(&[prompt("Verification code: ", false)]));
+        assert!(!asks_for_password(&[prompt("One-time password: ", false)]));
+        assert!(!asks_for_password(&[prompt("Response: ", false)]));
+        assert!(!asks_for_password(&[prompt("Enter PIN ", false)]));
         assert!(!asks_for_password(&[prompt("Username: ", true)]));
         assert!(!asks_for_password(&[
             prompt("Password: ", false),
@@ -2113,13 +2194,12 @@ mod tests {
         fn ask_keyboard_interactive(
             &self,
             _name: String,
-            _instructions: String,
+            instructions: String,
             prompts: Vec<KeyboardPrompt>,
         ) -> BoxFuture<'_, Option<Vec<String>>> {
-            self.asked
-                .lock()
-                .unwrap()
-                .extend(prompts.iter().map(|p| p.prompt.clone()));
+            let mut asked = self.asked.lock().unwrap();
+            asked.extend((!instructions.is_empty()).then_some(instructions));
+            asked.extend(prompts.iter().map(|p| p.prompt.clone()));
             let answers = self.answers.clone();
             Box::pin(async move { Some(answers) })
         }
