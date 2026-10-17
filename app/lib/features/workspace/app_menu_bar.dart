@@ -22,7 +22,7 @@ class AppMenuBar extends ConsumerStatefulWidget {
 
 /// The bar's height, its bottom border included. It sits at the top of the
 /// window, so menus have the window's height less this to open into.
-const double _barHeight = 41;
+const double _barHeight = 33;
 const double _itemHeight = 36;
 
 class _AppMenuBarState extends ConsumerState<AppMenuBar> {
@@ -83,7 +83,11 @@ class _AppMenuBarState extends ConsumerState<AppMenuBar> {
       ),
     );
     // The bar's own labels keep even spacing on both sides.
-    final barItemStyle = SubmenuButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16));
+    final barItemStyle = SubmenuButton.styleFrom(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      minimumSize: const Size(0, _barHeight - 1),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
     return Container(
       decoration: BoxDecoration(
         color: t.surface,
