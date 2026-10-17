@@ -3,6 +3,7 @@ pub mod files;
 pub mod hosts;
 pub mod import;
 pub mod keys;
+pub mod lock;
 pub mod ssh;
 pub mod store;
 pub mod sync;

@@ -22,6 +22,19 @@ import 'package:promptly/features/sessions/status_dot.dart';
 import 'package:promptly/features/workspace/workspace.dart';
 import 'package:promptly/features/workspace/workspace_screen.dart';
 import 'package:promptly/features/updates/updates.dart';
+import 'package:promptly/features/lock/app_lock.dart';
+
+/// A device with nothing to check who is there with.
+class NoChecks implements Authenticator {
+  @override
+  Future<bool> systemAvailable() async => false;
+  @override
+  Future<bool> systemCheck(String reason) async => false;
+  @override
+  Future<String> hashPasscode(String passcode) async => passcode;
+  @override
+  Future<bool> verifyPasscode(String passcode, String hash) async => passcode == hash;
+}
 
 /// A stand-in for the Rust engine so widget tests need no native library.
 /// Records and secrets live in maps so the hosts and keys screens work.
@@ -798,6 +811,7 @@ Widget appWith(
   bool onboarded = true,
   PickedTextFile? pickedFile,
   UpdateService? updates,
+  Authenticator? authenticator,
 }) {
   engine ??= FakeEngine();
   if (onboarded) engine.settings.putIfAbsent('onboarding_done', () => 'true');
@@ -810,6 +824,9 @@ Widget appWith(
       if (localDir != null) localStartDirProvider.overrideWithValue(localDir),
       if (localFs != null) localFsProvider.overrideWithValue(localFs),
       if (updates != null) updateServiceProvider.overrideWithValue(updates),
+      // No system check and no passcode unless a test brings one: nothing
+      // to ask, so keys and the app open as before.
+      authenticatorProvider.overrideWithValue(authenticator ?? NoChecks()),
     ],
     child: const PromptlyApp(),
   );

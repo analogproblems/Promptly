@@ -8,6 +8,7 @@ import 'api/files.dart';
 import 'api/hosts.dart';
 import 'api/import.dart';
 import 'api/keys.dart';
+import 'api/lock.dart';
 import 'api/ssh.dart';
 import 'api/store.dart';
 import 'api/sync.dart';

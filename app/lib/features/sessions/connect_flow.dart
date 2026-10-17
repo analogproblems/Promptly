@@ -7,10 +7,17 @@ import '../../core/engine/engine.dart';
 /// One attempt to connect over SSH, as the UI sees it: the step reached,
 /// any question waiting for an answer, and the outcome.
 class ConnectFlow extends ChangeNotifier {
-  ConnectFlow({required this.engine, required this.request});
+  ConnectFlow({required this.engine, required this.request, this.unlock});
 
   final Engine engine;
   final SshConnectRequest request;
+
+  /// Asked before connecting when the request carries a private key: the
+  /// app's fingerprint, face, PIN or passcode check. False stops here.
+  final Future<bool> Function()? unlock;
+
+  /// Waiting for [unlock].
+  bool unlocking = false;
 
   int? _attemptId;
   StreamSubscription<SshEvent>? _sub;
@@ -34,8 +41,29 @@ class ConnectFlow extends ChangeNotifier {
 
   bool get finished => sessionId != null || error != null || cancelled;
 
-  void start() {
-    if (_attemptId != null) return;
+  bool _started = false;
+
+  /// Whether connecting uses a private key, here or on a jump host.
+  bool get usesKey =>
+      request.privateKey != null || request.jumps.any((j) => j.privateKey != null);
+
+  Future<void> start() async {
+    if (_started) return;
+    _started = true;
+    final unlock = this.unlock;
+    if (unlock != null && usesKey) {
+      unlocking = true;
+      notifyListeners();
+      final ok = await unlock();
+      unlocking = false;
+      if (cancelled || _disposed) return;
+      if (!ok) {
+        error = 'Your SSH key stays locked, so Promptly did not connect. Try again to unlock it.';
+        notifyListeners();
+        return;
+      }
+      notifyListeners();
+    }
     try {
       _attemptId = engine.sshConnectBegin(request);
       _sub = engine.sshConnectEvents(_attemptId!).listen(
@@ -124,7 +152,10 @@ class ConnectFlow extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _sub?.cancel();
     super.dispose();
   }
+
+  bool _disposed = false;
 }

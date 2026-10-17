@@ -9,6 +9,7 @@ import '../../core/engine/engine.dart';
 import '../hosts/inheritance.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
+import '../lock/app_lock.dart';
 import '../settings/settings_providers.dart';
 import '../terminal/terminal_controller.dart';
 import 'connect_flow.dart';
@@ -359,7 +360,11 @@ class SessionManager extends Notifier<List<SessionEntry>> {
   }
 
   void _startFlow(SessionEntry entry, Engine engine, SshConnectRequest request) {
-    final flow = ConnectFlow(engine: engine, request: request);
+    final flow = ConnectFlow(
+      engine: engine,
+      request: request,
+      unlock: () => ref.read(appLockProvider.notifier).unlockKeys(),
+    );
     entry.setFlow(flow);
     flow.addListener(() => _onFlow(entry, engine, flow));
     flow.start();
