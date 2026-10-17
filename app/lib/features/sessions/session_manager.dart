@@ -156,6 +156,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final engine = ref.read(engineProvider);
     final entry = SessionEntry(id: _nextId++, label: 'Local shell', isLocal: true);
     try {
+      _applyScrollback(engine);
       final engineId = engine.terminalOpenLocal(cols: 80, rows: 24, theme: theme);
       entry.setController(_controller(engine, engineId, entry.label));
     } catch (e) {
@@ -385,6 +386,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     final owners = entry.keyOwners;
     flow.canRememberPassphrase = owners != null;
     flow.onKeyPassphrase = (passphrase, remember) => _keyPassphraseTyped(engine, flow, owners, passphrase, remember);
+    _applyScrollback(engine);
     entry.setFlow(flow);
     flow.addListener(() => _onFlow(entry, engine, flow));
     flow.start();
@@ -511,13 +513,32 @@ class SessionManager extends Notifier<List<SessionEntry>> {
     if (!entry.isLocal) c.addListener(() => _watchForDrop(entry, c));
   }
 
-  /// A started controller whose clipboard writes follow the setting.
+  /// A started controller whose clipboard writes follow the setting, at the
+  /// text size last used. Zooming it changes that size for later sessions.
   TerminalController _controller(Engine engine, int sessionId, String label) {
     final c = TerminalController(engine: engine, id: sessionId, label: label);
     c.onClipboard = (text) {
       if (ref.read(programClipboardProvider)) Clipboard.setData(ClipboardData(text: text));
     };
+    c.fontSize = ref.read(fontSizeProvider);
+    c.onFontSize = (size) => ref.read(fontSizeProvider.notifier).set(size);
     return c..start();
+  }
+
+  /// Use this text size in every live session, for a change in Settings.
+  void applyFontSize(double size) {
+    for (final e in state) {
+      e.controller?.setFontSize(size);
+    }
+  }
+
+  /// New sessions keep as much history as the setting says.
+  void _applyScrollback(Engine engine) {
+    try {
+      engine.terminalSetScrollback(ref.read(scrollbackProvider));
+    } catch (_) {
+      // Without it the engine's own default stands.
+    }
   }
 
   // ---- Automatic reconnect -----------------------------------------------

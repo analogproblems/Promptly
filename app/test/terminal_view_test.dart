@@ -28,6 +28,8 @@ class RecordingEngine implements Engine {
   @override
   int terminalOpenLocal({required int cols, required int rows, required String theme}) => 1;
   @override
+  void terminalSetScrollback(int lines) => calls.add('scrollback $lines');
+  @override
   Stream<TerminalEvent> terminalEvents(int id) {
     calls.add('events');
     return const Stream.empty();

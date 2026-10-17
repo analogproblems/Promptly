@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show File;
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,7 +17,9 @@ import 'package:promptly/core/platform.dart';
 import 'package:promptly/features/files/files_screen.dart';
 import 'package:promptly/features/files/fs.dart';
 import 'package:promptly/features/help/about_screen.dart';
+import 'package:promptly/features/settings/settings_screen.dart' show TerminalChoices;
 import 'package:promptly/features/terminal/keyboard_bar.dart';
+import 'package:promptly/features/terminal/terminal_view.dart';
 import 'package:promptly/features/sessions/session_body.dart';
 import 'package:promptly/features/sessions/session_thumbnail.dart';
 import 'package:promptly/features/sessions/status_dot.dart';
@@ -82,11 +85,17 @@ class FakeEngine implements Engine {
     return 1;
   }
 
+  /// The scrollback the last session was opened with.
+  int? scrollback;
+  @override
+  void terminalSetScrollback(int lines) => scrollback = lines;
+
   /// Frames pushed after the first one, by `emitText`.
   final StreamController<TerminalEvent> laterFrames = StreamController<TerminalEvent>.broadcast();
 
-  /// Show `text` on the top row of a session, as a program printing it would.
-  void emitText(int id, String text) {
+  /// Show `text` on the top row of a session, as a program printing it
+  /// would, ringing the bell with it when asked.
+  void emitText(int id, String text, {bool bell = false}) {
     final glyphs = List<String>.generate(frameCols, (i) => i < text.length ? text[i] : '');
     laterFrames.add(
       TerminalEvent(
@@ -102,6 +111,7 @@ class FakeEngine implements Engine {
               fg: Uint32List(frameCols),
               bg: Uint32List(frameCols),
               flags: Uint16List(frameCols),
+              underline: Uint32List(frameCols),
             ),
           ],
           cursor: TerminalCursor(line: 0, col: text.length, shape: TerminalCursorShape.block),
@@ -111,7 +121,7 @@ class FakeEngine implements Engine {
           defaultBg: 0x0E1116,
           cursorColor: 0x7CE38B,
           title: 'deploy@web-1: ~',
-          bell: false,
+          bell: bell,
           appCursor: false,
           altScreen: false,
           bracketedPaste: false,
@@ -134,6 +144,7 @@ class FakeEngine implements Engine {
           fg: Uint32List(frameCols),
           bg: Uint32List(frameCols),
           flags: Uint16List(frameCols),
+          underline: Uint32List(frameCols),
         ),
     ];
     final first = [
@@ -227,8 +238,10 @@ class FakeEngine implements Engine {
     return _query == null ? null : const TerminalSearchHit(index: 2, total: 5, line: 1);
   }
 
+  /// What the engine reports under any cell.
+  String? link;
   @override
-  String? terminalLinkAt(int id, int col, int line) => null;
+  String? terminalLinkAt(int id, int col, int line) => link;
   @override
   void terminalClose(int id) {}
   @override
@@ -3094,5 +3107,177 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('group-port')), findsOneWidget);
     // An overflow anywhere above would have failed the test.
+  });
+  group('terminal settings', () {
+    /// Open a local shell from the Sessions tab.
+    Future<void> openShell(WidgetTester tester, FakeEngine engine) async {
+      await tester.pumpWidget(app(engine));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Sessions').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining(RegExp('^(Open a l|L)ocal shell')).first);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the bell flashes the terminal briefly', (tester) async {
+      final engine = FakeEngine()..connectedSessionId = 1;
+      await openShell(tester, engine);
+      expect(find.byKey(const Key('bell-flash')), findsNothing);
+      engine.emitText(1, 'ding', bell: true);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const Key('bell-flash')), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('bell-flash')), findsNothing, reason: 'it fades');
+      engine.emitText(1, 'quiet');
+      await tester.pump();
+      expect(find.byKey(const Key('bell-flash')), findsNothing, reason: 'only a bell flashes');
+    });
+
+    testWidgets('with reduced motion the bell is an outline, not a flash', (tester) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
+      final engine = FakeEngine()..connectedSessionId = 1;
+      await openShell(tester, engine);
+      engine.emitText(1, 'ding', bell: true);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const Key('bell-outline')), findsOneWidget);
+      expect(find.byKey(const Key('bell-flash')), findsNothing);
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byKey(const Key('bell-outline')), findsNothing);
+    });
+
+    testWidgets('the bell can be off, or vibrate a phone', (tester) async {
+      final engine = FakeEngine()
+        ..connectedSessionId = 1
+        ..settings['terminal_bell'] = '"off"';
+      await openShell(tester, engine);
+      engine.emitText(1, 'ding', bell: true);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      expect(find.byKey(const Key('bell-flash')), findsNothing);
+      expect(find.byKey(const Key('bell-outline')), findsNothing);
+
+      touchPlatformOverride = true;
+      addTearDown(() => touchPlatformOverride = null);
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final haptics = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method.startsWith('HapticFeedback')) haptics.add(call.method);
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+      final phone = FakeEngine()
+        ..connectedSessionId = 1
+        ..settings['terminal_bell'] = '"vibrate"';
+      await openShell(tester, phone);
+      phone.emitText(1, 'ding', bell: true);
+      await tester.pump();
+      phone.emitText(1, 'ding ding', bell: true);
+      await tester.pump();
+      expect(haptics, ['HapticFeedback.vibrate'], reason: 'a burst of bells is one buzz');
+      expect(find.byKey(const Key('bell-flash')), findsNothing);
+    });
+
+    testWidgets('the text size is kept from one session to the next', (tester) async {
+      final engine = FakeEngine()
+        ..connectedSessionId = 1
+        ..settings['terminal_font_size'] = '18.0';
+      await openShell(tester, engine);
+      final view = tester.widget<TerminalView>(find.byType(TerminalView));
+      expect(view.controller.fontSize, 18);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+      expect(view.controller.fontSize, 19);
+      expect(engine.settings['terminal_font_size'], '19.0');
+    });
+
+    testWidgets('new sessions keep the scrollback the setting asks for', (tester) async {
+      final engine = FakeEngine()..connectedSessionId = 1;
+      await openShell(tester, engine);
+      expect(engine.scrollback, 10000);
+
+      final more = FakeEngine()
+        ..connectedSessionId = 1
+        ..settings['terminal_scrollback'] = '50000';
+      await openShell(tester, more);
+      expect(more.scrollback, 50000);
+
+      final odd = FakeEngine()
+        ..connectedSessionId = 1
+        ..settings['terminal_scrollback'] = '123';
+      await openShell(tester, odd);
+      expect(odd.scrollback, 10000, reason: 'a value not offered reads as the usual');
+    });
+
+    testWidgets('Ctrl+click on a path copies it instead of opening it', (tester) async {
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+      final engine = FakeEngine()
+        ..connectedSessionId = 1
+        ..link = '/var/log/syslog';
+      await openShell(tester, engine);
+      final origin = tester.getTopLeft(find.byType(TerminalView));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      final gesture = await tester.startGesture(origin + const Offset(12, 4), kind: PointerDeviceKind.mouse);
+      await gesture.up();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(copied, '/var/log/syslog');
+      expect(find.text('Copied /var/log/syslog'), findsOneWidget);
+    });
+
+    testWidgets('the new settings fit a small phone at double text size', (tester) async {
+      tester.view.physicalSize = const Size(360, 780);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      tester.platformDispatcher.textScaleFactorTestValue = 2.0;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      final engine = FakeEngine();
+      // The section on its own, as it sits in the settings list.
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [engineProvider.overrideWithValue(engine)],
+          child: MaterialApp(
+            theme: buildPromptlyTheme(Brightness.light),
+            home: Scaffold(
+              body: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                children: const [Card(child: TerminalChoices())],
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      Future<void> pick(String key, String label) async {
+        final dropdown = find.descendant(
+          of: find.byKey(Key(key)),
+          matching: find.byWidgetPredicate((w) => w is DropdownButton),
+        );
+        await scrollTap(tester, dropdown);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(label).last);
+        await tester.pumpAndSettle();
+      }
+
+      await pick('bell', 'Vibrate');
+      expect(engine.settings['terminal_bell'], '"vibrate"');
+      await pick('font-size', '20');
+      expect(engine.settings['terminal_font_size'], '20.0');
+      await pick('scrollback', '100,000');
+      expect(engine.settings['terminal_scrollback'], '100000');
+      // An overflow anywhere above would have failed the test.
+    });
   });
 }

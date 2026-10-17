@@ -218,8 +218,14 @@ class TerminalController extends ChangeNotifier {
     }
   }
 
+  /// Called after the text size changes, so it can be remembered.
+  void Function(double size)? onFontSize;
+
   void setFontSize(double size) {
-    fontSize = size.clamp(8, 40);
+    final next = size.clamp(8, 40).toDouble();
+    if (next == fontSize) return;
+    fontSize = next;
+    onFontSize?.call(next);
     notifyListeners();
   }
 

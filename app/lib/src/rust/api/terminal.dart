@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `emit`, `entry`, `frame`, `palette_for`, `reattach_session`, `register_session`, `session_exists`
+// These functions are ignored because they are not marked as `pub`: `emit`, `entry`, `frame`, `palette_for`, `reattach_session`, `register_session`, `scrollback`, `session_exists`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Entry`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `from`, `from`
 
@@ -26,6 +26,11 @@ int terminalOpenLocal({
   program: program,
   cwd: cwd,
 );
+
+/// How many lines of history sessions opened from now on keep, up to
+/// 100,000. Sessions already open keep what they started with.
+void terminalSetScrollback({required int lines}) =>
+    RustLib.instance.api.crateApiTerminalTerminalSetScrollback(lines: lines);
 
 /// Subscribe to a session's frames. Starts the read loop on first call.
 Stream<TerminalEvent> terminalEvents({required int id}) =>
@@ -131,7 +136,8 @@ TerminalSearchHit? terminalSearchStep({
   backward: backward,
 );
 
-/// The link under a viewport cell: an OSC 8 hyperlink or a URL in the text.
+/// The link under a viewport cell: an OSC 8 hyperlink, or a URL, file path
+/// or IP address in the text. Only a URL contains `://`.
 String? terminalLinkAt({
   required int id,
   required int col,
@@ -358,12 +364,16 @@ class TerminalRow {
   final Uint32List bg;
   final Uint16List flags;
 
+  /// Underline colour per column: the program's own, or the text colour.
+  final Uint32List underline;
+
   const TerminalRow({
     required this.line,
     required this.glyphs,
     required this.fg,
     required this.bg,
     required this.flags,
+    required this.underline,
   });
 
   @override
@@ -372,7 +382,8 @@ class TerminalRow {
       glyphs.hashCode ^
       fg.hashCode ^
       bg.hashCode ^
-      flags.hashCode;
+      flags.hashCode ^
+      underline.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -383,7 +394,8 @@ class TerminalRow {
           glyphs == other.glyphs &&
           fg == other.fg &&
           bg == other.bg &&
-          flags == other.flags;
+          flags == other.flags &&
+          underline == other.underline;
 }
 
 /// Where the focused search match is, for "3 of 12" in the search bar.

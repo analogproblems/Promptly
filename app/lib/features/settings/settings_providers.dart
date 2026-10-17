@@ -15,6 +15,9 @@ abstract final class SettingKeys {
   static const onboardingDone = 'onboarding_done';
   static const updateCheck = 'update_check';
   static const pasteWarning = 'paste_warning';
+  static const bell = 'terminal_bell';
+  static const scrollback = 'terminal_scrollback';
+  static const fontSize = 'terminal_font_size';
 }
 
 String? _readString(Engine engine, String key) {
@@ -169,3 +172,88 @@ class PasteWarningNotifier extends BoolSettingNotifier {
 }
 
 final pasteWarningProvider = NotifierProvider<PasteWarningNotifier, bool>(PasteWarningNotifier.new);
+
+/// A setting kept in the store as one JSON value, with its value when never
+/// set. [decode] returns null for anything it does not accept, which reads
+/// as the fallback.
+abstract class JsonSettingNotifier<T> extends Notifier<T> {
+  String get key;
+  T get fallback;
+  T? decode(Object? json);
+  Object? encode(T value);
+
+  @override
+  T build() {
+    try {
+      final raw = ref.watch(engineProvider).settingGet(key);
+      if (raw == null) return fallback;
+      return decode(jsonDecode(raw)) ?? fallback;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  void set(T value) {
+    state = value;
+    try {
+      ref.read(engineProvider).settingSet(key, jsonEncode(encode(value)));
+    } catch (_) {}
+  }
+}
+
+/// What the terminal does when a program rings the bell.
+enum BellMode {
+  /// The terminal flashes briefly (or, with reduced motion, shows an outline).
+  flash,
+
+  /// The phone vibrates. Where nothing can vibrate, the terminal flashes.
+  vibrate,
+  off,
+}
+
+class BellNotifier extends JsonSettingNotifier<BellMode> {
+  @override
+  String get key => SettingKeys.bell;
+  @override
+  BellMode get fallback => BellMode.flash;
+  @override
+  BellMode? decode(Object? json) => BellMode.values.where((m) => m.name == json).firstOrNull;
+  @override
+  Object? encode(BellMode value) => value.name;
+}
+
+final bellProvider = NotifierProvider<BellNotifier, BellMode>(BellNotifier.new);
+
+/// How many lines of history a new terminal keeps.
+class ScrollbackNotifier extends JsonSettingNotifier<int> {
+  static const choices = [1000, 10000, 50000, 100000];
+
+  @override
+  String get key => SettingKeys.scrollback;
+  @override
+  int get fallback => 10000;
+  @override
+  int? decode(Object? json) => json is int && choices.contains(json) ? json : null;
+  @override
+  Object? encode(int value) => value;
+}
+
+final scrollbackProvider = NotifierProvider<ScrollbackNotifier, int>(ScrollbackNotifier.new);
+
+/// The terminal's text size, as last zoomed to or picked in Settings.
+class FontSizeNotifier extends JsonSettingNotifier<double> {
+  static const min = 8.0;
+  static const max = 40.0;
+  static const normal = 14.0;
+
+  @override
+  String get key => SettingKeys.fontSize;
+  @override
+  double get fallback => normal;
+  @override
+  double? decode(Object? json) => json is num ? json.toDouble().clamp(min, max) : null;
+  @override
+  Object? encode(double value) => value;
+}
+
+final fontSizeProvider = NotifierProvider<FontSizeNotifier, double>(FontSizeNotifier.new);

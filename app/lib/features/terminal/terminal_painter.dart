@@ -136,22 +136,66 @@ class TerminalPainter extends CustomPainter {
         }
         if ((f & (CellFlags.anyUnderline | CellFlags.strikeout)) != 0) {
           final width = (f & CellFlags.wide) != 0 ? cw * 2 : cw;
-          paint.color = Color(0xFF000000 | row.fg[x]);
           if ((f & CellFlags.anyUnderline) != 0) {
-            final yy = top + ch - 2;
-            canvas.drawRect(Rect.fromLTWH(left, yy, width, 1), paint);
-            if ((f & CellFlags.doubleUnderline) != 0) {
-              canvas.drawRect(Rect.fromLTWH(left, yy - 2, width, 1), paint);
-            }
+            paint.color = Color(0xFF000000 | row.underline[x]);
+            _paintUnderline(canvas, f, left, top + ch, width, paint);
           }
           if ((f & CellFlags.strikeout) != 0) {
-            canvas.drawRect(Rect.fromLTWH(left, top + ch / 2, width, 1), paint);
+            paint.color = Color(0xFF000000 | row.fg[x]);
+            canvas.drawRect(Rect.fromLTWH(left, top + ch / 2, width, _thickness), paint);
           }
         }
       }
     }
 
     _paintCursor(canvas, cw, ch, paint);
+  }
+
+  /// Line thickness: one pixel at the usual sizes, more on large text.
+  double get _thickness => (metrics.fontSize / 14).roundToDouble().clamp(1, 4);
+
+  /// One cell's underline in the style its flags ask for, `bottom` being
+  /// the bottom of the cell. Dots, dashes and waves are laid out from the
+  /// left edge of the screen, not the cell, so a run of cells joins up.
+  void _paintUnderline(Canvas canvas, int f, double left, double bottom, double width, Paint paint) {
+    final t = _thickness;
+    final y = bottom - 1 - t;
+    final right = left + width;
+    if ((f & CellFlags.undercurl) != 0) {
+      // A wave, a whole one per cell so neighbours meet at the same height.
+      final amp = 1.5 * t;
+      final mid = y - amp / 2;
+      final halves = (width / metrics.width * 2).round().clamp(2, 8);
+      final half = width / halves;
+      final path = Path()..moveTo(left, mid);
+      for (var i = 0; i < halves; i++) {
+        final x0 = left + i * half;
+        path.quadraticBezierTo(x0 + half / 2, i.isEven ? mid - amp * 2 : mid + amp * 2, x0 + half, mid);
+      }
+      final stroke = Paint()
+        ..color = paint.color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = t;
+      canvas.drawPath(path, stroke);
+    } else if ((f & CellFlags.dottedUnderline) != 0) {
+      final step = 2 * t;
+      for (var x = (left / step).ceilToDouble() * step; x < right; x += step) {
+        canvas.drawRect(Rect.fromLTWH(x, y, t, t), paint);
+      }
+    } else if ((f & CellFlags.dashedUnderline) != 0) {
+      final dash = 3 * t;
+      final step = 5 * t;
+      for (var x = (left / step).floorToDouble() * step; x < right; x += step) {
+        final from = x < left ? left : x;
+        final to = x + dash > right ? right : x + dash;
+        if (to > from) canvas.drawRect(Rect.fromLTRB(from, y, to, y + t), paint);
+      }
+    } else {
+      canvas.drawRect(Rect.fromLTWH(left, y, width, t), paint);
+      if ((f & CellFlags.doubleUnderline) != 0) {
+        canvas.drawRect(Rect.fromLTWH(left, y - 2 * t, width, t), paint);
+      }
+    }
   }
 
   void _paintCursor(Canvas canvas, double cw, double ch, Paint paint) {

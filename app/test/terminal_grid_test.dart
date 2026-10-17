@@ -13,6 +13,7 @@ TerminalRow row(int line, String text, {int fg = 0xE6EDF3, int bg = 0x0E1116}) {
     fg: Uint32List(n)..fillRange(0, n, fg),
     bg: Uint32List(n)..fillRange(0, n, bg),
     flags: Uint16List(n),
+    underline: Uint32List(n)..fillRange(0, n, fg),
   );
 }
 

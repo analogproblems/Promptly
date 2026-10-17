@@ -17,7 +17,9 @@ use promptly_ssh::{
 };
 use promptly_term::TermSize;
 
-use crate::api::terminal::{palette_for, reattach_session, register_session, session_exists};
+use crate::api::terminal::{
+    palette_for, reattach_session, register_session, scrollback, session_exists,
+};
 use crate::frb_generated::StreamSink;
 use crate::ssh_flow::{
     attempt, connection, remember_connection, Attempt, Pending, UiPrompter, ATTEMPTS, NEXT_ATTEMPT,
@@ -318,11 +320,12 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
                         id
                     }
                     _ => {
-                        let session = Arc::new(Session::new(
+                        let session = Arc::new(Session::with_scrollback(
                             SessionKind::Ssh { host: label },
                             size,
                             palette,
                             Box::new(transport),
+                            scrollback(),
                         ));
                         let id = register_session(session, Box::new(reader));
                         UNCLAIMED.lock().unwrap().insert(attempt_id, id);
