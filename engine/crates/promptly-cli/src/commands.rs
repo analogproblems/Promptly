@@ -1018,7 +1018,8 @@ pub struct Removed {
 /// name. Every device then ignores what it writes after the last of its
 /// files read here, and it stops syncing once it finds out. It keeps the
 /// copy it has: rotate the key as well if it was lost. One removed before
-/// is left as it is, so a re-run can go on to rotate the key.
+/// keeps its cutoff, and any upload an earlier run left unfinished is sent,
+/// so a re-run can go on to rotate the key.
 pub fn remove_device(backend: &dyn Backend, unlocked: &Unlocked, who: &str) -> Result<Removed> {
     let (store, vault) = fresh(backend, unlocked)?;
     ensure_not_removed(&store)?;
@@ -1071,6 +1072,9 @@ pub fn remove_device(backend: &dyn Backend, unlocked: &Unlocked, who: &str) -> R
         .map(str::to_string)
         .unwrap_or_else(|| record_id_of(&device));
     if !record.get(policy::REMOVED_AFTER).is_none_or(Value::is_null) {
+        // An earlier run may have marked it here and then failed to
+        // upload; send whatever is still waiting, with its first cutoff.
+        push_all(&store, vault)?;
         return Ok(Removed {
             name,
             already: true,
@@ -1132,6 +1136,100 @@ mod tests {
                 .to_string(),
             )
             .unwrap();
+    }
+
+    /// A vault folder that refuses new files while `fail` is set, as a
+    /// dropped connection would.
+    struct Flaky {
+        inner: LocalFolder,
+        fail: std::sync::atomic::AtomicBool,
+    }
+
+    impl Backend for Flaky {
+        fn list(
+            &self,
+            dir: &str,
+        ) -> Result<Vec<promptly_vault::Entry>, promptly_vault::BackendError> {
+            self.inner.list(dir)
+        }
+        fn get(&self, path: &str) -> Result<Vec<u8>, promptly_vault::BackendError> {
+            self.inner.get(path)
+        }
+        fn put_new(&self, path: &str, bytes: &[u8]) -> Result<(), promptly_vault::BackendError> {
+            if self.fail.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(promptly_vault::BackendError::Io(
+                    path.into(),
+                    std::io::Error::other("connection dropped"),
+                ));
+            }
+            self.inner.put_new(path, bytes)
+        }
+        fn delete(&self, path: &str) -> Result<(), promptly_vault::BackendError> {
+            self.inner.delete(path)
+        }
+    }
+
+    #[test]
+    fn removing_a_device_again_finishes_an_upload_that_failed() {
+        let dir = std::env::temp_dir().join(format!("promptly-cli-retry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let vault_dir = dir.join("vault");
+        std::fs::create_dir_all(&vault_dir).unwrap();
+        use_test_data_dir();
+
+        let backend = Flaky {
+            inner: LocalFolder::new(&vault_dir),
+            fail: false.into(),
+        };
+        let laptop = Store::open(&dir.join("laptop.db"), None).unwrap();
+        let (vault, _code) = Vault::create(
+            &backend,
+            laptop.device_id().clone(),
+            "pass",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        device_record(&laptop, "laptop");
+        laptop.push(&vault).unwrap();
+        let phone = Store::open(&dir.join("phone.db"), None).unwrap();
+        let phone_vault = Vault::with_dek(
+            &backend,
+            phone.device_id().clone(),
+            vault.vault_id().to_string(),
+            vault.dek().clone(),
+        );
+        device_record(&phone, "phone");
+        phone.push(&phone_vault).unwrap();
+        let unlocked = unlock(&Creds { pass: "pass" }, &backend).unwrap().unwrap();
+        // The tool's own first upload goes through.
+        list_devices(&backend, &unlocked).unwrap();
+
+        // The removal is marked here, then the upload fails.
+        backend
+            .fail
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(remove_device(&backend, &unlocked, "phone").is_err());
+        backend
+            .fail
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        // Run again: it was removed already here, and now the vault has it.
+        assert!(remove_device(&backend, &unlocked, "phone").unwrap().already);
+        laptop.pull(&vault).unwrap();
+        let host_id = "0192f3a0-0000-7000-8000-000000000009";
+        phone
+            .put(
+                Collection::Hosts,
+                host_id,
+                &json!({"id": host_id, "label": "sneaky", "hostname": "x"}).to_string(),
+            )
+            .unwrap();
+        phone.push(&phone_vault).unwrap();
+        laptop.pull(&vault).unwrap();
+        assert!(
+            laptop.get(Collection::Hosts, host_id).unwrap().is_none(),
+            "the laptop ignores the removed phone"
+        );
     }
 
     #[test]
@@ -1550,6 +1648,11 @@ mod tests {
         // the user's own key: that file is left alone.
         let ssh = dir.join("dot-ssh");
         std::fs::create_dir_all(&ssh).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         std::fs::write(ssh.join("laptop"), b"my own key").unwrap();
         let config = ssh_config(&backend, &unlocked, Some(&ssh)).unwrap();
         assert_eq!(std::fs::read(ssh.join("laptop")).unwrap(), b"my own key");
@@ -1566,9 +1669,9 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
             assert_eq!(mode(&ssh.join("laptop-2")), 0o600);
-            assert_ne!(
+            assert_eq!(
                 mode(&ssh),
-                0o700,
+                0o755,
                 "a folder that was there is left as it was"
             );
             assert_eq!(mode(&keys), 0o700);
