@@ -110,16 +110,14 @@ fn connect_sftp(endpoint: &Endpoint, path: &str, identity: Option<&Path>) -> Res
     };
     let known_hosts = Arc::new(FileKnownHosts::new(
         FileKnownHosts::user_file().into_iter().collect(),
-        data_dir().join("known_hosts"),
+        data_dir()?.join("known_hosts"),
     ));
     let connect = |passphrase: Option<String>| {
         let params = ConnectParams::new(endpoint.clone(), auth(passphrase), TermSize::default());
         SftpBackend::connect_blocking(&params, Arc::new(QuietPrompter), known_hosts.clone(), path)
     };
     let result = match connect(std::env::var("PROMPTLY_KEY_PASSPHRASE").ok()) {
-        Err(SftpError::Connect(ConnectError::KeyNeedsPassphrase))
-            if std::io::IsTerminal::is_terminal(&std::io::stdin()) =>
-        {
+        Err(SftpError::Connect(ConnectError::KeyNeedsPassphrase)) if can_ask() => {
             let typed =
                 zeroize::Zeroizing::new(rpassword::prompt_password("Passphrase for the key: ")?);
             connect(Some(typed.to_string()))
@@ -165,7 +163,7 @@ pub fn unlock(args: &impl Credentials, backend: &dyn Backend) -> Result<Option<U
         let typed;
         let code = match args.recovery_code() {
             Some(c) => c,
-            None if std::io::IsTerminal::is_terminal(&std::io::stdin()) => {
+            None if can_ask() => {
                 typed = zeroize::Zeroizing::new(rpassword::prompt_password("Recovery code: ")?);
                 typed.as_str()
             }
@@ -176,7 +174,7 @@ pub fn unlock(args: &impl Credentials, backend: &dyn Backend) -> Result<Option<U
         manifest.unlock_with_recovery(&code)?
     } else if let Some(p) = args.passphrase() {
         manifest.unlock(p)?
-    } else if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+    } else if can_ask() {
         let p = zeroize::Zeroizing::new(rpassword::prompt_password("Vault passphrase: ")?);
         manifest.unlock(&p)?
     } else {
@@ -185,19 +183,39 @@ pub fn unlock(args: &impl Credentials, backend: &dyn Backend) -> Result<Option<U
     Ok(Some(Unlocked { dek, manifest }))
 }
 
-/// Where this tool keeps its own files.
-fn data_dir() -> PathBuf {
-    std::env::var_os("PROMPTLY_CLI_DATA_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("XDG_DATA_HOME")
-                .map(PathBuf::from)
-                .or_else(|| {
-                    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share"))
-                })
-                .map(|d| d.join("promptly-cli"))
+/// Where this tool keeps its own files. Never a folder relative to where
+/// it runs, or each folder would make it a new device.
+fn data_dir() -> Result<PathBuf> {
+    if let Some(dir) = std::env::var_os("PROMPTLY_CLI_DATA_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from).or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(|h| PathBuf::from(h).join("AppData").join("Roaming"))
         })
-        .unwrap_or_else(|| PathBuf::from(".promptly-cli"))
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share"))
+            })
+    };
+    base.map(|d| d.join("promptly-cli")).ok_or_else(|| {
+        anyhow!("no home folder to keep this tool's files in: set PROMPTLY_CLI_DATA_DIR")
+    })
+}
+
+/// Whether a passphrase can be asked for. The prompt reads the terminal
+/// itself, not standard input, so `promptly import VAULT - < hosts.json`
+/// can still ask.
+fn can_ask() -> bool {
+    let tty = if cfg!(windows) { "CONIN$" } else { "/dev/tty" };
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(tty)
+        .is_ok()
 }
 
 /// Where this tool keeps its own device state for one vault: the store,
@@ -209,13 +227,13 @@ struct DataPaths {
     previous: PathBuf,
 }
 
-fn data_paths(vault_id: &str) -> DataPaths {
-    let base = data_dir();
-    DataPaths {
+fn data_paths(vault_id: &str) -> Result<DataPaths> {
+    let base = data_dir()?;
+    Ok(DataPaths {
         db: base.join(format!("{vault_id}.db")),
         manifest: base.join(format!("{vault_id}.manifest.json")),
         previous: base.join(format!("{vault_id}.manifest.previous.json")),
-    }
+    })
 }
 
 /// Keep `manifest` as the settings this tool's key comes from, and the
@@ -245,7 +263,7 @@ fn save_manifest(paths: &DataPaths, manifest: &Manifest) -> Result<()> {
 /// the passphrase from before brings it over (see [`bring_over`]): nothing
 /// is set aside or started again.
 fn cli_store(unlocked: &Unlocked) -> Result<Store> {
-    let paths = data_paths(&unlocked.manifest.vault_id);
+    let paths = data_paths(&unlocked.manifest.vault_id)?;
     let key = DbKey::derive(&unlocked.dek);
     if !Store::key_fits(&paths.db, &key)? {
         bring_over(&paths, &key)?;
@@ -307,7 +325,7 @@ fn previous_passphrase() -> Option<zeroize::Zeroizing<String>> {
     if let Ok(p) = std::env::var("PROMPTLY_PREVIOUS_PASSPHRASE") {
         return Some(zeroize::Zeroizing::new(p));
     }
-    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+    if can_ask() {
         return rpassword::prompt_password("Vault passphrase from before the key change: ")
             .ok()
             .map(zeroize::Zeroizing::new);
@@ -379,7 +397,7 @@ fn ensure_not_removed(store: &Store) -> Result<()> {
         !removed,
         "this tool was removed from the vault on another device, so it no longer syncs. \
          To sync it again, delete its copy in the PROMPTLY_CLI_DATA_DIR folder \
-         (or ~/.local/share/promptly-cli) and it joins as a new device."
+         (~/.local/share/promptly-cli, or %APPDATA%\\promptly-cli on Windows) and it joins as a new device."
     );
     Ok(())
 }
@@ -633,24 +651,46 @@ pub fn ssh_config(
         .filter_map(|r| serde_json::from_str(&r.json).ok())
         .collect();
     hosts.sort_by_key(|h| h.label.to_lowercase());
-    let alias_of = |label: &str| -> String {
-        label
+    // Each host gets its own name, with no characters ssh would read as a
+    // pattern, so two hosts both called "web" don't share one entry.
+    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
+    let mut used = std::collections::BTreeSet::new();
+    for h in &hosts {
+        let base: String = h
+            .label
             .chars()
-            .map(|c| if c.is_whitespace() { '-' } else { c })
-            .collect()
-    };
-    let aliases: BTreeMap<String, String> = hosts
-        .iter()
-        .map(|h| (h.id.to_string(), alias_of(&h.label)))
-        .collect();
+            .map(|c| {
+                if c.is_whitespace() || "*?!,\"#'=".contains(c) {
+                    '-'
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let base = if base.is_empty() {
+            "host".to_string()
+        } else {
+            base
+        };
+        let mut alias = base.clone();
+        let mut n = 2;
+        while !used.insert(alias.to_lowercase()) {
+            alias = format!("{base}-{n}");
+            n += 1;
+        }
+        aliases.insert(h.id.to_string(), alias);
+    }
 
     let mut out =
         String::from("# Generated by promptly from the vault. Edit the vault, not this file.\n");
     // Each key is written once, under a file name no other key has.
     let mut key_files: BTreeMap<String, PathBuf> = BTreeMap::new();
     for h in hosts {
-        let alias = alias_of(&h.label);
-        out.push_str(&format!("\nHost {alias}\n    HostName {}\n", h.hostname));
+        let alias = &aliases[&h.id.to_string()];
+        out.push_str(&format!(
+            "\nHost {alias}\n    HostName {}\n",
+            config_value(&h.hostname)
+        ));
         if let Some(jump) = h
             .jump_host_id
             .as_ref()
@@ -669,22 +709,24 @@ pub fn ssh_config(
             let bind = if f.bind_host.is_empty() {
                 format!("{}", f.bind_port)
             } else {
-                format!("{}:{}", f.bind_host, f.bind_port)
+                format!("{}:{}", bracketed(&f.bind_host), f.bind_port)
             };
             match f.kind {
                 ForwardKind::Local => out.push_str(&format!(
                     "    LocalForward {bind} {}:{}\n",
-                    f.target_host, f.target_port
+                    bracketed(&f.target_host),
+                    f.target_port
                 )),
                 ForwardKind::Remote => out.push_str(&format!(
                     "    RemoteForward {bind} {}:{}\n",
-                    f.target_host, f.target_port
+                    bracketed(&f.target_host),
+                    f.target_port
                 )),
                 ForwardKind::Dynamic => out.push_str(&format!("    DynamicForward {bind}\n")),
             }
         }
         if !h.username.is_empty() {
-            out.push_str(&format!("    User {}\n", h.username));
+            out.push_str(&format!("    User {}\n", config_value(&h.username)));
         }
         if h.port != 22 {
             out.push_str(&format!("    Port {}\n", h.port));
@@ -725,7 +767,10 @@ pub fn ssh_config(
                                     path
                                 }
                             };
-                            out.push_str(&format!("    IdentityFile {}\n", path.display()));
+                            out.push_str(&format!(
+                                "    IdentityFile {}\n",
+                                config_value(&path.to_string_lossy())
+                            ));
                         }
                     }
                     _ => out.push_str(&format!(
@@ -736,6 +781,50 @@ pub fn ssh_config(
         }
     }
     Ok(out)
+}
+
+/// A value as ssh_config reads it back, exactly: in double quotes when it
+/// has a space, `#`, either kind of quote or a backslash ssh would take as
+/// an escape, with `"` and those backslashes escaped. A stray quote would
+/// break every `ssh` command, not just this host's. Line breaks and other
+/// control characters can't be written on one line, so they are left out.
+fn config_value(value: &str) -> String {
+    let chars: Vec<char> = value.chars().filter(|c| !c.is_control()).collect();
+    let mut quote = chars.is_empty();
+    let mut out = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        match c {
+            '"' => {
+                out.push_str("\\\"");
+                quote = true;
+            }
+            // ssh reads a backslash before these as an escape, and one at
+            // the end would escape the closing quote. Any other backslash,
+            // as in `C:\Users`, it keeps as it is.
+            '\\' if matches!(chars.get(i + 1), None | Some('\\' | '"' | '\'')) => {
+                out.push_str("\\\\");
+                quote = true;
+            }
+            c => {
+                quote |= c.is_whitespace() || c == '#' || c == '\'';
+                out.push(c);
+            }
+        }
+    }
+    if quote {
+        format!("\"{out}\"")
+    } else {
+        out
+    }
+}
+
+/// An IPv6 address in brackets, as forwarding lines need: `[::1]:8080`.
+fn bracketed(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    }
 }
 
 /// Write a private key into `dir` as `name`, or `name-2` and so on when
@@ -863,7 +952,7 @@ pub fn rotate_dek(
     // The new settings are kept first, with the old ones as the ones
     // before, so whichever key the store is left under, the next run can
     // bring it over (see [`bring_over`]).
-    let paths = data_paths(&unlocked.manifest.vault_id);
+    let paths = data_paths(&unlocked.manifest.vault_id)?;
     if let Err(e) = save_manifest(&paths, &manifest) {
         trouble.push(format!(
             "the new vault settings could not be kept beside this tool's records ({e})"
@@ -1482,7 +1571,7 @@ mod tests {
                 })
                 .count()
         };
-        if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        if !can_ask() {
             let err = cli_store(&third).err().unwrap().to_string();
             assert!(err.contains("PROMPTLY_PREVIOUS_PASSPHRASE"), "{err}");
         }
@@ -1776,6 +1865,113 @@ mod tests {
         assert!(err.starts_with("127.0.0.1: "), "{err}");
         let err = open(&Server("sftp://127.0.0.1/vault")).err().unwrap();
         assert!(err.to_string().contains("user"), "{err}");
+    }
+
+    #[test]
+    fn ssh_config_writes_lines_ssh_accepts() {
+        use_test_data_dir();
+        let backend = promptly_vault::backend::MemoryBackend::default();
+        let app = Store::open_in_memory().unwrap();
+        let (vault, _code) = Vault::create(
+            &backend,
+            app.device_id().clone(),
+            "pass",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        let hosts = [
+            json!({"id": "0192f3a0-0000-7000-8000-000000000021", "label": "web", "hostname": "10.0.0.1",
+                   "username": "John Smith", "auth": {"kind": "agent"},
+                   "port_forwards": [{"kind": "local", "bind_host": "::1", "bind_port": 8080,
+                                      "target_host": "fe80::1", "target_port": 80}]}),
+            json!({"id": "0192f3a0-0000-7000-8000-000000000022", "label": "Web", "hostname": "10.0.0.2",
+                   "auth": {"kind": "agent"}}),
+            json!({"id": "0192f3a0-0000-7000-8000-000000000023", "label": "db*", "hostname": "10.0.0.3",
+                   "auth": {"kind": "agent"}, "jump_host_id": "0192f3a0-0000-7000-8000-000000000022"}),
+        ];
+        for h in &hosts {
+            app.put(Collection::Hosts, h["id"].as_str().unwrap(), &h.to_string())
+                .unwrap();
+        }
+        app.push(&vault).unwrap();
+        let unlocked = unlock(&Creds { pass: "pass" }, &backend).unwrap().unwrap();
+        let config = ssh_config(&backend, &unlocked, None).unwrap();
+        assert!(config.contains("    User \"John Smith\"\n"), "{config}");
+        assert!(
+            config.contains("    LocalForward [::1]:8080 [fe80::1]:80\n"),
+            "{config}"
+        );
+        assert!(
+            config.contains("\nHost web\n    HostName 10.0.0.1\n"),
+            "{config}"
+        );
+        assert!(
+            config.contains("\nHost Web-2\n    HostName 10.0.0.2\n"),
+            "{config}"
+        );
+        assert!(config.contains("\nHost db-\n"), "{config}");
+        assert!(config.contains("    ProxyJump Web-2\n"), "{config}");
+    }
+
+    #[test]
+    fn ssh_reads_back_every_value_as_it_was() {
+        let values = [
+            "plain",
+            "John Smith",
+            "O'Brien",
+            "/home/jason/O'Brien/keys/key",
+            "/keys/a \"q\" b\\",
+            r"C:\Users\me\.ssh\key",
+            r"\\server\share\key",
+            "#1",
+        ];
+        assert_eq!(config_value("plain"), "plain");
+        assert_eq!(config_value("O'Brien"), "\"O'Brien\"");
+        assert_eq!(config_value(r"C:\Users\me"), r"C:\Users\me");
+        assert_eq!(config_value("a\nb"), "ab");
+        // And ssh itself, where it is installed, reads each one back.
+        if std::process::Command::new("ssh")
+            .arg("-V")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("promptly-cli-quote-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for value in values {
+            let file = dir.join("config");
+            std::fs::write(
+                &file,
+                format!(
+                    "Host t\n    User {}\n    IdentityFile {}\nHost other\n    Port 2222\n",
+                    config_value(value),
+                    config_value(value)
+                ),
+            )
+            .unwrap();
+            let out = std::process::Command::new("ssh")
+                .arg("-G")
+                .arg("-F")
+                .arg(&file)
+                .arg("t")
+                .output()
+                .unwrap();
+            let printed = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success(),
+                "{value}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                printed.contains(&format!("\nuser {value}\n")),
+                "{value}: {printed}"
+            );
+            assert!(
+                printed.contains(&format!("\nidentityfile {value}\n")),
+                "{value}: {printed}"
+            );
+        }
     }
 
     #[test]

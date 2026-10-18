@@ -18,18 +18,23 @@ read -rsp "Choose a keystore password: " PASS; echo
 read -rsp "Type it again: " AGAIN; echo
 [[ "$PASS" == "$AGAIN" ]] || { echo "The passwords differ." >&2; exit 1; }
 
+# Through the environment, not the command line, where anyone on the
+# computer could read it while keytool runs.
+export PASS
 keytool -genkeypair -v \
   -keystore "$OUT" -alias "$ALIAS" -keyalg RSA -keysize 4096 -validity 10000 \
-  -storepass "$PASS" -keypass "$PASS" \
+  -storepass:env PASS -keypass:env PASS \
   -dname "CN=Promptly, O=Promptly, C=US"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cat > "$ROOT/app/android/key.properties" <<PROPS
+# Private from the moment it is made.
+(umask 077 && cat > "$ROOT/app/android/key.properties" <<PROPS
 storeFile=$OUT
 storePassword=$PASS
 keyAlias=$ALIAS
 keyPassword=$PASS
 PROPS
+)
 chmod 600 "$ROOT/app/android/key.properties"
 
 cat <<MSG
