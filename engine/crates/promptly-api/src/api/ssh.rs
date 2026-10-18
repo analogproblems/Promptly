@@ -303,10 +303,13 @@ pub fn ssh_connect_events(attempt_id: u32, sink: StreamSink<SshEvent>) -> anyhow
     let task_attempt = attempt.clone();
     let task = promptly_ssh::runtime().spawn(async move {
         // Reconnecting: the old connection goes first, so its port
-        // forwards free their ports for the new connection's to take.
+        // forwards free their ports for the new connection's to take. The
+        // forwards are waited on in full; only telling a server that may
+        // have gone is given up on.
         if let Some(id) = reattach {
             let old = crate::ssh_flow::CONNECTIONS.lock().unwrap().remove(&id);
             if let Some(old) = old {
+                old.stop_forwards().await;
                 let _ =
                     tokio::time::timeout(std::time::Duration::from_secs(2), old.disconnect()).await;
             }

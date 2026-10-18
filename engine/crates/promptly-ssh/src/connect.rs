@@ -1624,8 +1624,16 @@ mod tests {
         params.forwards = vec![spec];
         let (first, _reader, _) = connect_only("forward-first", params.clone(), &password);
         assert!(first.connection().forwards()[0].active);
-        // What a reconnect does before connecting again.
-        crate::runtime().block_on(first.connection().disconnect());
+        // A failed write and a reconnect can both close the connection at
+        // once. Whichever gets to the forwards second still waits for their
+        // listeners to go (which one wins here is up to the scheduler).
+        let conn = first.connection();
+        let racing = conn.clone();
+        let _other = crate::runtime().spawn(async move { racing.disconnect().await });
+        crate::runtime().block_on(conn.stop_forwards());
+        // Free the moment it returns, with no handshake to hide a delay.
+        drop(std::net::TcpListener::bind(("127.0.0.1", port)).expect("the forward's port is free"));
+        crate::runtime().block_on(conn.disconnect());
         let (mut second, _reader, _) = connect_only("forward-second", params, &password);
         let status = second.connection().forwards();
         assert!(status[0].active, "{:?}", status[0].error);

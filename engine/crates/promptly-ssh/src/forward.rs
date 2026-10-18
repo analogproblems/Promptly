@@ -95,6 +95,10 @@ pub struct Connection {
     /// knows where a `forwarded-tcpip` channel should go.
     remote_targets: Targets,
     forwards: Mutex<Vec<ForwardState>>,
+    /// Held while the forwards stop, so every caller of `stop_forwards`
+    /// returns only once their listeners are gone, even one that found
+    /// another caller already stopping them.
+    stopping: tokio::sync::Mutex<()>,
     server: String,
 }
 
@@ -110,6 +114,7 @@ impl Connection {
             hops,
             remote_targets,
             forwards: Mutex::new(Vec::new()),
+            stopping: tokio::sync::Mutex::new(()),
             server,
         }
     }
@@ -230,13 +235,28 @@ impl Connection {
         }
     }
 
+    /// Stop every forward's listener and wait until they are gone, so
+    /// their ports are free when this returns.
+    pub async fn stop_forwards(&self) {
+        let _stopping = self.stopping.lock().await;
+        let tasks: Vec<_> = self
+            .forwards
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .filter_map(|f| f.task.take())
+            .collect();
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
+    }
+
     /// Close this connection and the jump hosts it came through.
     pub async fn disconnect(&self) {
-        for f in self.forwards.lock().unwrap().iter_mut() {
-            if let Some(task) = f.task.take() {
-                task.abort();
-            }
-        }
+        self.stop_forwards().await;
         let _ = self
             .handle
             .disconnect(russh::Disconnect::ByApplication, "closed by user", "en")
