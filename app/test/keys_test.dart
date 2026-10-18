@@ -235,6 +235,7 @@ void main() {
     String? copied;
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
       if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+      if (call.method == 'Clipboard.getData') return {'text': copied};
       return null;
     });
     addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
@@ -346,6 +347,7 @@ void main() {
     String? copied;
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
       if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+      if (call.method == 'Clipboard.getData') return {'text': copied};
       return null;
     });
     addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
@@ -386,6 +388,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(saved, ['laptop: RELOCKED with fresh one']);
     expect(find.text('Saved to /home/you/laptop.'), findsOneWidget);
+    // The copied key leaves the clipboard after a minute.
+    await tester.pump(const Duration(minutes: 1));
+    expect(copied, '');
   });
 
   testWidgets('setup says twice that losing the passphrase and the recovery code loses the data', (tester) async {
@@ -413,11 +418,44 @@ void main() {
         reason: 'continuing waits for "I have written it down"');
   });
 
+  testWidgets('the join code, re-keying and removing a device each ask first when a lock is on', (tester) async {
+    final engine = FakeEngine()..configured();
+    final auth = FakeAuthenticator(answer: false);
+    await tester.pumpWidget(appWith(engine, authenticator: auth));
+    await tester.pumpAndSettle();
+    await openSync(tester);
+
+    await tapVisible(tester, find.text('Show code'));
+    await tester.pumpAndSettle();
+    expect(auth.asked, ['Show the join code']);
+    expect(find.byKey(const Key('join-code-view')), findsNothing, reason: 'refused, so not shown');
+
+    await tapVisible(tester, find.byKey(const Key('sync-rekey')));
+    await tester.pumpAndSettle();
+    expect(auth.asked.last, 'Re-key the vault');
+    expect(find.text('Re-key the vault'), findsOneWidget, reason: 'only the card; no passphrase asked');
+
+    await tapVisible(tester, find.byTooltip('Remove device'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('sync-remove-confirm')));
+    await tester.pumpAndSettle();
+    expect(auth.asked.last, 'Remove Phone from the vault');
+    expect(engine.syncCalls.where((c) => c.startsWith('remove')), isEmpty);
+
+    auth.answer = true;
+    await tapVisible(tester, find.text('Show code'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('join-code-view')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 61));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('the join code shows over a dimmed screen for a minute, and hides when the app goes away', (tester) async {
     final engine = FakeEngine()..configured();
     String? copied;
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
       if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+      if (call.method == 'Clipboard.getData') return {'text': copied};
       return null;
     });
     addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
@@ -437,6 +475,7 @@ void main() {
     await tester.pump(const Duration(seconds: 30));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('join-code-view')), findsNothing, reason: 'closed by itself after a minute');
+    expect(copied, '', reason: 'and the code left the clipboard too');
 
     await tapVisible(tester, find.text('Show code'));
     await tester.pumpAndSettle();

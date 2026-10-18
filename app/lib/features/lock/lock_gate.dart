@@ -1,4 +1,8 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart' hide LockState;
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
@@ -25,6 +29,16 @@ class _LockGateState extends ConsumerState<LockGate> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _hideFromRecents(ref.read(appLockProvider).settings.appLock);
+  }
+
+  static const _privacy = MethodChannel('dev.promptly/privacy');
+
+  /// Android also keeps no picture of the app for its recent apps screen
+  /// while the app lock is on; the cover can come too late for that.
+  void _hideFromRecents(bool hide) {
+    if (kIsWeb || !Platform.isAndroid) return;
+    _privacy.invokeMethod<void>('hideFromRecents', hide).catchError((_) {});
   }
 
   @override
@@ -42,6 +56,8 @@ class _LockGateState extends ConsumerState<LockGate> with WidgetsBindingObserver
     final lock = ref.read(appLockProvider.notifier);
     final last = _last;
     _last = s;
+    final cover = _phone && ref.read(appLockProvider).settings.appLock && s != AppLifecycleState.resumed;
+    if (cover != _covered) setState(() => _covered = cover);
     switch (s) {
       case AppLifecycleState.hidden:
         if (last != AppLifecycleState.paused) lock.wentAway();
@@ -57,7 +73,15 @@ class _LockGateState extends ConsumerState<LockGate> with WidgetsBindingObserver
 
   /// The app is shut away while locked, and while the passcode is asked
   /// for, so no key press, paste or soft keyboard input reaches it.
-  static bool _shut(LockState s) => s.locked || s.passcodeRequest != null;
+  static bool _shut(LockState s) => s.shut;
+
+  /// On a phone with the app lock on, the app is covered whenever it is
+  /// not in front, so the picture the app switcher keeps of it shows
+  /// nothing. Computers report a window that merely lost focus the same
+  /// way, so they are left alone.
+  bool _covered = false;
+
+  static bool get _phone => !kIsWeb && (Platform.isAndroid || Platform.isIOS);
 
   void _onShut(bool? was, bool now) {
     if (now == (was ?? false)) return;
@@ -78,6 +102,7 @@ class _LockGateState extends ConsumerState<LockGate> with WidgetsBindingObserver
   @override
   Widget build(BuildContext context) {
     ref.listen(appLockProvider.select(_shut), _onShut);
+    ref.listen(appLockProvider.select((s) => s.settings.appLock), (_, on) => _hideFromRecents(on));
     final state = ref.watch(appLockProvider);
     final request = state.passcodeRequest;
     final shut = _shut(state);
@@ -101,7 +126,25 @@ class _LockGateState extends ConsumerState<LockGate> with WidgetsBindingObserver
             key: ObjectKey(request),
             initialEntries: [OverlayEntry(builder: (_) => _PasscodePrompt(request: request))],
           ),
+        if (_covered && !state.locked) const _Cover(),
       ],
+    );
+  }
+}
+
+/// What the app switcher sees of a locked-down app: its colour and a lock.
+class _Cover extends StatelessWidget {
+  const _Cover();
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return Positioned.fill(
+      key: const Key('privacy-cover'),
+      child: ColoredBox(
+        color: t.background,
+        child: Center(child: Icon(Icons.lock_outline, size: 48, color: t.accent)),
+      ),
     );
   }
 }

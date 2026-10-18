@@ -2,8 +2,9 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
+
+import '../../core/clipboard.dart';
 
 /// How long the join code stays up (VAULT.md section 11).
 const joinCodeShownFor = Duration(seconds: 60);
@@ -140,7 +141,7 @@ class _JoinCodeViewState extends State<JoinCodeView> with WidgetsBindingObserver
                           side: const BorderSide(color: Colors.white54),
                         ),
                         onPressed: () async {
-                          await Clipboard.setData(ClipboardData(text: widget.payload));
+                          await copySecret(widget.payload);
                           if (mounted) setState(() => _copied = true);
                         },
                         icon: const Icon(Icons.copy, size: 18),

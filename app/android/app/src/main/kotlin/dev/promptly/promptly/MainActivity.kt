@@ -28,6 +28,20 @@ class MainActivity : FlutterFragmentActivity() {
                     else -> result.notImplemented()
                 }
             }
+        // With the app lock on, the recent apps screen shows no picture of
+        // the app (lib/features/lock/lock_gate.dart). Android 13 and later.
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.promptly/privacy")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hideFromRecents" -> {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            setRecentsScreenshotEnabled(call.arguments != true)
+                        }
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
     }
 
     // Start the service for the first open session, update its count after

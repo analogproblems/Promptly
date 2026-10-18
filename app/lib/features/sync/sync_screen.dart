@@ -1,10 +1,10 @@
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/clipboard.dart';
 import '../../core/engine/engine.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
@@ -598,8 +598,8 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
                     tooltip: 'Copy',
                     icon: const Icon(Icons.copy),
                     onPressed: () async {
-                      await Clipboard.setData(ClipboardData(text: widget.result.recoveryCode));
-                      if (context.mounted) notYet(context, 'Copied. Paste it somewhere safe, then clear the clipboard.');
+                      await copySecret(widget.result.recoveryCode);
+                      if (context.mounted) notYet(context, 'Copied. Paste it somewhere safe; it leaves the clipboard after a minute.');
                     },
                   ),
                 ],
@@ -775,6 +775,7 @@ class _ConfiguredView extends ConsumerWidget {
   }
 
   Future<void> _remove(BuildContext context, WidgetRef ref, SyncDevice d) async {
+    final lock = ref.read(appLockProvider.notifier);
     final choice = await showDialog<_RemoveChoice>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -810,6 +811,8 @@ class _ConfiguredView extends ConsumerWidget {
     final engine = ref.read(engineProvider);
     final pending = ref.read(pendingRecoveryProvider.notifier);
     final fail = _failNote(context);
+    if (!await lock.confirmVaultAccess('Remove ${d.name} from the vault')) return;
+    if (!context.mounted) return;
     // Asked before anything happens, so cancelling it removes nothing.
     final passphrase = choice == _RemoveChoice.removeAndRekey ? await _askRekeyPassphrase(context) : null;
     if (choice == _RemoveChoice.removeAndRekey && passphrase == null) return;
@@ -853,14 +856,21 @@ class _ConfiguredView extends ConsumerWidget {
     final engine = ref.read(engineProvider);
     final pending = ref.read(pendingRecoveryProvider.notifier);
     final fail = _failNote(context);
+    if (!await ref.read(appLockProvider.notifier).confirmVaultAccess('Re-key the vault')) return;
+    if (!context.mounted) return;
     final passphrase = await _askRekeyPassphrase(context);
     if (passphrase != null) await _rotate(fail, engine, pending, passphrase);
   }
 
-  void _showQr(BuildContext context, WidgetRef ref) {
+  /// The join code opens the whole vault, so it is shown only after a
+  /// fresh check.
+  Future<void> _showQr(BuildContext context, WidgetRef ref) async {
+    final engine = ref.read(engineProvider);
+    if (!await ref.read(appLockProvider.notifier).confirmVaultAccess('Show the join code')) return;
+    if (!context.mounted) return;
     final String? payload;
     try {
-      payload = ref.read(engineProvider).syncQrPayload();
+      payload = engine.syncQrPayload();
     } catch (e) {
       notYet(context, 'Could not make a code: $e');
       return;

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../core/clipboard.dart';
 import '../../core/engine/engine.dart';
 import '../../core/file_picker.dart';
 import '../../core/theme/theme.dart';
@@ -306,9 +307,9 @@ class _ExportKeyDialogState extends ConsumerState<ExportKeyDialog> {
   void _copy() {
     final text = _text();
     if (text == null) return;
-    Clipboard.setData(ClipboardData(text: text));
+    copySecret(text);
     Navigator.pop(context);
-    notYet(context, 'Private key copied. Paste it where it goes, then copy something else over it.');
+    notYet(context, 'Private key copied. Paste it where it goes; it leaves the clipboard after a minute.');
   }
 
   Future<void> _save(SaveTextFile save) async {

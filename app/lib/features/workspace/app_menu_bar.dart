@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/tokens.dart';
+import '../lock/app_lock.dart';
 import 'app_shortcuts.dart';
 import 'command_palette.dart';
 import 'desktop_actions.dart';
@@ -38,28 +39,33 @@ mixin _MenuShortcuts<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     final actions = DesktopActions(context, ref);
+    // The registry sits above the lock screen, so a shortcut would reach
+    // the sessions behind it: while the app is shut away they do nothing.
+    Intent run(VoidCallback f) => VoidCallbackIntent(() {
+          if (!ref.read(appLockProvider).shut) f();
+        });
     _shortcuts?.dispose();
     _shortcuts = ShortcutRegistry.of(context).addAll(<ShortcutActivator, Intent>{
-      AppShortcuts.newTab: VoidCallbackIntent(actions.newTab),
-      AppShortcuts.closePane: VoidCallbackIntent(actions.closePane),
-      AppShortcuts.nextTab: VoidCallbackIntent(actions.nextTab),
-      AppShortcuts.previousTab: VoidCallbackIntent(actions.previousTab),
-      AppShortcuts.splitRight: VoidCallbackIntent(actions.splitRight),
-      AppShortcuts.splitDown: VoidCallbackIntent(actions.splitDown),
-      AppShortcuts.hostsPanel: VoidCallbackIntent(actions.toggleHostsPanel),
-      AppShortcuts.palette: VoidCallbackIntent(() => showCommandPalette(context, ref)),
-      AppShortcuts.find: VoidCallbackIntent(actions.find),
-      AppShortcuts.copy: VoidCallbackIntent(actions.copy),
-      AppShortcuts.paste: VoidCallbackIntent(actions.paste),
+      AppShortcuts.newTab: run(actions.newTab),
+      AppShortcuts.closePane: run(actions.closePane),
+      AppShortcuts.nextTab: run(actions.nextTab),
+      AppShortcuts.previousTab: run(actions.previousTab),
+      AppShortcuts.splitRight: run(actions.splitRight),
+      AppShortcuts.splitDown: run(actions.splitDown),
+      AppShortcuts.hostsPanel: run(actions.toggleHostsPanel),
+      AppShortcuts.palette: run(() => showCommandPalette(context, ref)),
+      AppShortcuts.find: run(actions.find),
+      AppShortcuts.copy: run(actions.copy),
+      AppShortcuts.paste: run(actions.paste),
       AppShortcuts.quit: VoidCallbackIntent(actions.quit),
-      AppShortcuts.focusLeft: VoidCallbackIntent(() => actions.focus(PaneDirection.left)),
-      AppShortcuts.focusRight: VoidCallbackIntent(() => actions.focus(PaneDirection.right)),
-      AppShortcuts.focusUp: VoidCallbackIntent(() => actions.focus(PaneDirection.up)),
-      AppShortcuts.focusDown: VoidCallbackIntent(() => actions.focus(PaneDirection.down)),
-      AppShortcuts.zoomIn: VoidCallbackIntent(actions.zoomIn),
-      AppShortcuts.zoomOut: VoidCallbackIntent(actions.zoomOut),
-      AppShortcuts.zoomReset: VoidCallbackIntent(actions.zoomReset),
-      for (var i = 0; i < 9; i++) AppShortcuts.tab(i): VoidCallbackIntent(() => actions.selectTab(i)),
+      AppShortcuts.focusLeft: run(() => actions.focus(PaneDirection.left)),
+      AppShortcuts.focusRight: run(() => actions.focus(PaneDirection.right)),
+      AppShortcuts.focusUp: run(() => actions.focus(PaneDirection.up)),
+      AppShortcuts.focusDown: run(() => actions.focus(PaneDirection.down)),
+      AppShortcuts.zoomIn: run(actions.zoomIn),
+      AppShortcuts.zoomOut: run(actions.zoomOut),
+      AppShortcuts.zoomReset: run(actions.zoomReset),
+      for (var i = 0; i < 9; i++) AppShortcuts.tab(i): run(() => actions.selectTab(i)),
     });
   }
 
@@ -323,8 +329,12 @@ class _SystemMenuBarState extends ConsumerState<SystemMenuBar> with _MenuShortcu
       if (PlatformProvidedMenuItem.hasMenu(type)) PlatformProvidedMenuItem(type: type),
   ];
 
-  static PlatformMenuItem _item(String label, VoidCallback? onSelected, [MenuSerializableShortcut? shortcut]) =>
-      PlatformMenuItem(label: label, onSelected: onSelected, shortcut: shortcut);
+  /// The app is shut away behind the lock: the Mac's menu bar stays
+  /// clickable, so its items do nothing then.
+  bool _shut = false;
+
+  PlatformMenuItem _item(String label, VoidCallback? onSelected, [MenuSerializableShortcut? shortcut]) =>
+      PlatformMenuItem(label: label, onSelected: _shut ? null : onSelected, shortcut: shortcut);
 
   /// A group with a separator around it; none when it would be empty.
   static List<PlatformMenuItem> _group(List<PlatformMenuItem> members) =>
@@ -333,6 +343,7 @@ class _SystemMenuBarState extends ConsumerState<SystemMenuBar> with _MenuShortcu
   @override
   Widget build(BuildContext context) {
     final actions = DesktopActions(context, ref);
+    _shut = ref.watch(appLockProvider.select((s) => s.shut));
     final hasSession = ref.watch(focusedSessionProvider) != null;
     final hostsPanel = ref.watch(workspaceProvider.select((s) => s.hostsPanel));
     void go(String location) => context.go(location);
@@ -355,7 +366,12 @@ class _SystemMenuBarState extends ConsumerState<SystemMenuBar> with _MenuShortcu
             ),
             ..._group([
               // Promptly's own quit, so open sessions are closed properly.
-              _item('Quit Promptly', actions.quit, const SingleActivator(LogicalKeyboardKey.keyQ, meta: true)),
+              // Quitting shows nothing, so it works while locked too.
+              PlatformMenuItem(
+                label: 'Quit Promptly',
+                onSelected: actions.quit,
+                shortcut: const SingleActivator(LogicalKeyboardKey.keyQ, meta: true),
+              ),
             ]),
           ],
         ),

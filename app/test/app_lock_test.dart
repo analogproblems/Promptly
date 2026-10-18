@@ -10,7 +10,9 @@ import 'package:promptly/features/lock/app_lock.dart';
 import 'package:promptly/features/lock/lock_gate.dart';
 import 'package:promptly/features/sessions/connect_flow.dart';
 
-import 'widget_test.dart' show FakeEngine, appWith, hostJson, scrollTap, tapVisible;
+import 'package:promptly/features/workspace/workspace.dart';
+
+import 'widget_test.dart' show FakeEngine, appWith, desktopWindow, hostJson, scrollTap, tapVisible;
 
 class FakeAuthenticator implements Authenticator {
   FakeAuthenticator({this.system = true, this.answer = true});
@@ -399,5 +401,34 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Promptly is locked'), findsNothing);
     expect(find.byKey(hostRow), findsOneWidget);
+  });
+
+  testWidgets("a locked app's keyboard shortcuts do nothing", (tester) async {
+    desktopWindow(tester);
+    final engine = FakeEngine()..settings['app_lock'] = 'true';
+    final auth = FakeAuthenticator();
+    await tester.pumpWidget(appWith(engine, authenticator: auth));
+    await tester.pumpAndSettle();
+    final container = ProviderScope.containerOf(tester.element(find.byType(LockGate)));
+    bool panel() => container.read(workspaceProvider).hostsPanel;
+    final before = panel();
+    Future<void> toggle() async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+    }
+
+    auth.answer = false;
+    container.read(appLockProvider.notifier).lockNow();
+    await tester.pumpAndSettle();
+    expect(find.text('Promptly is locked'), findsOneWidget);
+    // The lock screen's Unlock button has the keyboard, and the app's
+    // shortcuts are registered above it.
+    expect(FocusManager.instance.primaryFocus, isNotNull);
+    await toggle();
+    expect(panel(), before, reason: 'locked, the shortcut does nothing');
   });
 }
