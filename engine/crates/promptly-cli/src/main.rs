@@ -219,10 +219,21 @@ fn run() -> Result<()> {
                 },
         } => {
             let (backend, unlocked) = open_unlocked(&vault, "a passphrase")?;
-            // Asked first, so a typo does not leave the job half done.
+            // Asked and checked first, so a passphrase the key cannot take
+            // does not leave the job half done.
             let new = rekey.then(new_passphrase).transpose()?;
-            let name = commands::remove_device(&*backend, &unlocked, &device)?;
-            eprintln!("removed {name}");
+            if let Some(new) = &new {
+                commands::check_new_passphrase(&unlocked, new)?;
+            }
+            let removed = commands::remove_device(&*backend, &unlocked, &device)?;
+            match (removed.already, &new) {
+                (false, _) => eprintln!("removed {}", removed.name),
+                (true, Some(_)) => eprintln!("{} was removed already", removed.name),
+                (true, None) => eprintln!(
+                    "{} was removed already. If it was lost or stolen, run `promptly rotate-dek` so it can read nothing written from now on.",
+                    removed.name
+                ),
+            }
             if let Some(new) = new {
                 print_recovery_code(&commands::rotate_dek(&*backend, &unlocked, &new)?);
             }

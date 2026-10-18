@@ -718,13 +718,9 @@ pub fn ssh_config(
                             let path = match key_files.get(&identity_id.to_string()) {
                                 Some(path) => path.clone(),
                                 None => {
-                                    let mut path = dir.join(&safe);
-                                    let mut n = 2;
-                                    while key_files.values().any(|p| *p == path) {
-                                        path = dir.join(format!("{safe}-{n}"));
-                                        n += 1;
-                                    }
-                                    write_private(&path, value.as_bytes())?;
+                                    let taken: Vec<&PathBuf> = key_files.values().collect();
+                                    let path =
+                                        write_key_file(dir, &safe, value.as_bytes(), &taken)?;
                                     key_files.insert(identity_id.to_string(), path.clone());
                                     path
                                 }
@@ -742,25 +738,57 @@ pub fn ssh_config(
     Ok(out)
 }
 
-fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+/// Write a private key into `dir` as `name`, or `name-2` and so on when
+/// that is taken: by another key in this run, or by a file already there
+/// that holds something else, such as the user's own `~/.ssh/id_ed25519`.
+/// A file already holding this key is used as it is. Only a folder made
+/// here is made private; one that was there, such as the home folder, is
+/// left alone. Returns where the key is.
+fn write_key_file(dir: &Path, name: &str, bytes: &[u8], taken: &[&PathBuf]) -> Result<PathBuf> {
+    if !dir.exists() {
+        std::fs::create_dir_all(dir)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
         }
     }
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
+    let mut n = 1;
+    loop {
+        let path = match n {
+            1 => dir.join(name),
+            _ => dir.join(format!("{name}-{n}")),
+        };
+        n += 1;
+        if taken.contains(&&path) {
+            continue;
+        }
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        match opts.open(&path) {
+            Ok(mut file) => {
+                use std::io::Write;
+                file.write_all(bytes)?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if std::fs::read(&path).ok().as_deref() != Some(bytes) {
+                    continue;
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        return Ok(path);
     }
-    use std::io::Write;
-    opts.open(path)?.write_all(bytes)?;
-    Ok(())
 }
 
 pub fn change_passphrase(
@@ -806,10 +834,7 @@ pub fn rotate_dek(
     unlocked: &Unlocked,
     new_passphrase: &str,
 ) -> Result<String> {
-    anyhow::ensure!(
-        unlocked.manifest.unlock(new_passphrase).is_err(),
-        "choose a passphrase the vault does not have now: whoever knows the current one could open the new key with it"
-    );
+    check_new_passphrase(unlocked, new_passphrase)?;
     let (store, vault) = fresh(backend, unlocked)?;
     let known = vault
         .check_manifest(Some(&unlocked.manifest.keys_fingerprint()))
@@ -970,11 +995,31 @@ pub fn list_devices(backend: &dyn Backend, unlocked: &Unlocked) -> Result<String
     Ok(out)
 }
 
+/// Whether `new_passphrase` may lock a new key: not one the vault has now,
+/// since whoever knows that could open the new key with it. Checked before
+/// anything changes, as well as by [`rotate_dek`].
+pub fn check_new_passphrase(unlocked: &Unlocked, new_passphrase: &str) -> Result<()> {
+    anyhow::ensure!(
+        unlocked.manifest.unlock(new_passphrase).is_err(),
+        "choose a passphrase the vault does not have now: whoever knows the current one could open the new key with it"
+    );
+    Ok(())
+}
+
+/// A device [`remove_device`] was asked to remove.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Removed {
+    pub name: String,
+    /// It had been removed before, and nothing changed now.
+    pub already: bool,
+}
+
 /// Mark a device removed (VAULT.md section 11), found by its id or its
 /// name. Every device then ignores what it writes after the last of its
-/// files read here, and it stops syncing once it finds out. Returns its
-/// name. It keeps the copy it has: rotate the key as well if it was lost.
-pub fn remove_device(backend: &dyn Backend, unlocked: &Unlocked, who: &str) -> Result<String> {
+/// files read here, and it stops syncing once it finds out. It keeps the
+/// copy it has: rotate the key as well if it was lost. One removed before
+/// is left as it is, so a re-run can go on to rotate the key.
+pub fn remove_device(backend: &dyn Backend, unlocked: &Unlocked, who: &str) -> Result<Removed> {
     let (store, vault) = fresh(backend, unlocked)?;
     ensure_not_removed(&store)?;
     let records: Vec<(String, Value)> = store
@@ -1020,10 +1065,17 @@ pub fn remove_device(backend: &dyn Backend, unlocked: &Unlocked, who: &str) -> R
         device != *store.device_id(),
         "that is this tool; to stop it syncing, stop running it"
     );
-    anyhow::ensure!(
-        record.get(policy::REMOVED_AFTER).is_none_or(Value::is_null),
-        "that device was removed already"
-    );
+    let name = record["name"]
+        .as_str()
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| record_id_of(&device));
+    if !record.get(policy::REMOVED_AFTER).is_none_or(Value::is_null) {
+        return Ok(Removed {
+            name,
+            already: true,
+        });
+    }
     let after = store
         .sync_state()?
         .markers
@@ -1033,11 +1085,10 @@ pub fn remove_device(backend: &dyn Backend, unlocked: &Unlocked, who: &str) -> R
     record[policy::REMOVED_AFTER] = json!(after);
     store.put(Col::Devices, &record_id_of(&device), &record.to_string())?;
     push_all(&store, vault)?;
-    Ok(record["name"]
-        .as_str()
-        .filter(|n| !n.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| record_id_of(&device)))
+    Ok(Removed {
+        name,
+        already: false,
+    })
 }
 
 #[cfg(test)]
@@ -1142,14 +1193,20 @@ mod tests {
         // The phone is removed: the laptop stops listening to it.
         assert_eq!(
             remove_device(&backend, &unlocked, "Phone").unwrap(),
-            "phone"
+            Removed {
+                name: "phone".into(),
+                already: false
+            }
         );
         let list = list_devices(&backend, &unlocked).unwrap();
         assert!(
             list.contains("phone (linux), joined 2026-01-01, removed "),
             "{list}"
         );
-        assert!(remove_device(&backend, &unlocked, "phone").is_err());
+        assert!(
+            remove_device(&backend, &unlocked, "phone").unwrap().already,
+            "a second time changes nothing, so --rekey can go on"
+        );
         let host_id = "0192f3a0-0000-7000-8000-000000000007";
         phone
             .put(
@@ -1177,6 +1234,8 @@ mod tests {
             rotate_dek(&backend, &unlocked, "pass").is_err(),
             "not the same passphrase"
         );
+        assert!(check_new_passphrase(&unlocked, "pass").is_err());
+        assert!(check_new_passphrase(&unlocked, "new pass").is_ok());
         let code = rotate_dek(&backend, &unlocked, "new pass").unwrap();
         let manifest = Vault::read_manifest(&backend).unwrap();
         assert!(manifest.unlock("pass").is_err());
@@ -1481,6 +1540,39 @@ mod tests {
             .starts_with(b"-----BEGIN"));
         assert_eq!(std::fs::read(keys.join("laptop-2")).unwrap(), b"second key");
         assert_eq!(config.matches("IdentityFile ").count(), 2, "{config}");
+        assert_eq!(
+            ssh_config(&backend, &unlocked, Some(&keys)).unwrap(),
+            config,
+            "a second run finds its own files"
+        );
+
+        // A folder with a file of the same name in it, such as ~/.ssh with
+        // the user's own key: that file is left alone.
+        let ssh = dir.join("dot-ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        std::fs::write(ssh.join("laptop"), b"my own key").unwrap();
+        let config = ssh_config(&backend, &unlocked, Some(&ssh)).unwrap();
+        assert_eq!(std::fs::read(ssh.join("laptop")).unwrap(), b"my own key");
+        assert!(std::fs::read(ssh.join("laptop-2"))
+            .unwrap()
+            .starts_with(b"-----BEGIN"));
+        assert_eq!(std::fs::read(ssh.join("laptop-3")).unwrap(), b"second key");
+        assert!(
+            !config.contains(&format!("{}\n", ssh.join("laptop").display())),
+            "{config}"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&ssh.join("laptop-2")), 0o600);
+            assert_ne!(
+                mode(&ssh),
+                0o700,
+                "a folder that was there is left as it was"
+            );
+            assert_eq!(mode(&keys), 0o700);
+        }
 
         // Import a new host and a secret in plain text; the app pulls it back.
         let n = import(&backend, &unlocked, &json!({
@@ -1647,7 +1739,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            remove_device(&backend, &unlocked, "laptop").unwrap(),
+            remove_device(&backend, &unlocked, "laptop").unwrap().name,
             "laptop"
         );
     }
