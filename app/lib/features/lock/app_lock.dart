@@ -115,6 +115,10 @@ class LockState {
   /// Null until known, and when asking failed.
   final bool? systemAvailable;
 
+  /// The app is shut away: locked, or waiting for the passcode. Nothing
+  /// may reach it then, not even a keyboard shortcut or a menu.
+  bool get shut => locked || passcodeRequest != null;
+
   LockState copyWith({
     LockSettings? settings,
     bool? locked,
@@ -234,6 +238,14 @@ class AppLock extends Notifier<LockState> {
   Future<bool> unlockKeys() async {
     if (!state.settings.keyUnlock || _recent) return true;
     return check('Unlock your SSH key', whenNothingToAsk: true);
+  }
+
+  /// Before showing or changing what opens the whole vault (a join code,
+  /// re-keying, removing a device): a fresh check whenever either lock is
+  /// on, since this is worth more than any one key.
+  Future<bool> confirmVaultAccess(String reason) async {
+    if (!state.settings.keyUnlock && !state.settings.appLock) return true;
+    return check(reason, whenNothingToAsk: true);
   }
 
   /// Open the app from the lock screen.
