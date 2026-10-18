@@ -809,9 +809,9 @@ fn reconcile_secrets(store: &Store, dek: &Dek, joining: bool) -> Result<(), Stri
 /// One deleted elsewhere was removed from disk by the pull, so it does
 /// not come back either. Those in `edited`, saved here while sync was off,
 /// go up whatever the vault holds; without `all`, only those do. One of
-/// those kept on this device has its record here brought up to date, which
-/// stays here like the rest of them, so the next round does not bring back
-/// the copy from before.
+/// those kept on this device that already has a record has it brought up
+/// to date, which stays here like the rest of them, so the next round does
+/// not bring back the copy from before.
 fn upload_local_secrets(
     store: &Store,
     dek: &Dek,
@@ -821,7 +821,15 @@ fn upload_local_secrets(
     let kept = store.with_state(policy::kept_on_device);
     for id in secrets().list().map_err(|e| e.to_string())? {
         let is_kept = kept.contains(&(Collection::Secrets, id.clone()));
-        if id == DEK_SECRET_ID || (is_kept && !edited.contains(&id)) {
+        // A kept one with no record has nothing to bring back, and a new
+        // record now would miss the list of what stays here, made before.
+        let has_record = || {
+            store
+                .get(Collection::Secrets, &id)
+                .map(|r| r.is_some())
+                .unwrap_or(true)
+        };
+        if id == DEK_SECRET_ID || (is_kept && (!edited.contains(&id) || !has_record())) {
             continue;
         }
         if !all && !edited.contains(&id) {
@@ -2298,6 +2306,15 @@ mod tests {
         // Saved again while sync was off, then the join.
         secrets().put(&pw, b"B").unwrap();
         note_edited_offline(&store, &pw).unwrap();
+        // Another kept one, saved before there was ever a record of it.
+        let fresh = format!("fresh-{}", uuid::Uuid::new_v4());
+        let host2 = json!({"id": "h2", "label": "db", "hostname": "10.0.0.2",
+            "sync": "local_only", "auth": {"password_secret_id": fresh}});
+        store
+            .put(Collection::Hosts, "h2", &host2.to_string())
+            .unwrap();
+        secrets().put(&fresh, b"D").unwrap();
+        note_edited_offline(&store, &fresh).unwrap();
         // One that travels, to show the vault is being written.
         let shared = format!("shared-{}", uuid::Uuid::new_v4());
         secrets().put(&shared, b"C").unwrap();
@@ -2313,6 +2330,7 @@ mod tests {
         store.push(&vault).unwrap();
 
         assert_eq!(secrets().get(&pw).unwrap().as_deref(), Some(&b"B"[..]));
+        assert_eq!(secrets().get(&fresh).unwrap().as_deref(), Some(&b"D"[..]));
         let other = Store::open_in_memory().unwrap();
         let elsewhere = Vault::open(&backend, DeviceId::generate(), "a long passphrase").unwrap();
         other.pull(&elsewhere).unwrap();
@@ -2321,8 +2339,12 @@ mod tests {
             other.get(Collection::Secrets, &pw).unwrap().is_none(),
             "never reaches the vault"
         );
+        assert!(
+            other.get(Collection::Secrets, &fresh).unwrap().is_none(),
+            "nor does one with no record before"
+        );
         assert!(other.get(Collection::Hosts, "h").unwrap().is_none());
-        for s in [&pw, &shared] {
+        for s in [&pw, &shared, &fresh] {
             secrets().delete(s).unwrap();
         }
         let _ = std::fs::remove_dir_all(&root);
