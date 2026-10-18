@@ -1483,7 +1483,10 @@ mod tests {
             // As the store does it: deleted, then written whole, which
             // stamps the record as created again.
             let mut fields = a.state.get(*col, id).unwrap();
-            fields.insert(crate::model::CREATED_AT.into(), json!("2026-10-18T00:00:00Z"));
+            fields.insert(
+                crate::model::CREATED_AT.into(),
+                json!("2026-10-18T00:00:00Z"),
+            );
             a.del(*col, id);
             a.put(*col, id, Value::Object(fields));
         }
