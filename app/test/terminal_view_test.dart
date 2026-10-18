@@ -418,6 +418,64 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('on Windows AltGr types its character ahead of Ctrl shortcuts', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    final clipboard = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      clipboard.add(call.method);
+      return call.method == 'Clipboard.getData' ? {'text': 'pasted'} : null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller)),
+      ),
+    );
+    await tester.pump();
+    controller.setFontSize(18);
+    engine.written.clear();
+
+    // Windows reports AltGr as Ctrl+Alt.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altRight);
+    // A German keyboard types } with AltGr+0 and ~ with AltGr and +.
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit0, character: '}');
+    await tester.sendKeyEvent(LogicalKeyboardKey.add, character: '~', physicalKey: PhysicalKeyboardKey.bracketRight, platform: 'web');
+    await tester.pump();
+    expect(engine.written, [
+      [0x7d],
+      [0x7e],
+    ]);
+    expect(controller.fontSize, 18, reason: 'not Ctrl+0 or Ctrl++ for the text size');
+
+    // With Shift too, a character still wins over paste and the tab shortcut.
+    engine.written.clear();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV, character: '‘');
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyT, character: 'Ŧ');
+    await tester.pump();
+    expect(engine.written, [utf8.encode('‘'), utf8.encode('Ŧ')]);
+    expect(clipboard, isNot(contains('Clipboard.getData')), reason: 'not Ctrl+Shift+V');
+    expect(engine.pasted, isEmpty);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+
+    // Ctrl+Alt with no character is still Ctrl+Alt.
+    engine.written.clear();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC, character: '');
+    await tester.pump();
+    expect(engine.written, [
+      [0x1b, 0x03],
+    ]);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altRight);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    controller.dispose();
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('dragging selects, Ctrl+Shift+C copies, typing clears, double click picks a word', (tester) async {
     final engine = RecordingEngine()..selection = 'hello';
     final controller = TerminalController(engine: engine, id: 1, label: 'test');

@@ -28,10 +28,7 @@ abstract final class KeyMapper {
   static const _esc = 0x1b;
 
   /// `capsLocked` is whether the system has Caps Lock on, which only
-  /// matters with [KeyOptions.capsLockAsEscape]. With `ctrlAltTypes`, a
-  /// Ctrl+Alt press that comes with a character types that character:
-  /// Windows reports AltGr as Ctrl+Alt, and AltGr is how many layouts
-  /// type `@`, `€` or `ą`.
+  /// matters with [KeyOptions.capsLockAsEscape].
   static List<int>? bytesFor(
     KeyEvent event, {
     required bool appCursor,
@@ -40,7 +37,6 @@ abstract final class KeyMapper {
     bool shift = false,
     bool capsLockAsEscape = false,
     bool capsLocked = false,
-    bool ctrlAltTypes = false,
   }) {
     if (event is KeyUpEvent) return null;
     final key = event.logicalKey;
@@ -96,13 +92,6 @@ abstract final class KeyMapper {
           key == LogicalKeyboardKey.tab ||
           key == LogicalKeyboardKey.escape;
       return alt && plain ? [_esc, ...bytes] : bytes;
-    }
-
-    if (ctrl && alt && ctrlAltTypes) {
-      final ch = event.character;
-      if (ch != null && ch.isNotEmpty && ch.codeUnitAt(0) >= 0x20 && ch.codeUnitAt(0) != 0x7f) {
-        return utf8.encode(ch);
-      }
     }
 
     if (ctrl) {
