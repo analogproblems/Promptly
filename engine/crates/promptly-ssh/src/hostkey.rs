@@ -436,9 +436,13 @@ impl FileKnownHosts {
         (!host.is_empty()).then(|| (host.to_ascii_lowercase(), port))
     }
 
+    /// How a host is written in known_hosts. Host names are matched
+    /// without regard to case, and OpenSSH lowercases a name before
+    /// hashing it, so the entry is always lowercase.
     fn entry(host: &str, port: u16) -> String {
+        let host = host.to_ascii_lowercase();
         if port == 22 {
-            host.to_string()
+            host
         } else {
             format!("[{host}]:{port}")
         }
@@ -517,7 +521,7 @@ impl KnownHosts for FileKnownHosts {
         let mut out = String::new();
         for line in existing.lines() {
             let first = line.split_whitespace().next().unwrap_or("");
-            if first.split(',').any(|h| h == entry) {
+            if first.split(',').any(|h| h.eq_ignore_ascii_case(&entry)) {
                 continue;
             }
             out.push_str(line);
@@ -594,6 +598,29 @@ mod tests {
             store.check("example.test", 22, &other),
             HostKeyStatus::Changed
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn trusting_a_changed_key_drops_the_old_one_whatever_the_capitals() {
+        let dir = std::env::temp_dir().join(format!("promptly-kh-case-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = FileKnownHosts::new(vec![], dir.join("known_hosts"));
+        let old = key();
+        let new = PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBzqY1Sy2Yv3n4Ck9Q3h8s9Dq7mEcKq2FjG5lHhq6pQZ",
+        )
+        .unwrap();
+        store.remember("server", 22, &old).unwrap();
+        assert_eq!(store.check("Server", 22, &new), HostKeyStatus::Changed);
+        store.remember("Server", 22, &new).unwrap();
+        assert_eq!(store.check("Server", 22, &new), HostKeyStatus::Known);
+        assert_eq!(
+            store.check("Server", 22, &old),
+            HostKeyStatus::Changed,
+            "the old key is no longer trusted"
+        );
+        assert_eq!(store.check("server", 22, &old), HostKeyStatus::Changed);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -685,6 +712,11 @@ mod tests {
             store.check("example.test", 22, &key()),
             HostKeyStatus::Known,
             "odd lines do not hide the good one"
+        );
+        assert_eq!(
+            store.check("Example.TEST", 22, &key()),
+            HostKeyStatus::Known,
+            "OpenSSH hashes the lowercase name, so capitals still find it"
         );
         std::fs::write(&user, format!("@revoked example.test {k}\n")).unwrap();
         assert_eq!(
