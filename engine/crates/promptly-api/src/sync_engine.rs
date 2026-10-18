@@ -1911,6 +1911,10 @@ mod tests {
         );
         let code = rotate_key("fourth passphrase", KdfParams::fast_for_tests()).unwrap();
         assert_eq!(attention(), None);
+        // A key change that could not write its snapshot still returns the
+        // new code; this says why, should the check below ever find nothing.
+        let after = status().unwrap();
+        assert_eq!(after.last_error, None, "warnings: {:?}", after.warnings);
         assert!(Vault::open(&backend, DeviceId::generate(), "other passphrase").is_err());
         assert!(matches!(
             phone_vault.check_manifest(Some(&old_keys)),
