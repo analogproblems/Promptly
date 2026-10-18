@@ -15,7 +15,7 @@ pub mod theme_import;
 pub mod themes;
 
 pub use emulator::{
-    Emulator, EmulatorEvent, SearchHit, SelectKind, DEFAULT_SCROLLBACK, MAX_SCROLLBACK,
+    Emulator, EmulatorEvent, Link, SearchHit, SelectKind, DEFAULT_SCROLLBACK, MAX_SCROLLBACK,
 };
 pub use frame::{flags, CursorShape, CursorState, Frame, RowUpdate};
 pub use mouse::{MouseAction, MouseButton, MouseEvent};

@@ -203,7 +203,7 @@ impl Session {
     }
 
     /// The link under a viewport cell, if any.
-    pub fn link_at(&self, col: u16, line: i32) -> Option<String> {
+    pub fn link_at(&self, col: u16, line: i32) -> Option<promptly_term::Link> {
         self.emulator.lock().unwrap().link_at(col, line)
     }
 

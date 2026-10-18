@@ -360,7 +360,7 @@ abstract class RustLibApi extends BaseApi {
 
   Stream<TerminalEvent> crateApiTerminalTerminalEvents({required int id});
 
-  String? crateApiTerminalTerminalLinkAt({
+  TerminalLink? crateApiTerminalTerminalLinkAt({
     required int id,
     required int col,
     required int line,
@@ -2644,7 +2644,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       );
 
   @override
-  String? crateApiTerminalTerminalLinkAt({
+  TerminalLink? crateApiTerminalTerminalLinkAt({
     required int id,
     required int col,
     required int line,
@@ -2659,7 +2659,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 76)!;
         },
         codec: SseCodec(
-          decodeSuccessData: sse_decode_opt_String,
+          decodeSuccessData: sse_decode_opt_box_autoadd_terminal_link,
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiTerminalTerminalLinkAtConstMeta,
@@ -3418,6 +3418,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TerminalLink dco_decode_box_autoadd_terminal_link(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_terminal_link(raw);
+  }
+
+  @protected
   TerminalMouseButton dco_decode_box_autoadd_terminal_mouse_button(
     dynamic raw,
   ) {
@@ -3725,6 +3731,12 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TerminalFrame? dco_decode_opt_box_autoadd_terminal_frame(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_box_autoadd_terminal_frame(raw);
+  }
+
+  @protected
+  TerminalLink? dco_decode_opt_box_autoadd_terminal_link(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_terminal_link(raw);
   }
 
   @protected
@@ -4189,6 +4201,18 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TerminalLink dco_decode_terminal_link(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return TerminalLink(
+      uri: dco_decode_String(arr[0]),
+      hidden: dco_decode_bool(arr[1]),
+    );
+  }
+
+  @protected
   TerminalMouseAction dco_decode_terminal_mouse_action(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return TerminalMouseAction.values[raw as int];
@@ -4384,6 +4408,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_terminal_frame(deserializer));
+  }
+
+  @protected
+  TerminalLink sse_decode_box_autoadd_terminal_link(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_terminal_link(deserializer));
   }
 
   @protected
@@ -4876,6 +4908,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_box_autoadd_terminal_frame(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  TerminalLink? sse_decode_opt_box_autoadd_terminal_link(
+    SseDeserializer deserializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_terminal_link(deserializer));
     } else {
       return null;
     }
@@ -5439,6 +5484,14 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  TerminalLink sse_decode_terminal_link(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_uri = sse_decode_String(deserializer);
+    var var_hidden = sse_decode_bool(deserializer);
+    return TerminalLink(uri: var_uri, hidden: var_hidden);
+  }
+
+  @protected
   TerminalMouseAction sse_decode_terminal_mouse_action(
     SseDeserializer deserializer,
   ) {
@@ -5689,6 +5742,15 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_terminal_frame(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_terminal_link(
+    TerminalLink self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_terminal_link(self, serializer);
   }
 
   @protected
@@ -6146,6 +6208,19 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_terminal_link(
+    TerminalLink? self,
+    SseSerializer serializer,
+  ) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_terminal_link(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_terminal_mouse_button(
     TerminalMouseButton? self,
     SseSerializer serializer,
@@ -6559,6 +6634,13 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     sse_encode_bool(self.altScreen, serializer);
     sse_encode_bool(self.bracketedPaste, serializer);
     sse_encode_bool(self.mouseReporting, serializer);
+  }
+
+  @protected
+  void sse_encode_terminal_link(TerminalLink self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_String(self.uri, serializer);
+    sse_encode_bool(self.hidden, serializer);
   }
 
   @protected

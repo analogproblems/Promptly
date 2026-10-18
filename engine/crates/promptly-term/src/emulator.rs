@@ -88,6 +88,15 @@ impl EventListener for Listener {
     }
 }
 
+/// A link under a cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    pub uri: String,
+    /// An OSC 8 hyperlink whose text on screen is not its address, so
+    /// where it goes must be shown before it is opened.
+    pub hidden: bool,
+}
+
 pub struct Emulator {
     term: Term<Listener>,
     parser: Processor,
@@ -247,11 +256,33 @@ impl Emulator {
     /// The link under a viewport cell: an OSC 8 hyperlink, or a URL, file
     /// path or IP address written in the text of that row. Only a URL has
     /// `://` in it, which is how the UI tells what to do with one.
-    pub fn link_at(&self, col: u16, line: i32) -> Option<String> {
+    pub fn link_at(&self, col: u16, line: i32) -> Option<Link> {
         let point = self.point_at(col, line);
         let grid = self.term.grid();
-        if let Some(link) = grid[point.line][point.column].hyperlink() {
-            return Some(link.uri().to_string());
+        let row = &grid[point.line];
+        if let Some(link) = row[point.column].hyperlink() {
+            // What it says on screen: the run of cells carrying this link.
+            let same = |c: usize| row[Column(c)].hyperlink().as_ref() == Some(&link);
+            let mut first = point.column.0;
+            while first > 0 && same(first - 1) {
+                first -= 1;
+            }
+            let mut last = point.column.0;
+            while last + 1 < grid.columns() && same(last + 1) {
+                last += 1;
+            }
+            let shown: String = (first..=last)
+                .map(|c| &row[Column(c)])
+                .filter(|cell| {
+                    !cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+                        && !cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+                })
+                .map(|cell| cell.c)
+                .collect();
+            return Some(Link {
+                hidden: shown.trim() != link.uri(),
+                uri: link.uri().to_string(),
+            });
         }
         let (text, columns, wide) = row_text(grid, point.line);
         for found in crate::links::find(&text) {
@@ -261,7 +292,10 @@ impl Emulator {
                 last += 1;
             }
             if point.column.0 >= first && point.column.0 <= last {
-                return Some(text[found.start..found.end].to_string());
+                return Some(Link {
+                    uri: text[found.start..found.end].to_string(),
+                    hidden: false,
+                });
             }
         }
         None
@@ -971,8 +1005,11 @@ mod tests {
             "the comma after the url is not part of it"
         );
         assert_eq!(
-            e.link_at(10, 0).as_deref(),
-            Some("https://example.com/docs"),
+            e.link_at(10, 0),
+            Some(Link {
+                uri: "https://example.com/docs".into(),
+                hidden: false
+            }),
             "trailing punctuation is not part of the link"
         );
         assert_eq!(e.link_at(1, 0), None);
@@ -981,8 +1018,19 @@ mod tests {
         assert_ne!(second.flags[0] & frame::flags::LINK, 0);
         assert_ne!(second.flags[7] & frame::flags::LINK, 0);
         assert_eq!(second.flags[9] & frame::flags::LINK, 0);
-        assert_eq!(e.link_at(2, 1).as_deref(), Some("https://hidden.example/x"));
+        assert_eq!(
+            e.link_at(2, 1),
+            Some(Link {
+                uri: "https://hidden.example/x".into(),
+                hidden: true
+            }),
+            "its text is not where it goes"
+        );
         assert_eq!(e.link_at(12, 1), None);
+
+        // A hyperlink that shows its own address hides nothing.
+        e.feed(b"\r\n\x1b]8;;https://a.example/\x1b\\https://a.example/\x1b]8;;\x1b\\");
+        assert_eq!(e.link_at(3, 2).map(|l| l.hidden), Some(false));
     }
 
     #[test]
@@ -1175,8 +1223,14 @@ mod tests {
         assert_ne!(r.flags[24] & path, 0);
         assert_ne!(r.flags[34] & path, 0);
         assert!(r.flags[36..].iter().all(|f| f & path == 0), "not a version");
-        assert_eq!(e.link_at(10, 0).as_deref(), Some("/var/log/syslog"));
-        assert_eq!(e.link_at(30, 0).as_deref(), Some("10.0.0.1:22"));
+        assert_eq!(
+            e.link_at(10, 0).map(|l| l.uri).as_deref(),
+            Some("/var/log/syslog")
+        );
+        assert_eq!(
+            e.link_at(30, 0).map(|l| l.uri).as_deref(),
+            Some("10.0.0.1:22")
+        );
         assert_eq!(e.link_at(38, 0), None);
     }
 

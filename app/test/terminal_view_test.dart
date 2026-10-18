@@ -101,9 +101,9 @@ class RecordingEngine implements Engine {
   }
 
   @override
-  String? terminalLinkAt(int id, int col, int line) {
+  TerminalLink? terminalLinkAt(int id, int col, int line) {
     calls.add('link $col,$line');
-    return link;
+    return link == null ? null : TerminalLink(uri: link!, hidden: false);
   }
 
   @override
@@ -269,7 +269,7 @@ void main() {
       MaterialApp(
         theme: buildPromptlyTheme(Brightness.dark),
         home: Scaffold(
-          body: TerminalView(controller: controller, onFind: () => findAsked++, onOpenLink: (uri) => opened = uri),
+          body: TerminalView(controller: controller, onFind: () => findAsked++, onOpenLink: (l) => opened = l.uri),
         ),
       ),
     );
@@ -1073,7 +1073,7 @@ void main() {
     Future<TerminalController> touchView(
       WidgetTester tester,
       RecordingEngine engine, {
-      void Function(String uri)? onOpenLink,
+      void Function(TerminalLink link)? onOpenLink,
       void Function(int step)? onSwitchSession,
     }) async {
       final controller = TerminalController(engine: engine, id: 1, label: 'test');
@@ -1131,7 +1131,7 @@ void main() {
         ..link = 'https://example.com/docs'
         ..takesMouse = true;
       String? opened;
-      final controller = await touchView(tester, engine, onOpenLink: (uri) => opened = uri);
+      final controller = await touchView(tester, engine, onOpenLink: (l) => opened = l.uri);
       // A program has the mouse, but a link still wins: a phone has no Ctrl.
       controller.grid
         ..mouseReporting = true

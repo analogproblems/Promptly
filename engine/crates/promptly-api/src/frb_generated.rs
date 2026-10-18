@@ -3805,6 +3805,19 @@ impl SseDecode for Option<crate::api::terminal::TerminalFrame> {
     }
 }
 
+impl SseDecode for Option<crate::api::terminal::TerminalLink> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::terminal::TerminalLink>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<crate::api::terminal::TerminalMouseButton> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -4471,6 +4484,18 @@ impl SseDecode for crate::api::terminal::TerminalFrame {
             alt_screen: var_altScreen,
             bracketed_paste: var_bracketedPaste,
             mouse_reporting: var_mouseReporting,
+        };
+    }
+}
+
+impl SseDecode for crate::api::terminal::TerminalLink {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_uri = <String>::sse_decode(deserializer);
+        let mut var_hidden = <bool>::sse_decode(deserializer);
+        return crate::api::terminal::TerminalLink {
+            uri: var_uri,
+            hidden: var_hidden,
         };
     }
 }
@@ -5656,6 +5681,27 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::terminal::TerminalFrame>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::terminal::TerminalLink {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.uri.into_into_dart().into_dart(),
+            self.hidden.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::terminal::TerminalLink
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::terminal::TerminalLink>
+    for crate::api::terminal::TerminalLink
+{
+    fn into_into_dart(self) -> crate::api::terminal::TerminalLink {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::terminal::TerminalMouseAction {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
@@ -6209,6 +6255,16 @@ impl SseEncode for Option<crate::api::terminal::TerminalFrame> {
     }
 }
 
+impl SseEncode for Option<crate::api::terminal::TerminalLink> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::terminal::TerminalLink>::sse_encode(value, serializer);
+        }
+    }
+}
+
 impl SseEncode for Option<crate::api::terminal::TerminalMouseButton> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -6724,6 +6780,14 @@ impl SseEncode for crate::api::terminal::TerminalFrame {
         <bool>::sse_encode(self.alt_screen, serializer);
         <bool>::sse_encode(self.bracketed_paste, serializer);
         <bool>::sse_encode(self.mouse_reporting, serializer);
+    }
+}
+
+impl SseEncode for crate::api::terminal::TerminalLink {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.uri, serializer);
+        <bool>::sse_encode(self.hidden, serializer);
     }
 }
 

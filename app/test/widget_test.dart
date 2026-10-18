@@ -246,8 +246,12 @@ class FakeEngine implements Engine {
 
   /// What the engine reports under any cell.
   String? link;
+
+  /// Whether that link's text shows something other than where it goes.
+  bool linkHidden = false;
   @override
-  String? terminalLinkAt(int id, int col, int line) => link;
+  TerminalLink? terminalLinkAt(int id, int col, int line) =>
+      link == null ? null : TerminalLink(uri: link!, hidden: linkHidden);
   @override
   void terminalClose(int id) {}
   @override
@@ -3759,6 +3763,47 @@ void main() {
       await tester.pumpAndSettle();
       expect(copied, '/var/log/syslog');
       expect(find.text('Copied /var/log/syslog'), findsOneWidget);
+    });
+
+    testWidgets('Ctrl+click on a link that is not a web link copies it', (tester) async {
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+        return null;
+      });
+      addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+      final engine = FakeEngine()
+        ..connectedSessionId = 1
+        ..link = 'ms-msdt:/id PCWDiagnostic';
+      await openShell(tester, engine);
+      final origin = tester.getTopLeft(find.byType(TerminalView));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      final gesture = await tester.startGesture(origin + const Offset(12, 4), kind: PointerDeviceKind.mouse);
+      await gesture.up();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(copied, 'ms-msdt:/id PCWDiagnostic');
+      expect(find.text('Copied ms-msdt:/id PCWDiagnostic'), findsOneWidget);
+    });
+
+    testWidgets('a link whose text shows another address asks before opening', (tester) async {
+      final engine = FakeEngine()
+        ..connectedSessionId = 1
+        ..link = 'https://evil.example/login'
+        ..linkHidden = true;
+      await openShell(tester, engine);
+      final origin = tester.getTopLeft(find.byType(TerminalView));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      final gesture = await tester.startGesture(origin + const Offset(12, 4), kind: PointerDeviceKind.mouse);
+      await gesture.up();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(find.text('Open this link?'), findsOneWidget);
+      expect(find.textContaining('https://evil.example/login'), findsOneWidget, reason: 'the real address is shown');
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(find.text('Open this link?'), findsNothing);
+      expect(find.textContaining('Could not open'), findsNothing, reason: 'cancel opens nothing');
     });
 
     testWidgets('the new settings fit a small phone at double text size', (tester) async {

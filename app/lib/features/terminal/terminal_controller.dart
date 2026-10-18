@@ -227,7 +227,7 @@ class TerminalController extends ChangeNotifier {
   }
 
   /// The link under a viewport cell, if any.
-  String? linkAt(int col, int line) {
+  TerminalLink? linkAt(int col, int line) {
     try {
       return engine.terminalLinkAt(id, col, line);
     } catch (_) {

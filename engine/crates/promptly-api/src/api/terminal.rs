@@ -508,11 +508,22 @@ pub fn terminal_search_step(id: u32, backward: bool) -> Result<Option<TerminalSe
     }))
 }
 
+/// A link under a cell.
+pub struct TerminalLink {
+    pub uri: String,
+    /// An OSC 8 hyperlink whose text on screen is not its address: where
+    /// it goes is shown before it opens.
+    pub hidden: bool,
+}
+
 /// The link under a viewport cell: an OSC 8 hyperlink, or a URL, file path
 /// or IP address in the text. Only a URL contains `://`.
 #[frb(sync)]
-pub fn terminal_link_at(id: u32, col: u16, line: i32) -> Result<Option<String>, String> {
-    Ok(entry(id)?.session.link_at(col, line))
+pub fn terminal_link_at(id: u32, col: u16, line: i32) -> Result<Option<TerminalLink>, String> {
+    Ok(entry(id)?.session.link_at(col, line).map(|l| TerminalLink {
+        uri: l.uri,
+        hidden: l.hidden,
+    }))
 }
 
 /// Show a message from Promptly in the terminal, such as "connection

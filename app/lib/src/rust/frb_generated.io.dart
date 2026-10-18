@@ -76,6 +76,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TerminalFrame dco_decode_box_autoadd_terminal_frame(dynamic raw);
 
   @protected
+  TerminalLink dco_decode_box_autoadd_terminal_link(dynamic raw);
+
+  @protected
   TerminalMouseButton dco_decode_box_autoadd_terminal_mouse_button(dynamic raw);
 
   @protected
@@ -199,6 +202,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TerminalFrame? dco_decode_opt_box_autoadd_terminal_frame(dynamic raw);
 
   @protected
+  TerminalLink? dco_decode_opt_box_autoadd_terminal_link(dynamic raw);
+
+  @protected
   TerminalMouseButton? dco_decode_opt_box_autoadd_terminal_mouse_button(
     dynamic raw,
   );
@@ -317,6 +323,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TerminalFrame dco_decode_terminal_frame(dynamic raw);
 
   @protected
+  TerminalLink dco_decode_terminal_link(dynamic raw);
+
+  @protected
   TerminalMouseAction dco_decode_terminal_mouse_action(dynamic raw);
 
   @protected
@@ -402,6 +411,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   TerminalFrame sse_decode_box_autoadd_terminal_frame(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  TerminalLink sse_decode_box_autoadd_terminal_link(
     SseDeserializer deserializer,
   );
 
@@ -549,6 +563,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  TerminalLink? sse_decode_opt_box_autoadd_terminal_link(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   TerminalMouseButton? sse_decode_opt_box_autoadd_terminal_mouse_button(
     SseDeserializer deserializer,
   );
@@ -675,6 +694,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TerminalFrame sse_decode_terminal_frame(SseDeserializer deserializer);
 
   @protected
+  TerminalLink sse_decode_terminal_link(SseDeserializer deserializer);
+
+  @protected
   TerminalMouseAction sse_decode_terminal_mouse_action(
     SseDeserializer deserializer,
   );
@@ -784,6 +806,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_box_autoadd_terminal_frame(
     TerminalFrame self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_box_autoadd_terminal_link(
+    TerminalLink self,
     SseSerializer serializer,
   );
 
@@ -992,6 +1020,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_opt_box_autoadd_terminal_link(
+    TerminalLink? self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_opt_box_autoadd_terminal_mouse_button(
     TerminalMouseButton? self,
     SseSerializer serializer,
@@ -1146,6 +1180,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_terminal_frame(TerminalFrame self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_terminal_link(TerminalLink self, SseSerializer serializer);
 
   @protected
   void sse_encode_terminal_mouse_action(
