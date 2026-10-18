@@ -1229,6 +1229,55 @@ mod tests {
         assert!(b.clock_counter() >= a.clock_counter() - 1);
     }
 
+    #[test]
+    fn a_host_deleted_on_one_device_and_used_on_another_stays_deleted() {
+        let backend = MemoryBackend::default();
+        let a = Store::open_in_memory().unwrap();
+        let b = Store::open_in_memory().unwrap();
+        let host = r#"{"id":"h","label":"web","hostname":"web.example"}"#;
+        a.put(Collection::Hosts, "h", host).unwrap();
+        let (va, _code) = Vault::create(
+            &backend,
+            a.device_id().clone(),
+            "pw",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        a.push(&va).unwrap();
+        let vb = Vault::open(&backend, b.device_id().clone(), "pw").unwrap();
+        b.pull(&vb).unwrap();
+
+        // A deletes it. B, before hearing of that, connects to it, which
+        // saves the whole host with one field changed.
+        a.delete(Collection::Hosts, "h").unwrap();
+        a.push(&va).unwrap();
+        b.put(
+            Collection::Hosts,
+            "h",
+            r#"{"id":"h","label":"web","hostname":"web.example","last_connected_at":"2026-10-18T00:00:00Z"}"#,
+        )
+        .unwrap();
+        b.push(&vb).unwrap();
+        a.pull(&va).unwrap();
+        b.pull(&vb).unwrap();
+        // Neither shows a host made of that one field: it stays deleted.
+        assert!(a.list(Collection::Hosts).unwrap().is_empty());
+        assert!(b.list(Collection::Hosts).unwrap().is_empty());
+        assert!(a.get(Collection::Hosts, "h").unwrap().is_none());
+
+        // Saved again in full, it comes back whole everywhere.
+        b.put(Collection::Hosts, "h", host).unwrap();
+        b.push(&vb).unwrap();
+        a.pull(&va).unwrap();
+        for s in [&a, &b] {
+            let back = s.list(Collection::Hosts).unwrap();
+            assert_eq!(back.len(), 1);
+            let v: Value = serde_json::from_str(&back[0].json).unwrap();
+            assert_eq!(v["id"], "h");
+            assert_eq!(v["hostname"], "web.example");
+        }
+    }
+
     /// Refuses to write snapshots while `fail` is set, as a full disk or
     /// a dropped connection would.
     #[derive(Default)]

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
+import '../../core/engine/records.dart';
 import 'models.dart';
 
 /// Saved snippets, loaded from the engine's store. Mutations write through
@@ -13,11 +14,7 @@ class SnippetsNotifier extends Notifier<List<Snippet>> {
 
   List<Snippet> _load() {
     try {
-      final snippets = ref
-          .read(engineProvider)
-          .recordsList('snippets')
-          .map((r) => Snippet.fromJson(jsonDecode(r.json) as Map<String, dynamic>))
-          .toList();
+      final snippets = decodeRecords(ref.read(engineProvider).recordsList('snippets'), Snippet.fromJson);
       snippets.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
       return snippets;
     } catch (_) {

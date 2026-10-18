@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
+import '../../core/engine/records.dart';
 import 'models.dart';
 
 /// Saved hosts, loaded from the engine's store. Mutations write through and
@@ -13,11 +14,7 @@ class HostsNotifier extends Notifier<List<Host>> {
 
   List<Host> _load() {
     try {
-      final hosts = ref
-          .read(engineProvider)
-          .recordsList('hosts')
-          .map((r) => Host.fromJson(jsonDecode(r.json) as Map<String, dynamic>))
-          .toList();
+      final hosts = decodeRecords(ref.read(engineProvider).recordsList('hosts'), Host.fromJson);
       hosts.sort((a, b) {
         if (a.favourite != b.favourite) return a.favourite ? -1 : 1;
         return a.label.toLowerCase().compareTo(b.label.toLowerCase());
@@ -72,11 +69,7 @@ class GroupsNotifier extends Notifier<List<Group>> {
 
   List<Group> _load() {
     try {
-      final groups = ref
-          .read(engineProvider)
-          .recordsList('groups')
-          .map((r) => Group.fromJson(jsonDecode(r.json) as Map<String, dynamic>))
-          .toList();
+      final groups = decodeRecords(ref.read(engineProvider).recordsList('groups'), Group.fromJson);
       groups.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
       return groups;
     } catch (_) {
@@ -112,11 +105,7 @@ class IdentitiesNotifier extends Notifier<List<Identity>> {
 
   List<Identity> _load() {
     try {
-      final ids = ref
-          .read(engineProvider)
-          .recordsList('identities')
-          .map((r) => Identity.fromJson(jsonDecode(r.json) as Map<String, dynamic>))
-          .toList();
+      final ids = decodeRecords(ref.read(engineProvider).recordsList('identities'), Identity.fromJson);
       ids.sort((a, b) => a.label.toLowerCase().compareTo(b.label.toLowerCase()));
       return ids;
     } catch (_) {

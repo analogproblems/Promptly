@@ -912,8 +912,7 @@ mod tests {
         assert_eq!(Value::Object(a.hosts()[0].1.clone()), expect);
         assert_eq!(Value::Object(b.hosts()[0].1.clone()), expect);
 
-        // A deletes, B still edits the same record a moment later: the later
-        // edit wins field by field (the record comes back with that field).
+        // A deletes; B hears of it on its next sync.
         a.del(Collection::Hosts, "h1");
         a.sync(&va);
         b.sync(&vb);
@@ -1481,7 +1480,10 @@ mod tests {
         assert!(back.kept.is_empty());
         assert_eq!(back.back.len(), 2);
         for (col, id) in &back.back {
-            let fields = a.state.get(*col, id).unwrap();
+            // As the store does it: deleted, then written whole, which
+            // stamps the record as created again.
+            let mut fields = a.state.get(*col, id).unwrap();
+            fields.insert(crate::model::CREATED_AT.into(), json!("2026-10-18T00:00:00Z"));
             a.del(*col, id);
             a.put(*col, id, Value::Object(fields));
         }

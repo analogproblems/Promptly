@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:promptly/core/engine/engine.dart';
+import 'package:promptly/core/engine/records.dart';
 import 'package:promptly/features/hosts/models.dart';
 
 void main() {
@@ -52,5 +54,19 @@ void main() {
     expect(relativeTime(now.subtract(const Duration(minutes: 7)), now: now), '7m');
     expect(relativeTime(now.subtract(const Duration(hours: 3)), now: now), '3h');
     expect(relativeTime(now.subtract(const Duration(days: 4)), now: now), '4d');
+  });
+
+  test('one unreadable record does not empty the list', () {
+    final hosts = decodeRecords(
+      const [
+        StoreRecord(id: 'a', json: '{"id":"a","label":"web","hostname":"web.example"}'),
+        StoreRecord(id: 'b', json: '{"label":"no id","hostname":"b.example"}'),
+        StoreRecord(id: 'c', json: 'not json'),
+        StoreRecord(id: 'd', json: '{"id":"d","label":7}'),
+      ],
+      Host.fromJson,
+    );
+    expect(hosts.map((h) => h.id), ['a', 'b']);
+    expect(hosts[1].hostname, 'b.example');
   });
 }
