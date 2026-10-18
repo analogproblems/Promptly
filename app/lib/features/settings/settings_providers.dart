@@ -22,6 +22,7 @@ abstract final class SettingKeys {
   static const fontSize = 'terminal_font_size';
   static const capsLockEscape = 'caps_lock_escape';
   static const cmdAsCtrl = 'cmd_as_ctrl';
+  static const optionAsMeta = 'option_as_meta';
   static const collapsedGroups = 'hosts_collapsed_groups';
   static const font = 'terminal_font';
   static const ligatures = 'terminal_ligatures';
@@ -212,6 +213,17 @@ class CmdAsCtrlNotifier extends BoolSettingNotifier {
 }
 
 final cmdAsCtrlProvider = NotifierProvider<CmdAsCtrlNotifier, bool>(CmdAsCtrlNotifier.new);
+
+/// Whether Option works as Alt in the terminal, on iPad and Mac, rather
+/// than typing the characters the keyboard layout puts on it.
+class OptionAsMetaNotifier extends BoolSettingNotifier {
+  @override
+  String get key => SettingKeys.optionAsMeta;
+  @override
+  bool get fallback => false;
+}
+
+final optionAsMetaProvider = NotifierProvider<OptionAsMetaNotifier, bool>(OptionAsMetaNotifier.new);
 
 /// A setting kept in the store as one JSON value, with its value when never
 /// set. [decode] returns null for anything it does not accept, which reads

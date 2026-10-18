@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -503,11 +505,24 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     final keys = widget.keys;
     // With Cmd as Ctrl, Cmd is Ctrl here and no longer copies or pastes.
     final ctrl = hw.isControlPressed || (keys.cmdAsCtrl && hw.isMetaPressed);
-    final alt = hw.isAltPressed;
+    // On a Mac or iPad, Option types characters unless it is set to be Alt.
+    final alt = hw.isAltPressed && (!isApplePlatform || keys.optionAsMeta);
     final shift = hw.isShiftPressed;
     final meta = hw.isMetaPressed && !keys.cmdAsCtrl;
     final capsLocked = hw.lockModesEnabled.contains(KeyboardLockMode.capsLock);
     if (event is KeyUpEvent) return KeyEventResult.ignored;
+    // Windows reports AltGr as Ctrl+Alt, and AltGr is how many layouts
+    // type `@`, `}` or `€`. A Ctrl+Alt press that comes with a character
+    // is typing, so it is typed here, ahead of the window's shortcuts and
+    // of what Ctrl means here, such as Ctrl+0 resetting the text size.
+    if (defaultTargetPlatform == TargetPlatform.windows &&
+        hw.isControlPressed &&
+        hw.isAltPressed &&
+        _isPrintable(event) &&
+        !(_holdComposing && _composing)) {
+      _type(utf8.encode(event.character!));
+      return KeyEventResult.handled;
+    }
     // The window's own shortcuts (tabs, panes, the palette) pass through.
     if (AppShortcuts.isReserved(event)) return KeyEventResult.ignored;
     // While a computer's input method composes, every key is its own:
@@ -570,11 +585,16 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
       capsLocked: capsLocked,
     );
     if (bytes == null) return KeyEventResult.ignored;
+    _type(bytes);
+    return KeyEventResult.handled;
+  }
+
+  void _type(List<int> bytes) {
+    final c = widget.controller;
     if (c.grid.displayOffset != 0) c.scrollToBottom();
     // Typing drops the selection, the way every other terminal does it.
     c.selectClear();
     c.write(bytes);
-    return KeyEventResult.handled;
   }
 
   static bool _isPrintable(KeyEvent event) {

@@ -366,6 +366,7 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                                     keys: KeyOptions(
                                       capsLockAsEscape: ref.watch(capsLockEscapeProvider),
                                       cmdAsCtrl: isApplePlatform && ref.watch(cmdAsCtrlProvider),
+                                      optionAsMeta: ref.watch(optionAsMetaProvider),
                                     ),
                                     font: ref.watch(terminalFontProvider),
                                     autocorrect: ref.watch(autocorrectProvider),

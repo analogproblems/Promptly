@@ -421,7 +421,7 @@ class TerminalChoices extends ConsumerWidget {
 }
 
 /// What a keyboard plugged in or paired does in the terminal. Cmd as Ctrl
-/// shows on iPad and Mac only, where there is a Cmd key to move.
+/// and Option as Alt show on iPad and Mac only, which have those keys.
 class HardwareKeyboardChoices extends ConsumerWidget {
   const HardwareKeyboardChoices({super.key});
 
@@ -447,6 +447,16 @@ class HardwareKeyboardChoices extends ConsumerWidget {
             ),
             value: ref.watch(cmdAsCtrlProvider),
             onChanged: (v) => ref.read(cmdAsCtrlProvider.notifier).set(v),
+          ),
+        if (isApplePlatform)
+          SwitchListTile(
+            key: const Key('option-as-meta'),
+            title: const Text('Option works as Alt'),
+            subtitle: const Text(
+              'For Alt shortcuts in programs such as emacs. Off, Option types characters, such as @ on a German keyboard.',
+            ),
+            value: ref.watch(optionAsMetaProvider),
+            onChanged: (v) => ref.read(optionAsMetaProvider.notifier).set(v),
           ),
       ],
     );

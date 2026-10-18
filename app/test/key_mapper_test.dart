@@ -40,6 +40,18 @@ void main() {
     expect(KeyMapper.bytesFor(down(LogicalKeyboardKey.keyB, character: 'b'), appCursor: false, alt: true), [0x1b, 0x62]);
   });
 
+  test('Alt goes in front of Enter, Backspace, Tab and Escape too', () {
+    expect(KeyMapper.bytesFor(down(LogicalKeyboardKey.backspace), appCursor: false, alt: true), [0x1b, 0x7f]);
+    expect(KeyMapper.bytesFor(down(LogicalKeyboardKey.enter), appCursor: false, alt: true), [0x1b, 0x0d]);
+    expect(KeyMapper.bytesFor(down(LogicalKeyboardKey.tab), appCursor: false, alt: true), [0x1b, 0x09]);
+    expect(KeyMapper.bytesFor(down(LogicalKeyboardKey.escape), appCursor: false, alt: true), [0x1b, 0x1b]);
+    // Keys with a modifier form keep it rather than taking an ESC.
+    expect(
+      KeyMapper.bytesFor(down(LogicalKeyboardKey.arrowLeft), appCursor: false, alt: true),
+      '\x1b[1;3D'.codeUnits,
+    );
+  });
+
   test('app shortcuts are left to the app', () {
     expect(KeyMapper.bytesFor(down(LogicalKeyboardKey.keyV), appCursor: false, ctrl: true, shift: true), isNull);
     expect(KeyMapper.bytesFor(down(LogicalKeyboardKey.pageUp), appCursor: false, shift: true), isNull);

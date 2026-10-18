@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/core/platform.dart';
 import 'package:promptly/core/theme/theme.dart';
 import 'package:promptly/features/terminal/key_mapper.dart';
+import 'package:promptly/features/workspace/app_shortcuts.dart';
 import 'package:promptly/features/terminal/terminal_controller.dart';
 import 'package:promptly/features/terminal/terminal_grid.dart';
 import 'package:promptly/features/terminal/terminal_painter.dart';
@@ -358,6 +360,120 @@ void main() {
     await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
     expect(engine.written, isEmpty);
     controller.dispose();
+  });
+
+  testWidgets('on a Mac Option types characters unless it is set to be Alt', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    Future<void> show(KeyOptions keys) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildPromptlyTheme(Brightness.dark),
+          home: Scaffold(body: TerminalView(controller: controller, keys: keys)),
+        ),
+      );
+      await tester.pump();
+      engine.written.clear();
+    }
+
+    Future<void> option(LogicalKeyboardKey key, String character) async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.sendKeyEvent(key, character: character);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    }
+
+    // A German Mac types @ with Option+L.
+    await show(const KeyOptions());
+    await option(LogicalKeyboardKey.keyL, '@');
+    expect(engine.written, isEmpty, reason: 'left to the input method, which types the @, never Alt+@');
+    await show(const KeyOptions(optionAsMeta: true));
+    await option(LogicalKeyboardKey.keyB, 'b');
+    expect(engine.written, [
+      [0x1b, 0x62],
+    ], reason: 'Alt+B, back a word');
+    controller.dispose();
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('tabs are Alt+digit, and Cmd+digit on a Mac, where Option+3 types #', (tester) async {
+    final three = KeyDownEvent(
+      physicalKey: PhysicalKeyboardKey.digit3,
+      logicalKey: LogicalKeyboardKey.digit3,
+      character: '#',
+      timeStamp: Duration.zero,
+    );
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    expect(AppShortcuts.isReserved(three), isTrue);
+    expect((AppShortcuts.tab(2).alt, AppShortcuts.tab(2).meta), (true, false));
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    expect(AppShortcuts.isReserved(three), isFalse);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    expect(AppShortcuts.isReserved(three), isTrue);
+    expect((AppShortcuts.tab(2).alt, AppShortcuts.tab(2).meta), (false, true));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('on Windows AltGr types its character ahead of Ctrl shortcuts', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    final clipboard = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      clipboard.add(call.method);
+      return call.method == 'Clipboard.getData' ? {'text': 'pasted'} : null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildPromptlyTheme(Brightness.dark),
+        home: Scaffold(body: TerminalView(controller: controller)),
+      ),
+    );
+    await tester.pump();
+    controller.setFontSize(18);
+    engine.written.clear();
+
+    // Windows reports AltGr as Ctrl+Alt.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altRight);
+    // A German keyboard types } with AltGr+0 and ~ with AltGr and +.
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit0, character: '}');
+    await tester.sendKeyEvent(LogicalKeyboardKey.add, character: '~', physicalKey: PhysicalKeyboardKey.bracketRight, platform: 'web');
+    await tester.pump();
+    expect(engine.written, [
+      [0x7d],
+      [0x7e],
+    ]);
+    expect(controller.fontSize, 18, reason: 'not Ctrl+0 or Ctrl++ for the text size');
+
+    // With Shift too, a character still wins over paste and the tab shortcut.
+    engine.written.clear();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyV, character: '‘');
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyT, character: 'Ŧ');
+    await tester.pump();
+    expect(engine.written, [utf8.encode('‘'), utf8.encode('Ŧ')]);
+    expect(clipboard, isNot(contains('Clipboard.getData')), reason: 'not Ctrl+Shift+V');
+    expect(engine.pasted, isEmpty);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+
+    // Ctrl+Alt with no character is still Ctrl+Alt.
+    engine.written.clear();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC, character: '');
+    await tester.pump();
+    expect(engine.written, [
+      [0x1b, 0x03],
+    ]);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altRight);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    controller.dispose();
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('dragging selects, Ctrl+Shift+C copies, typing clears, double click picks a word', (tester) async {
