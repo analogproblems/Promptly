@@ -68,15 +68,18 @@ Future<void> filesWriteText({
 );
 
 /// Start copying a remote file to a local path. Returns the transfer id;
-/// `files_transfers` reports its progress.
+/// `files_transfers` reports its progress. A file already there, even one
+/// that appears meanwhile, is replaced only with `replace`.
 int filesDownload({
   required int id,
   required String remote,
   required String local,
+  required bool replace,
 }) => RustLib.instance.api.crateApiFilesFilesDownload(
   id: id,
   remote: remote,
   local: local,
+  replace: replace,
 );
 
 /// Start copying a local file to a remote path. A file already there is
@@ -94,7 +97,8 @@ int filesUpload({
 );
 
 /// Stop a running upload or download, and remove the half-written copy it
-/// leaves. Nothing happens if it has already finished.
+/// leaves beside its destination; what was already there stays. Nothing
+/// happens if it has already finished.
 void filesCancelTransfer({required int id, required int transfer}) => RustLib
     .instance
     .api

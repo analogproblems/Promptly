@@ -129,6 +129,7 @@ abstract class RustLibApi extends BaseApi {
     required int id,
     required String remote,
     required String local,
+    required bool replace,
   });
 
   Future<String> crateApiFilesFilesHome({required int id});
@@ -721,6 +722,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     required int id,
     required String remote,
     required String local,
+    required bool replace,
   }) {
     return handler.executeSync(
       SyncTask(
@@ -729,6 +731,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           sse_encode_u_32(id, serializer);
           sse_encode_String(remote, serializer);
           sse_encode_String(local, serializer);
+          sse_encode_bool(replace, serializer);
           return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
         },
         codec: SseCodec(
@@ -736,7 +739,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: sse_decode_String,
         ),
         constMeta: kCrateApiFilesFilesDownloadConstMeta,
-        argValues: [id, remote, local],
+        argValues: [id, remote, local, replace],
         apiImpl: this,
       ),
     );
@@ -744,7 +747,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   TaskConstMeta get kCrateApiFilesFilesDownloadConstMeta => const TaskConstMeta(
     debugName: "files_download",
-    argNames: ["id", "remote", "local"],
+    argNames: ["id", "remote", "local", "replace"],
   );
 
   @override

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -129,31 +130,41 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
     }
   }
 
-  /// Copy an entry from one side into the other side's current folder.
-  void transfer(FsEntry entry, {required bool fromRemote}) {
-    final id = _browserId;
-    if (id == null) return;
+  /// Copy an entry from one side into the other side's current folder. A
+  /// file of the same name there is replaced only once the person says so,
+  /// and a server's name for a file is made safe before it names one here.
+  Future<void> transfer(FsEntry entry, {required bool fromRemote}) async {
+    if (_browserId == null) return;
     if (entry.isDir) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Folders cannot be copied yet; open one and copy its files.')));
       return;
     }
-    final engine = ref.read(engineProvider);
+    final pane = (fromRemote ? _localPane : _remotePane).currentState;
+    final dir = pane?.path;
+    if (pane == null || dir == null) return;
+    final name = fromRemote ? localFileName(entry.name) : entry.name;
+    // Looked up now rather than taken from the pane, which may be out of
+    // date. An upload refuses a file that appears after this.
+    // A Mac or Windows disk takes names that differ only in capitals for
+    // the same file, so a copy here would replace it.
+    final caseless =
+        fromRemote && (defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.windows);
+    bool same(String other) => caseless ? other.toLowerCase() == name.toLowerCase() : other == name;
+    final bool clash;
     try {
-      if (fromRemote) {
-        final dir = _localPane.currentState?.path;
-        if (dir == null) return;
-        engine.filesDownload(id, entry.path, _local.join(dir, entry.name));
-      } else {
-        final dir = _remotePane.currentState?.path;
-        if (dir == null) return;
-        engine.filesUpload(id, entry.path, _remote!.join(dir, entry.name), replace: true);
-      }
+      clash = (await pane.widget.fs.list(dir)).any((e) => same(e.name));
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e is String ? e : e.toString())));
+      _say(e);
       return;
     }
-    _watchTransfers();
+    if (!mounted) return;
+    if (clash && !await _confirmReplace([name], onServer: !fromRemote)) return;
+    _start(
+      (engine, id) => fromRemote
+          ? engine.filesDownload(id, entry.path, _local.join(dir, name), replace: clash)
+          : engine.filesUpload(id, entry.path, _remote!.join(dir, name), replace: clash),
+    );
   }
 
   void _say(Object message) {
@@ -226,16 +237,18 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
     }
   }
 
-  Future<bool> _confirmReplace(List<String> names) async {
+  Future<bool> _confirmReplace(List<String> names, {bool onServer = true}) async {
     final one = names.length == 1;
+    final where = onServer ? 'This folder on the server' : 'This folder on this device';
+    final verb = onServer ? 'Uploading' : 'Copying';
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(one ? 'Replace ${names.first}?' : 'Replace ${names.length} files?'),
         content: Text(
           one
-              ? 'This folder on the server already has a file with that name. Uploading replaces it.'
-              : 'This folder on the server already has files with these names: ${names.join(', ')}. Uploading replaces them.',
+              ? '$where already has a file with that name. $verb replaces it.'
+              : '$where already has files with these names: ${names.join(', ')}. $verb replaces them.',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
@@ -263,7 +276,8 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
       return;
     }
     if (path == null || !mounted) return;
-    _start((engine, id) => engine.filesDownload(id, e.path, path!));
+    // The save dialog has asked already.
+    _start((engine, id) => engine.filesDownload(id, e.path, path!, replace: true));
   }
 
   /// Fetch a server file to this device's cache, then share or open it.
@@ -276,7 +290,7 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
       return;
     }
     if (!mounted) return;
-    final tid = _start((engine, id) => engine.filesDownload(id, e.path, path));
+    final tid = _start((engine, id) => engine.filesDownload(id, e.path, path, replace: true));
     if (tid == null) return;
     _after[tid] = (then: then, path: path);
     // It may have finished already.

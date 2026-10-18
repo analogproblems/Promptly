@@ -187,17 +187,23 @@ pub fn files_write_text(id: u32, path: String, text: String) -> Result<(), Strin
 }
 
 /// Start copying a remote file to a local path. Returns the transfer id;
-/// `files_transfers` reports its progress.
+/// `files_transfers` reports its progress. A file already there, even one
+/// that appears meanwhile, is replaced only with `replace`.
 #[frb(sync)]
-pub fn files_download(id: u32, remote: String, local: String) -> Result<u32, String> {
+pub fn files_download(
+    id: u32,
+    remote: String,
+    local: String,
+    replace: bool,
+) -> Result<u32, String> {
     let b = browser(id)?;
     let name = remote.rsplit('/').next().unwrap_or(&remote).to_string();
     let fs = b.fs.clone();
     let local = PathBuf::from(local);
     let partial = Partial::Local(local.clone());
     b.transfers
-        .spawn(name, false, partial, move |progress| async move {
-            fs.download(&remote, &local, progress)
+        .spawn(name, false, partial, move |progress, staging| async move {
+            fs.download(&remote, &local, replace, &staging, progress)
                 .await
                 .map_err(friendly)
         })
@@ -212,28 +218,32 @@ pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Re
     let fs = b.fs.clone();
     let partial = Partial::Remote(b.server.clone(), remote.clone());
     b.transfers
-        .spawn(name, true, partial, move |progress| async move {
-            fs.upload(&PathBuf::from(local), &remote, replace, progress)
+        .spawn(name, true, partial, move |progress, staging| async move {
+            fs.upload(&PathBuf::from(local), &remote, replace, &staging, progress)
                 .await
                 .map_err(friendly)
         })
 }
 
 /// Stop a running upload or download, and remove the half-written copy it
-/// leaves. Nothing happens if it has already finished.
+/// leaves beside its destination; what was already there stays. Nothing
+/// happens if it has already finished.
 #[frb(sync)]
 pub fn files_cancel_transfer(id: u32, transfer: u32) -> Result<(), String> {
     let b = browser(id)?;
     let fs = b.fs.clone();
-    b.transfers.cancel(transfer, move |partial| async move {
-        match partial {
-            Partial::Local(path) => match tokio::fs::remove_file(&path).await {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
-                _ => Ok(()),
-            },
-            Partial::Remote(_, path) => fs.remove_file(&path).await.map_err(friendly),
-        }
-    });
+    b.transfers
+        .cancel(transfer, move |partial, staging| async move {
+            match partial {
+                Partial::Local(path) => {
+                    match tokio::fs::remove_file(staging.local_part(&path)).await {
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                        _ => Ok(()),
+                    }
+                }
+                Partial::Remote(_, path) => fs.abandon(&path, &staging).await.map_err(friendly),
+            }
+        });
     Ok(())
 }
 

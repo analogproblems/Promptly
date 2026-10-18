@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show File;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -515,8 +516,8 @@ class FakeEngine implements Engine {
   }
 
   @override
-  int filesDownload(int id, String remote, String local) {
-    fileCalls.add('download $remote $local');
+  int filesDownload(int id, String remote, String local, {required bool replace}) {
+    fileCalls.add('download $remote $local${replace ? ' (replace)' : ''}');
     return _transfer(remote, upload: false, size: 2048).id;
   }
 
@@ -2697,7 +2698,87 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Upload to the server'));
     await tester.pumpAndSettle();
-    expect(engine.fileCalls.last, 'upload /home/me/local.txt /home/ops/local.txt (replace)');
+    expect(engine.fileCalls.last, 'upload /home/me/local.txt /home/ops/local.txt', reason: 'nothing there to replace');
+  });
+
+  testWidgets('a desktop copy asks before replacing a file and cleans a server name', (tester) async {
+    desktopWindow(tester);
+    final local = MemoryFs({
+      '/home/me': [
+        const FsEntry(name: 'notes.txt', path: '/home/me/notes.txt', isDir: false, size: 10),
+        const FsEntry(name: 'local.txt', path: '/home/me/local.txt', isDir: false, size: 10),
+      ],
+    });
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {'h1': hostJson('h1', 'web-1')};
+    engine.remoteFiles['/home/ops']!.add(
+      FileEntry(
+        name: 'LOCAL.TXT',
+        isDir: false,
+        isSymlink: false,
+        size: BigInt.one,
+        modified: BigInt.zero,
+        permissions: 0x1A4,
+        owner: 'ops',
+        group: 'ops',
+      ),
+    );
+    engine.remoteFiles['/home/ops']!.add(
+      FileEntry(
+        name: r'..\..\.bashrc',
+        isDir: false,
+        isSymlink: false,
+        size: BigInt.one,
+        modified: BigInt.zero,
+        permissions: 0x1A4,
+        owner: 'ops',
+        group: 'ops',
+      ),
+    );
+    await tester.pumpWidget(appWith(engine, localDir: '/home/me', localFs: local));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('session-files')));
+    await tester.pumpAndSettle();
+    final calls = engine.fileCalls.length;
+    Future<void> download(String name) async {
+      await tester.tap(
+        find.descendant(of: find.byKey(Key('remote-entry-$name')), matching: find.byKey(Key('entry-menu-$name'))),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Download to this device'));
+      await tester.pumpAndSettle();
+    }
+
+    // notes.txt is on both sides: copying it here asks, and Cancel keeps ours.
+    await download('notes.txt');
+    expect(find.text('Replace notes.txt?'), findsOneWidget);
+    expect(find.textContaining('This folder on this device'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.length, calls, reason: 'nothing copied');
+    await download('notes.txt');
+    await tester.tap(find.byKey(const Key('files-replace-ok')));
+    await tester.pumpAndSettle();
+    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /home/me/notes.txt (replace)');
+
+    // A name a server made up to climb out of the folder stays in it.
+    await download(r'..\..\.bashrc');
+    expect(engine.fileCalls.last, r'download /home/ops/..\..\.bashrc /home/me/.bashrc');
+
+    // On a Mac, LOCAL.TXT would land on local.txt, so that asks too.
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    await download('LOCAL.TXT');
+    expect(find.text('Replace LOCAL.TXT?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    debugDefaultTargetPlatformOverride = null;
+    await download('LOCAL.TXT');
+    expect(find.text('Replace LOCAL.TXT?'), findsNothing, reason: 'another file on Linux');
+    expect(engine.fileCalls.last, 'download /home/ops/LOCAL.TXT /home/me/LOCAL.TXT');
   });
 
   testWidgets('reachability dots appear once the setting is on', (tester) async {
