@@ -364,6 +364,7 @@ void main() {
 
   testWidgets('on a Mac Option types characters unless it is set to be Alt', (tester) async {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final engine = RecordingEngine();
     final controller = TerminalController(engine: engine, id: 1, label: 'test');
     Future<void> show(KeyOptions keys) async {
@@ -403,6 +404,7 @@ void main() {
       character: '#',
       timeStamp: Duration.zero,
     );
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
     expect(AppShortcuts.isReserved(three), isTrue);
     expect((AppShortcuts.tab(2).alt, AppShortcuts.tab(2).meta), (true, false));
