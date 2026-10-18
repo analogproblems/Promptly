@@ -446,18 +446,36 @@ impl RemoteFs {
 /// Give the finished copy at `part` the name `local`, unless something
 /// (by any capitals, on a disk that ignores them) already has it. A hard
 /// link is refused rather than replace a file; on a disk without links,
-/// such as a FAT memory stick, the name is checked just before the move.
+/// such as a FAT memory stick, the copy is written out again to a file
+/// made new under that name, which is refused the same way.
 async fn place_new(part: &Path, local: &Path) -> io::Result<()> {
     match tokio::fs::hard_link(part, local).await {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
-        Err(_) => {
-            if tokio::fs::symlink_metadata(local).await.is_ok() {
-                return Err(io::ErrorKind::AlreadyExists.into());
-            }
-            tokio::fs::rename(part, local).await
-        }
+        Err(e) if e.kind() != io::ErrorKind::AlreadyExists => copy_to_new(part, local).await,
+        linked => linked,
     }
+}
+
+/// Copy `part` to `local`, which must not exist yet.
+async fn copy_to_new(part: &Path, local: &Path) -> io::Result<()> {
+    let mut src = tokio::fs::File::open(part).await?;
+    let mut opts = tokio::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        opts.mode(src.metadata().await?.permissions().mode() & 0o777);
+    }
+    let mut dst = opts.open(local).await?;
+    let copied = async {
+        tokio::io::copy(&mut src, &mut dst).await?;
+        dst.sync_all().await
+    }
+    .await;
+    if copied.is_err() {
+        // Made by this copy just now, so nothing of anyone else's goes.
+        let _ = tokio::fs::remove_file(local).await;
+    }
+    copied
 }
 
 /// Copy all of `src` into an open remote file and close it.
@@ -866,6 +884,28 @@ mod tests {
             fs.delete(&base).await.unwrap();
             assert!(fs.list(&base).await.is_err());
             connection.disconnect().await;
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copying_into_place_never_replaces_a_file() {
+        let dir = std::env::temp_dir().join(format!("promptly-place-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let part = dir.join(".a.txt.x.promptly-part");
+        std::fs::write(&part, b"new").unwrap();
+        crate::runtime().block_on(async {
+            // Someone else's file got there first.
+            let taken = dir.join("taken.txt");
+            std::fs::write(&taken, b"theirs").unwrap();
+            let err = copy_to_new(&part, &taken).await.unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+            assert_eq!(std::fs::read(&taken).unwrap(), b"theirs");
+            // A free name gets the copy.
+            let free = dir.join("free.txt");
+            copy_to_new(&part, &free).await.unwrap();
+            assert_eq!(std::fs::read(&free).unwrap(), b"new");
         });
         let _ = std::fs::remove_dir_all(&dir);
     }
