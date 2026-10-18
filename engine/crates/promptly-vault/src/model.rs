@@ -15,6 +15,31 @@ pub fn new_id() -> RecordId {
     Uuid::now_v7()
 }
 
+/// When a record first appeared and when it last changed, RFC 3339. The
+/// local store stamps them on every record it writes (the app's models
+/// leave them out), and they merge like any other field, so every device
+/// ends up with the same two times. For display and a history view only:
+/// merging never looks at them.
+pub const CREATED_AT: &str = "created_at";
+pub const UPDATED_AT: &str = "updated_at";
+
+/// The id of the one record in the `settings` collection.
+pub const SETTINGS_ID: &str = "app";
+
+/// The app settings that make sense on every device, so they travel in the
+/// `settings` record, one field each. Everything else stays on the device
+/// it was set on: its text size and keyboard bar, how it locks, whether it
+/// looks for updates, whether it has shown the welcome tour.
+pub const SYNCED_SETTINGS: &[&str] = &[
+    "theme_mode",
+    "terminal_theme",
+    "program_clipboard",
+    "reachability_check",
+    "paste_warning",
+    "terminal_bell",
+    "terminal_scrollback",
+];
+
 /// Whether a record travels in the vault or stays on this device. Hosts
 /// and keys carry it; a saved password or private key follows the host or
 /// key that uses it. See [`crate::policy`].

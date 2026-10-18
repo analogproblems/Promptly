@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
 
-/// Keys in the engine's settings table. These are wire names: a change here
-/// is a change to what the vault syncs.
+/// Keys of the app's settings. These are wire names. The engine keeps the
+/// ones that make sense on every device (the look, how the terminal behaves;
+/// `SYNCED_SETTINGS` in the engine's vault model) in the vault, so they
+/// sync; the rest, such as the text size, stay on this device.
 abstract final class SettingKeys {
   static const themeMode = 'theme_mode';
   static const terminalTheme = 'terminal_theme';
@@ -18,6 +20,18 @@ abstract final class SettingKeys {
   static const bell = 'terminal_bell';
   static const scrollback = 'terminal_scrollback';
   static const fontSize = 'terminal_font_size';
+}
+
+/// Read the settings that travel in the vault again, once other devices'
+/// changes have landed.
+void reloadSyncedSettings(WidgetRef ref) {
+  ref.invalidate(themeModeProvider);
+  ref.invalidate(terminalThemeProvider);
+  ref.invalidate(programClipboardProvider);
+  ref.invalidate(reachabilityProvider);
+  ref.invalidate(pasteWarningProvider);
+  ref.invalidate(bellProvider);
+  ref.invalidate(scrollbackProvider);
 }
 
 String? _readString(Engine engine, String key) {

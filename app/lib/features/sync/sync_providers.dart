@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
 import '../hosts/repositories.dart';
+import '../settings/settings_providers.dart';
 
 /// The vault's status: the last known value first, then every change the
 /// engine reports (after each sync run, and whenever the setup changes).
@@ -28,9 +29,9 @@ class PendingRecovery extends Notifier<SyncSetupResult?> {
   void set(SyncSetupResult? result) => state = result;
 }
 
-/// Reloads the saved hosts, groups and keys whenever other devices' changes
-/// land, so the lists are never stale, and asks for a sync whenever the
-/// app comes back to the front.
+/// Reloads the saved hosts, groups, keys and synced settings whenever other
+/// devices' changes land, so nothing shown is stale, and asks for a sync
+/// whenever the app comes back to the front.
 class SyncRefresh extends ConsumerStatefulWidget {
   const SyncRefresh({super.key, required this.child});
 
@@ -82,6 +83,7 @@ class _SyncRefreshState extends ConsumerState<SyncRefresh> {
         ref.invalidate(hostsProvider);
         ref.invalidate(groupsProvider);
         ref.invalidate(identitiesProvider);
+        reloadSyncedSettings(ref);
       }
     });
     return widget.child;

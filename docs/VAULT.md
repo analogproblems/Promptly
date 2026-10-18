@@ -107,6 +107,13 @@ Decrypted segment content is a JSON object:
 - `ts` is a logical timestamp: a Lamport counter plus the device id as a tiebreaker. The device id makes every timestamp in the system unique, so ordering is total and deterministic.
 - `at` is wall-clock time for display only ("edited on iPhone, 2 minutes ago"). It never influences merging.
 
+Every record also carries `created_at` and `updated_at`, wall-clock times in RFC 3339 that the writing device stamps into its `put`: `updated_at` on every change, and `created_at` when the record is new or comes back after a deletion (a record imported from an export keeps its own). They merge like any other field, so every device ends up with the same two, and like `at` they are for display and a later history view only.
+
+Two collections hold more than the app's lists:
+
+- `settings` is one record, id `app`, with a field for each setting that makes sense on every device: the app's look (`theme_mode`), the terminal theme, the bell, the lines kept for scrolling back, the paste warning, whether programs may copy to the clipboard, and whether hosts are checked for being up. Settings that belong to one device (its text size, keyboard bar, lock, update check) stay in that device's local store and never enter the vault. Each field merges on its own, so two devices changing different settings both keep their change.
+- `known_hosts` is one record per host and port, with the key trusted for it. On a computer, the servers trusted in the user's own `~/.ssh/known_hosts` come in too, the first time and again whenever that file changes, one key per host, unless the vault already trusts a key for that host. Hashed names, wildcard patterns and `@revoked` lines cannot or must not travel, so they stay in the file and keep counting on that computer only, read from it on every connection as before.
+
 ### Logical clock rules
 
 Each device keeps one counter. Before producing an operation it increments the counter and uses the result. Whenever it reads an operation from any device it sets its counter to the larger of its own value and the one it read. This guarantees that an edit made after seeing another device's edit always sorts after it.
@@ -262,7 +269,7 @@ A shared vault is just a second vault in a folder that several people can access
 
 ## 13. Export, import and the CLI
 
-`promptly-cli` reads a vault folder and a passphrase and can, as a device of its own (it keeps records marked `local_only` to itself and stops if another device removes it):
+`promptly-cli` reads a vault, in a folder or on a server over SFTP (`sftp://user@host[:port]/path`, through the same SFTP backend the app uses; the server's host key must already be in `~/.ssh/known_hosts`, and it logs in with a key file, a password from the environment, or the SSH agent), with its passphrase, and can, as a device of its own (it keeps records marked `local_only` to itself and stops if another device removes it):
 
 - `inspect`: list devices, segment counts, clock values and warnings.
 - `export --json`: produce a single plaintext JSON document of the merged state, including secrets only if `--with-secrets` is passed, with a loud warning.

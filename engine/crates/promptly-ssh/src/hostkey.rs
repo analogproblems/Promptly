@@ -4,6 +4,7 @@ use std::fmt;
 use std::io;
 use std::path::PathBuf;
 
+use promptly_vault::crypto::{self, Dek};
 use russh::keys::{self, Algorithm, HashAlg, PublicKey};
 
 /// Everything the host key prompt shows.
@@ -179,10 +180,37 @@ pub fn preferred_host_key_algorithms(known: &[Algorithm]) -> Vec<Algorithm> {
 /// Promptly's file has the last word: once it holds a key for a host, that
 /// is the key, whatever `~/.ssh/known_hosts` says, so accepting a changed
 /// key sticks even though the old one is still in the user's own file.
+///
+/// Promptly's file is sealed with the device key when there is one, like
+/// the saved secrets, so a copy of the data folder does not say which
+/// servers this device talks to. Without secure storage it is plain text,
+/// as OpenSSH keeps its own.
 pub struct FileKnownHosts {
     /// The user's own files, read only.
     user_paths: Vec<PathBuf>,
     write_path: PathBuf,
+    seal: Seal,
+}
+
+/// How Promptly's own file is kept.
+enum Seal {
+    Plain,
+    /// Encrypted with the device key.
+    Key(Dek),
+    /// The device key exists but could not be had: the file is neither read
+    /// nor written, so it never goes back to plain text.
+    Locked,
+}
+
+/// Binds a sealed file to what it is.
+const SEAL_AAD: &[u8] = b"promptly-known-hosts";
+
+/// A key a known_hosts file trusts for one host, named outright.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trust {
+    pub host: String,
+    pub port: u16,
+    pub key: PublicKey,
 }
 
 impl FileKnownHosts {
@@ -194,59 +222,114 @@ impl FileKnownHosts {
         Self {
             user_paths,
             write_path,
+            seal: Seal::Plain,
         }
     }
 
     /// `~/.ssh/known_hosts` for reading plus `<data_dir>/known_hosts` for both.
     pub fn default_paths(data_dir: &std::path::Path) -> Self {
-        let mut read = Vec::new();
-        if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-            read.push(PathBuf::from(home).join(".ssh").join("known_hosts"));
-        }
-        Self::new(read, data_dir.join("known_hosts"))
+        Self::new(
+            Self::user_file().into_iter().collect(),
+            data_dir.join("known_hosts"),
+        )
     }
 
-    /// Every key on record for the host in one file. `@revoked` keys come
-    /// back too, flagged, so they are refused rather than ignored; lines
-    /// this reader does not understand (`@cert-authority`, damaged ones)
-    /// are skipped without hiding the rest of the file.
-    fn recorded(path: &std::path::Path, host: &str, port: u16) -> Vec<(PublicKey, bool)> {
-        let text = match std::fs::read_to_string(path) {
+    /// The user's own `~/.ssh/known_hosts`, wherever the home folder is.
+    pub fn user_file() -> Option<PathBuf> {
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+        Some(PathBuf::from(home).join(".ssh").join("known_hosts"))
+    }
+
+    /// Seal Promptly's own file with `key`, the device key. A plain file
+    /// from before there was a key is still read, and sealed when next
+    /// written; one sealed with a key since lost is set aside then.
+    pub fn sealed(mut self, key: Dek) -> Self {
+        self.seal = Seal::Key(key);
+        self
+    }
+
+    /// Neither read nor write Promptly's own file, for a device whose secure
+    /// storage would not give up its key. The user's own files still count.
+    pub fn locked(mut self) -> Self {
+        self.seal = Seal::Locked;
+        self
+    }
+
+    /// The user's own files, which are read but never written.
+    pub fn user_files(&self) -> &[PathBuf] {
+        &self.user_paths
+    }
+
+    /// A plain file's text; a missing or unreadable one reads as empty.
+    fn read_plain(path: &std::path::Path) -> String {
+        match std::fs::read_to_string(path) {
             Ok(t) => t,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Vec::new(),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
             Err(e) => {
                 tracing::warn!("could not read {}: {e}", path.display());
-                return Vec::new();
+                String::new()
             }
+        }
+    }
+
+    /// Promptly's own file as text, or `None` when it cannot be read here:
+    /// sealed with a key this device does not have, or locked.
+    fn own_text(&self) -> io::Result<Option<String>> {
+        if let Seal::Locked = self.seal {
+            return Ok(None);
+        }
+        let bytes = match std::fs::read(&self.write_path) {
+            Ok(b) => b,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Some(String::new())),
+            Err(e) => return Err(e),
         };
+        let is_sealed =
+            bytes.starts_with(crypto::MAGIC) && bytes.get(4) == Some(&crypto::ENVELOPE_VERSION);
+        Ok(match (&self.seal, is_sealed) {
+            (Seal::Key(key), true) => crypto::open(key, SEAL_AAD, &bytes)
+                .ok()
+                .and_then(|plain| String::from_utf8(plain).ok()),
+            (_, true) => None,
+            (_, false) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+        })
+    }
+
+    /// Every key on record for the host in one file's text. `@revoked` keys
+    /// come back too, flagged, so they are refused rather than ignored;
+    /// lines this reader does not understand (`@cert-authority`, damaged
+    /// ones) are skipped without hiding the rest of the file.
+    fn recorded(text: &str, host: &str, port: u16) -> Vec<(PublicKey, bool)> {
         let entry = Self::entry(host, port);
         let mut out = Vec::new();
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            let mut fields = line.split_whitespace();
-            let mut first = fields.next().unwrap_or("");
-            let mut revoked = false;
-            if first.starts_with('@') {
-                if first != "@revoked" {
-                    continue;
-                }
-                revoked = true;
-                first = fields.next().unwrap_or("");
-            }
-            if !hosts_match(first, &entry) {
-                continue;
-            }
-            let (Some(kind), Some(data)) = (fields.next(), fields.next()) else {
-                continue;
-            };
-            if let Ok(key) = PublicKey::from_openssh(&format!("{kind} {data}")) {
+        for (field, key, revoked) in Self::lines(text) {
+            if hosts_match(field, &entry) {
                 out.push((key, revoked));
             }
         }
         out
+    }
+
+    /// Each line's host field, key, and whether it is `@revoked`.
+    fn lines(text: &str) -> impl Iterator<Item = (&str, PublicKey, bool)> {
+        text.lines().filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let mut fields = line.split_whitespace();
+            let mut first = fields.next()?;
+            let mut revoked = false;
+            if first.starts_with('@') {
+                if first != "@revoked" {
+                    return None;
+                }
+                revoked = true;
+                first = fields.next()?;
+            }
+            let (kind, data) = (fields.next()?, fields.next()?);
+            let key = PublicKey::from_openssh(&format!("{kind} {data}")).ok()?;
+            Some((first, key, revoked))
+        })
     }
 
     /// The keys that decide for this host: Promptly's own when it has any,
@@ -255,9 +338,15 @@ impl FileKnownHosts {
         let user: Vec<_> = self
             .user_paths
             .iter()
-            .flat_map(|p| Self::recorded(p, host, port))
+            .flat_map(|p| Self::recorded(&Self::read_plain(p), host, port))
             .collect();
-        let own = Self::recorded(&self.write_path, host, port);
+        let own_text = self.own_text().unwrap_or_else(|e| {
+            tracing::warn!("could not read {}: {e}", self.write_path.display());
+            None
+        });
+        let own = own_text
+            .map(|t| Self::recorded(&t, host, port))
+            .unwrap_or_default();
         if own.is_empty() {
             return user;
         }
@@ -267,12 +356,104 @@ impl FileKnownHosts {
             .collect()
     }
 
+    /// The trusts in the user's own files that can travel to other devices:
+    /// one key for each host named outright, of the kind the handshake asks
+    /// for first. A hashed name cannot be read back and a wildcard or
+    /// negated pattern names no one host, so those lines stay where they
+    /// are and are read live as before; so do `@revoked` lines. A key
+    /// revoked for a host is never carried for it, nor is a host that a
+    /// negation on its own line leaves out.
+    pub fn user_trusts(&self) -> Vec<Trust> {
+        let texts: Vec<String> = self
+            .user_paths
+            .iter()
+            .map(|p| Self::read_plain(p))
+            .collect();
+        let lines: Vec<_> = texts.iter().flat_map(|t| Self::lines(t)).collect();
+        let rank = |key: &PublicKey| {
+            let kind = family(&key.algorithm());
+            russh::Preferred::DEFAULT
+                .key
+                .iter()
+                .position(|a| family(a) == kind)
+                .unwrap_or(usize::MAX)
+        };
+        let mut best: std::collections::BTreeMap<(String, u16), Trust> = Default::default();
+        for (field, key, revoked) in &lines {
+            if *revoked {
+                continue;
+            }
+            for pattern in field.split(',') {
+                let Some((host, port)) = Self::named(pattern) else {
+                    continue;
+                };
+                let entry = Self::entry(&host, port);
+                // A negation anywhere on the line excludes the host from it.
+                if !hosts_match(field, &entry) {
+                    continue;
+                }
+                let revoked_here = lines.iter().any(|(f, k, r)| {
+                    *r && k.key_data() == key.key_data() && hosts_match(f, &entry)
+                });
+                if revoked_here {
+                    continue;
+                }
+                let better = best
+                    .get(&(host.clone(), port))
+                    .is_none_or(|t| rank(key) < rank(&t.key));
+                if better {
+                    best.insert(
+                        (host.clone(), port),
+                        Trust {
+                            host,
+                            port,
+                            key: key.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        best.into_values().collect()
+    }
+
+    /// The host and port a pattern names outright: `host` or `[host]:port`.
+    /// Hashed, wildcard and negated patterns name none.
+    fn named(pattern: &str) -> Option<(String, u16)> {
+        if pattern.is_empty()
+            || pattern.starts_with('|')
+            || pattern.starts_with('!')
+            || pattern.contains(['*', '?'])
+        {
+            return None;
+        }
+        let (host, port) = match pattern.strip_prefix('[') {
+            Some(rest) => {
+                let (host, port) = rest.split_once("]:")?;
+                (host, port.parse().ok()?)
+            }
+            None => (pattern, 22),
+        };
+        (!host.is_empty()).then(|| (host.to_ascii_lowercase(), port))
+    }
+
     fn entry(host: &str, port: u16) -> String {
         if port == 22 {
             host.to_string()
         } else {
             format!("[{host}]:{port}")
         }
+    }
+
+    /// Move a file no key here can open out of the way, so a new one can
+    /// start. Nothing is deleted.
+    fn set_aside(&self) -> io::Result<()> {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut aside = self.write_path.as_os_str().to_owned();
+        aside.push(format!(".unreadable-{stamp}"));
+        std::fs::rename(&self.write_path, PathBuf::from(aside))
     }
 }
 
@@ -315,11 +496,24 @@ impl KnownHosts for FileKnownHosts {
             .map_err(|e| io::Error::other(e.to_string()))?;
         // Drop whatever this file trusted for the host before, so the new
         // key replaces it rather than sitting beside it.
-        let existing = match std::fs::read_to_string(&self.write_path) {
-            Ok(s) => s,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(e),
-        };
+        let existing =
+            match (self.own_text()?, &self.seal) {
+                (Some(text), _) => text,
+                // Sealed with a device key that has since been replaced, so
+                // nothing can read it.
+                (None, Seal::Key(_)) => {
+                    self.set_aside()?;
+                    String::new()
+                }
+                (None, Seal::Locked) => {
+                    return Err(io::Error::other(
+                        "the device key is not available, so trusted host keys cannot be saved",
+                    ))
+                }
+                (None, Seal::Plain) => return Err(io::Error::other(
+                    "trusted host keys are encrypted with a device key this device no longer has",
+                )),
+            };
         let mut out = String::new();
         for line in existing.lines() {
             let first = line.split_whitespace().next().unwrap_or("");
@@ -330,12 +524,17 @@ impl KnownHosts for FileKnownHosts {
             out.push('\n');
         }
         out.push_str(&format!("{entry} {key_line}\n"));
+        let bytes = match &self.seal {
+            Seal::Key(k) => crypto::seal(k, SEAL_AAD, out.as_bytes())
+                .map_err(|e| io::Error::other(e.to_string()))?,
+            _ => out.into_bytes(),
+        };
         let tmp = self.write_path.with_extension(format!(
             "tmp-{}-{}",
             std::process::id(),
             TMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
-        std::fs::write(&tmp, out)?;
+        std::fs::write(&tmp, bytes)?;
         std::fs::rename(&tmp, &self.write_path).inspect_err(|_| {
             let _ = std::fs::remove_file(&tmp);
         })
@@ -551,6 +750,147 @@ mod tests {
             "the trusted kind is asked for first"
         );
         assert_eq!(prefs.len(), russh::Preferred::DEFAULT.key.len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_a_device_key_the_file_is_sealed() {
+        let dir = std::env::temp_dir().join(format!("promptly-kh6-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("known_hosts");
+        let device_key = Dek::generate();
+        let sealed = || FileKnownHosts::new(vec![], path.clone()).sealed(device_key.clone());
+        sealed().remember("secret.example", 22, &key()).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        assert!(bytes.starts_with(crypto::MAGIC));
+        assert!(
+            !bytes.windows(14).any(|w| w == b"secret.example"),
+            "no host name in the clear"
+        );
+        assert_eq!(
+            sealed().check("secret.example", 22, &key()),
+            HostKeyStatus::Known
+        );
+
+        // Without the key the file says nothing, and is not written over
+        // in plain text.
+        let plain = FileKnownHosts::new(vec![], path.clone());
+        assert_eq!(
+            plain.check("secret.example", 22, &key()),
+            HostKeyStatus::Unknown
+        );
+        assert!(plain.remember("other.example", 22, &key()).is_err());
+        let locked = FileKnownHosts::new(vec![], path.clone()).locked();
+        assert!(locked.remember("other.example", 22, &key()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), bytes, "left as it was");
+
+        // A plain file from before the key is read, and sealed when written.
+        std::fs::write(
+            &path,
+            format!("old.example {}\n", key().to_openssh().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(
+            sealed().check("old.example", 22, &key()),
+            HostKeyStatus::Known
+        );
+        sealed().remember("new.example", 22, &key()).unwrap();
+        assert!(std::fs::read(&path).unwrap().starts_with(crypto::MAGIC));
+        assert_eq!(
+            sealed().check("old.example", 22, &key()),
+            HostKeyStatus::Known
+        );
+
+        // Sealed with a key since replaced: set aside, and a new file begun.
+        let other = FileKnownHosts::new(vec![], path.clone()).sealed(Dek::generate());
+        assert_eq!(
+            other.check("new.example", 22, &key()),
+            HostKeyStatus::Unknown
+        );
+        other.remember("fresh.example", 22, &key()).unwrap();
+        assert_eq!(
+            other.check("fresh.example", 22, &key()),
+            HostKeyStatus::Known
+        );
+        let aside = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("known_hosts.unreadable-")
+            })
+            .count();
+        assert_eq!(aside, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_users_own_trusts_are_read_one_key_per_named_host() {
+        let dir = std::env::temp_dir().join(format!("promptly-kh7-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let user = dir.join("user_known_hosts");
+        let ed = key().to_openssh().unwrap();
+        let ecdsa = ecdsa_key().to_openssh().unwrap();
+        let other = PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBzqY1Sy2Yv3n4Ck9Q3h8s9Dq7mEcKq2FjG5lHhq6pQZ",
+        )
+        .unwrap();
+        let other_line = other.to_openssh().unwrap();
+        use base64::Engine;
+        use hmac::{Hmac, KeyInit, Mac};
+        let salt = [9u8; 20];
+        let hash = Hmac::<sha1::Sha1>::new_from_slice(&salt)
+            .unwrap()
+            .chain_update("hidden.test")
+            .finalize()
+            .into_bytes();
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let hashed = format!("|1|{}|{}", b64.encode(salt), b64.encode(hash));
+        std::fs::write(
+            &user,
+            format!(
+                "# mine\n\
+                 web.test,10.0.0.1 {ecdsa}\n\
+                 Web.Test {ed}\n\
+                 [db.test]:2222 {ed}\n\
+                 *.wild.test {ed}\n\
+                 {hashed} {ed}\n\
+                 gone.test {other_line}\n\
+                 @revoked gone.test {other_line}\n\
+                 @cert-authority *.test {ed}\n\
+                 [bad.test]:port {ed}\n\
+                 excl.test,[excl.test]:2200,ok.test,!excl.test {ed}\n\
+                 w1.neg.test,w2.other,!*.neg.test {ed}\n"
+            ),
+        )
+        .unwrap();
+        let store = FileKnownHosts::new(vec![user.clone()], dir.join("known_hosts"));
+        assert_eq!(store.user_files(), std::slice::from_ref(&user));
+        let found: Vec<(String, u16, String)> = store
+            .user_trusts()
+            .into_iter()
+            .map(|t| (t.host, t.port, t.key.to_openssh().unwrap()))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("10.0.0.1".to_string(), 22, ecdsa.clone()),
+                ("db.test".to_string(), 2222, ed.clone()),
+                // A negation leaves out what it matches, on that port only.
+                ("excl.test".to_string(), 2200, ed.clone()),
+                ("ok.test".to_string(), 22, ed.clone()),
+                ("w2.other".to_string(), 22, ed.clone()),
+                // Two kinds for one host: the one the handshake asks for first.
+                ("web.test".to_string(), 22, ed.clone()),
+            ]
+        );
+        // What is not carried still counts, read from the file as before.
+        assert_eq!(store.check("hidden.test", 22, &key()), HostKeyStatus::Known);
+        assert_eq!(store.check("gone.test", 22, &other), HostKeyStatus::Revoked);
+        assert_eq!(store.check("a.wild.test", 22, &key()), HostKeyStatus::Known);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

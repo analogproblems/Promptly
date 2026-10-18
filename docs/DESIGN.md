@@ -286,9 +286,10 @@ KnownHost
 Theme
   name, colors: { fg, bg, cursor, selection, ansi[16] }, builtin: bool
 
-Settings                            one record
-  theme_id, font_family, font_size, ligatures, keyboard_bar_layout[], bell, scrollback_lines,
-  copy_on_select, paste_warning, haptics, app_lock, ...
+Settings                            one record, id "app": only what makes sense on every device
+  theme_mode, terminal_theme, terminal_bell, terminal_scrollback, paste_warning,
+  program_clipboard, reachability_check, ...
+  (font size, keyboard bar, app lock and the update check stay on each device)
 
 Device                              one per enrolled device
   name, platform, enrolled_at, last_seen_at, app_version,

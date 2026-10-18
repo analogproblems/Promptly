@@ -354,7 +354,7 @@ Every SSH server has its own **host key**, which proves the server is the one yo
 
 Promptly also reads the trusted keys in your own `~/.ssh/known_hosts` on a desktop, including hashed entries and `@revoked` lines. A key you revoke there is never trusted, and a server that suddenly offers a different kind of key counts as a changed key, not a new server.
 
-If you use sync, a server you trust on one device is trusted on all of them.
+If you use sync, a server you trust on one device is trusted on all of them. That includes the servers in your `~/.ssh/known_hosts`: Promptly adds them to the vault the first time it connects or syncs, and again whenever the file changes. If a server is already trusted in Promptly with another key, Promptly's key stays. Hashed entries, wildcard patterns and `@revoked` lines can't be copied safely, so they stay in the file and count only on that computer.
 
 <img src="screenshots/m1-ssh-host-key.png" alt="The first-time host key prompt, showing the fingerprint and its picture" width="640">
 
@@ -679,7 +679,9 @@ How often, in seconds, Promptly pings the server so an idle connection isn't dro
 
 ## 14. Sync
 
-Sync keeps the same hosts, groups, keys, saved passwords, snippets, trusted host keys and imported themes on all your devices. It's free, because it uses storage you already have.
+Sync keeps the same hosts, groups, keys, saved passwords, snippets, trusted host keys, imported themes and settings on all your devices. It's free, because it uses storage you already have.
+
+The settings that sync are the app look, the terminal theme, the bell, the lines kept for scrolling back, **Show text before pasting several lines**, **Let programs copy to the clipboard** and **Show which hosts are up**. Settings that belong to one device stay on it: the text size, the keyboard bar, the **Security** settings and **Check for updates automatically**.
 
 ### How it works
 
@@ -872,7 +874,9 @@ These shortcuts work on Linux, Windows and macOS. Every other key combination go
 
 Promptly's vault format is open and documented, and the `promptly` command-line tool reads and writes the same vault. You can use it to back up your data, script changes, or move to another app at any time. It isn't included in the release downloads yet; it's built from the source code (see the [developer guide](DEVELOPMENT.md)).
 
-Every vault command takes the vault folder, and asks for the passphrase, or reads it from the `PROMPTLY_PASSPHRASE` environment variable. Add `--recovery-code` to unlock with the recovery code instead if you've forgotten the passphrase; it's asked for, or read from `PROMPTLY_RECOVERY_CODE`. Neither can be typed on the command line itself, where other people on the same computer could see it in the list of running programs.
+Every vault command takes the vault: its folder, or `sftp://user@host/path` for a vault on your own server (add `:port` after the host if it isn't 22; the path is in your home folder there, and `sftp://user@host//srv/vault` names one from the top). For a server vault, its host key must already be in your `~/.ssh/known_hosts`, so connect to it once with `ssh` first. The tool logs in with the key you give with `--identity FILE` (its passphrase is asked for, or read from `PROMPTLY_KEY_PASSPHRASE`), otherwise with a password from `PROMPTLY_SSH_PASSWORD`, otherwise with your SSH agent.
+
+Every vault command asks for the passphrase, or reads it from the `PROMPTLY_PASSPHRASE` environment variable. Add `--recovery-code` to unlock with the recovery code instead if you've forgotten the passphrase; it's asked for, or read from `PROMPTLY_RECOVERY_CODE`. Neither can be typed on the command line itself, where other people on the same computer could see it in the list of running programs.
 
 | Command | What it does |
 |---|---|
@@ -886,7 +890,7 @@ Every vault command takes the vault folder, and asks for the passphrase, or read
 ## 19. Privacy and security
 
 - **Promptly collects nothing about you.** There are no analytics, no crash reporting and no accounts. Apart from your SSH connections, nothing leaves your device unless you set up sync, which sends only encrypted data to the storage you chose, or check for updates, which asks GitHub for the newest version number. See the [privacy policy](PRIVACY.md).
-- **Your data is encrypted, on your device and in the vault.** Your hosts, keys, snippets and settings, and your saved passwords, private keys and the vault's key, are encrypted in Promptly's data folder with a key held in your system's secure storage (the Keychain, Android Keystore, Windows Credential Manager or the Linux keyring), so a copy of the folder, such as a backup, doesn't reveal them. They go into the vault only in encrypted form, and your passphrase never leaves your device. On a Linux computer with no keyring, Promptly can't encrypt them on the device; **Settings** then says so, and installing a keyring such as GNOME Keyring or KWallet turns encryption on the next time Promptly starts. The `promptly` command-line tool's own copy is encrypted too, so it opens only with the vault's passphrase or recovery code.
+- **Your data is encrypted, on your device and in the vault.** Your hosts, keys, snippets and settings, the list of servers you trust, and your saved passwords, private keys and the vault's key, are encrypted in Promptly's data folder with a key held in your system's secure storage (the Keychain, Android Keystore, Windows Credential Manager or the Linux keyring), so a copy of the folder, such as a backup, doesn't reveal them. They go into the vault only in encrypted form, and your passphrase never leaves your device. On a Linux computer with no keyring, Promptly can't encrypt them on the device; **Settings** then says so, and installing a keyring such as GNOME Keyring or KWallet turns encryption on the next time Promptly starts. The `promptly` command-line tool's own copy is encrypted too, so it opens only with the vault's passphrase or recovery code.
 - **Keys unlock with you.** Before a key is used, Promptly asks for your fingerprint, face or device PIN (Windows Hello on Windows, an app passcode on Linux), and it can lock itself when it opens or when you come back to it. See **Security** in [Settings](#16-settings-reference).
 - **Host keys are always checked.** Promptly warns you before connecting to a server it hasn't seen before, and stops you if a known server's key changes.
 - **You choose what programs can do.** Remote programs can only set your clipboard if you allow it, and agent forwarding is off unless you turn it on for a host.

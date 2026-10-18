@@ -52,10 +52,86 @@ pub struct VaultKnownHosts {
 
 impl VaultKnownHosts {
     pub fn new() -> Self {
-        Self {
-            files: FileKnownHosts::default_paths(&crate::api::engine::data_dir()),
+        let files = crate::api::store::known_hosts_files();
+        // A failure only means those servers are not in the vault yet; the
+        // file itself still counts here, and the next sync tries again.
+        if let Ok(store) = store() {
+            let _ = import_user_known_hosts(&store, &files);
         }
+        Self { files }
     }
+}
+
+/// When `~/.ssh/known_hosts` was last brought into the vault: each file's
+/// size and modification time.
+pub const META_USER_KNOWN_HOSTS: &str = "user_known_hosts_imported";
+
+/// Bring the servers trusted in the user's own `~/.ssh/known_hosts` into
+/// the vault, so they are trusted on every device: the first time, and
+/// again whenever the file changes. A host the vault already trusts keeps
+/// its key, as Promptly's own trust has the last word on this device too.
+/// Hashed and wildcard lines, and `@revoked` ones, stay in the file only,
+/// read from it as before (see [`FileKnownHosts::user_trusts`]).
+fn import_user_known_hosts(store: &Store, files: &FileKnownHosts) -> Result<(), String> {
+    let stamp: Vec<String> = files
+        .user_files()
+        .iter()
+        .map(|p| match std::fs::metadata(p) {
+            Ok(m) => {
+                let modified = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_nanos());
+                format!("{} {} {modified}", p.display(), m.len())
+            }
+            Err(_) => format!("{} -", p.display()),
+        })
+        .collect();
+    let stamp = stamp.join("\n");
+    if store
+        .meta_get(META_USER_KNOWN_HOSTS)
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        == Some(stamp.as_str())
+    {
+        return Ok(());
+    }
+    let trusted: std::collections::BTreeSet<(String, u16)> = store
+        .list(Collection::KnownHosts)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter_map(|r| serde_json::from_str::<KnownHost>(&r.json).ok())
+        .map(|k| (k.host, k.port))
+        .collect();
+    let mut added = false;
+    for t in files.user_trusts() {
+        if trusted.contains(&(t.host.clone(), t.port)) {
+            continue;
+        }
+        let info = HostKeyInfo::from_key(&t.host, t.port, &t.key);
+        let record = KnownHost {
+            id: promptly_vault::model::new_id(),
+            host: t.host,
+            port: t.port,
+            key_type: info.algorithm,
+            fingerprint_sha256: info.fingerprint,
+            public_key: info.public_key,
+            first_seen_at: time::OffsetDateTime::now_utc(),
+            first_seen_device: store.device_id().to_string(),
+        };
+        let json = serde_json::to_string(&record).expect("known host serialises");
+        added |= store
+            .put(Collection::KnownHosts, &record.id.to_string(), &json)
+            .map_err(|e| e.to_string())?;
+    }
+    store
+        .meta_set(META_USER_KNOWN_HOSTS, &stamp)
+        .map_err(|e| e.to_string())?;
+    if added {
+        notify_change();
+    }
+    Ok(())
 }
 
 impl Default for VaultKnownHosts {
@@ -123,7 +199,8 @@ fn apply_pulled_known_hosts(store: &Store) -> Result<(), String> {
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
     let mut now = applied.clone();
-    let files = FileKnownHosts::default_paths(&crate::api::engine::data_dir());
+    let files = crate::api::store::known_hosts_files();
+    import_user_known_hosts(store, &files)?;
     // Normally one record per host; two devices that trusted different
     // keys at once leave two until one of them trusts again. The newest
     // trust wins, the same on every device.
@@ -1920,6 +1997,94 @@ mod tests {
         assert!(!config().unwrap().unwrap().snapshot_due);
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn servers_trusted_in_the_users_own_file_go_into_the_vault_once() {
+        let _ = crate::api::store::set_no_device_key();
+        assert_eq!(
+            crate::api::store::known_hosts_files().user_files(),
+            [crate::api::engine::data_dir().join("user_known_hosts")],
+            "tests never read the real ~/.ssh/known_hosts"
+        );
+        let dir = std::env::temp_dir().join(format!("promptly-ukh-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let user = dir.join("user_known_hosts");
+        let files = FileKnownHosts::new(vec![user.clone()], dir.join("known_hosts"));
+        let store = Store::open_in_memory().unwrap();
+        let key = |kind| {
+            let g = promptly_ssh::generate_key(kind, "").unwrap();
+            PublicKey::from_openssh(&g.public_openssh).unwrap()
+        };
+        let (web, db, changed) = (
+            key(promptly_ssh::KeyKind::Ed25519),
+            key(promptly_ssh::KeyKind::Ed25519),
+            key(promptly_ssh::KeyKind::Ed25519),
+        );
+        let line = |k: &PublicKey| k.to_openssh().unwrap();
+        let records = |store: &Store| {
+            let mut v: Vec<(String, u16, String)> = store
+                .list(Collection::KnownHosts)
+                .unwrap()
+                .into_iter()
+                .map(|r| serde_json::from_str::<KnownHost>(&r.json).unwrap())
+                .map(|k| (k.host, k.port, k.public_key))
+                .collect();
+            v.sort();
+            v
+        };
+
+        // No file yet: nothing to bring in, and that is remembered too.
+        import_user_known_hosts(&store, &files).unwrap();
+        assert!(records(&store).is_empty());
+        std::fs::write(
+            &user,
+            format!(
+                "web.test {}\n@revoked bad.test {}\nbad.test {}\n",
+                line(&web),
+                line(&db),
+                line(&db)
+            ),
+        )
+        .unwrap();
+        import_user_known_hosts(&store, &files).unwrap();
+        assert_eq!(records(&store), [("web.test".into(), 22, line(&web))]);
+        // An unchanged file is not read again, so a trust taken out of the
+        // vault stays out.
+        let id = store.list(Collection::KnownHosts).unwrap()[0].id.clone();
+        store.delete(Collection::KnownHosts, &id).unwrap();
+        import_user_known_hosts(&store, &files).unwrap();
+        assert!(records(&store).is_empty());
+
+        // The file changes: new hosts come in, but a host the vault already
+        // trusts keeps its key.
+        let trusted = uuid::Uuid::now_v7().to_string();
+        let record = json!({
+            "id": trusted, "host": "db.test", "port": 2222, "key_type": "ED25519",
+            "fingerprint_sha256": "SHA256:x", "public_key": line(&web),
+            "first_seen_at": "2026-01-01T00:00:00Z", "first_seen_device": "laptop",
+        });
+        store
+            .put(Collection::KnownHosts, &trusted, &record.to_string())
+            .unwrap();
+        std::fs::write(
+            &user,
+            format!(
+                "web.test {}\n[db.test]:2222 {}\n",
+                line(&changed),
+                line(&db)
+            ),
+        )
+        .unwrap();
+        import_user_known_hosts(&store, &files).unwrap();
+        assert_eq!(
+            records(&store),
+            [
+                ("db.test".into(), 2222, line(&web)),
+                ("web.test".into(), 22, line(&changed)),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -1,9 +1,10 @@
 //! `promptly`, the command-line companion.
 //!
-//! The vault format is open; this tool is the proof. It reads a vault folder
-//! with its passphrase and can inspect, export, import, sync, turn the
-//! hosts into an OpenSSH config, remove devices and give the vault a new key. It is a device of its own, with its own
-//! small local store, so it merges like any other.
+//! The vault format is open; this tool is the proof. It reads a vault, in a
+//! folder or on a server over SFTP, with its passphrase and can inspect,
+//! export, import, sync, turn the hosts into an OpenSSH config, remove
+//! devices and give the vault a new key. It is a device of its own, with
+//! its own small local store, so it merges like any other.
 
 mod commands;
 
@@ -23,8 +24,17 @@ struct Cli {
 
 #[derive(Args, Clone)]
 struct VaultArgs {
-    /// The vault folder.
-    folder: std::path::PathBuf,
+    /// The vault folder, or sftp://user@host[:port]/path for a vault on a
+    /// server (the path is in the login's home folder; start it with a
+    /// second slash for an absolute one). The server's host key must be in
+    /// ~/.ssh/known_hosts. The login uses --identity, else a password from
+    /// PROMPTLY_SSH_PASSWORD, else the SSH agent.
+    #[arg(value_name = "VAULT")]
+    location: String,
+    /// For a vault on a server: log in with this private key. Its
+    /// passphrase, if any, comes from PROMPTLY_KEY_PASSPHRASE or is asked.
+    #[arg(long, value_name = "KEY_FILE")]
+    identity: Option<std::path::PathBuf>,
     /// Unlock with the recovery code instead of the passphrase (asked for,
     /// or read from PROMPTLY_RECOVERY_CODE).
     #[arg(long)]
@@ -117,6 +127,18 @@ fn print_recovery_code(code: &str) {
     );
 }
 
+/// Open the vault's storage and unlock it, failing when there is nothing
+/// to unlock it with.
+fn open_unlocked(
+    v: &VaultArgs,
+    needed: &str,
+) -> Result<(Box<dyn promptly_vault::Backend>, commands::Unlocked)> {
+    let backend = commands::open(v)?;
+    let unlocked =
+        commands::unlock(v, &*backend)?.ok_or_else(|| anyhow::anyhow!("{needed} is needed"))?;
+    Ok((backend, unlocked))
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("error: {e:#}");
@@ -132,65 +154,59 @@ fn run() -> Result<()> {
             Err(err) => anyhow::bail!("{err}"),
         },
         Command::Inspect(v) => {
-            let out = commands::inspect(&v.folder, commands::unlock(&v)?.as_ref())?;
-            print!("{out}");
+            let backend = commands::open(&v)?;
+            let unlocked = commands::unlock(&v, &*backend)?;
+            print!("{}", commands::inspect(&*backend, unlocked.as_ref())?);
         }
         Command::Export {
             vault,
             with_secrets,
         } => {
-            let unlocked = commands::unlock(&vault)?
-                .ok_or_else(|| anyhow::anyhow!("a passphrase is needed"))?;
+            let (backend, unlocked) = open_unlocked(&vault, "a passphrase")?;
             if with_secrets {
                 eprintln!("WARNING: the output contains passwords and private keys in plain text. Treat it like the keys themselves.");
             }
-            let json = commands::export(&vault.folder, &unlocked, with_secrets)?;
+            let json = commands::export(&*backend, &unlocked, with_secrets)?;
             println!("{json}");
         }
         Command::Import { vault, file } => {
-            let unlocked = commands::unlock(&vault)?
-                .ok_or_else(|| anyhow::anyhow!("a passphrase is needed"))?;
+            let (backend, unlocked) = open_unlocked(&vault, "a passphrase")?;
             let text = if file.as_os_str() == "-" {
                 std::io::read_to_string(std::io::stdin())?
             } else {
                 std::fs::read_to_string(&file)?
             };
-            let n = commands::import(&vault.folder, &unlocked, &text)?;
+            let n = commands::import(&*backend, &unlocked, &text)?;
             eprintln!("imported {n} records");
         }
         Command::Sync(v) => {
-            let unlocked =
-                commands::unlock(&v)?.ok_or_else(|| anyhow::anyhow!("a passphrase is needed"))?;
-            let report = commands::sync(&v.folder, &unlocked)?;
+            let (backend, unlocked) = open_unlocked(&v, "a passphrase")?;
+            let report = commands::sync(&*backend, &unlocked)?;
             eprintln!("{report}");
         }
         Command::SshConfig { vault, keys_dir } => {
-            let unlocked = commands::unlock(&vault)?
-                .ok_or_else(|| anyhow::anyhow!("a passphrase is needed"))?;
+            let (backend, unlocked) = open_unlocked(&vault, "a passphrase")?;
             print!(
                 "{}",
-                commands::ssh_config(&vault.folder, &unlocked, keys_dir.as_deref())?
+                commands::ssh_config(&*backend, &unlocked, keys_dir.as_deref())?
             );
         }
         Command::ChangePassphrase(v) => {
-            let unlocked = commands::unlock(&v)?
-                .ok_or_else(|| anyhow::anyhow!("the current passphrase is needed"))?;
+            let (backend, unlocked) = open_unlocked(&v, "the current passphrase")?;
             let new = new_passphrase()?;
-            commands::change_passphrase(&v.folder, &unlocked, &new)?;
+            commands::change_passphrase(&*backend, &unlocked, &new)?;
             eprintln!("passphrase changed");
         }
         Command::RotateDek(v) => {
-            let unlocked = commands::unlock(&v)?
-                .ok_or_else(|| anyhow::anyhow!("the current passphrase is needed"))?;
+            let (backend, unlocked) = open_unlocked(&v, "the current passphrase")?;
             let new = new_passphrase()?;
-            print_recovery_code(&commands::rotate_dek(&v.folder, &unlocked, &new)?);
+            print_recovery_code(&commands::rotate_dek(&*backend, &unlocked, &new)?);
         }
         Command::Devices {
             action: DevicesAction::List(v),
         } => {
-            let unlocked =
-                commands::unlock(&v)?.ok_or_else(|| anyhow::anyhow!("a passphrase is needed"))?;
-            print!("{}", commands::list_devices(&v.folder, &unlocked)?);
+            let (backend, unlocked) = open_unlocked(&v, "a passphrase")?;
+            print!("{}", commands::list_devices(&*backend, &unlocked)?);
         }
         Command::Devices {
             action:
@@ -200,23 +216,25 @@ fn run() -> Result<()> {
                     rekey,
                 },
         } => {
-            let unlocked = commands::unlock(&vault)?
-                .ok_or_else(|| anyhow::anyhow!("a passphrase is needed"))?;
+            let (backend, unlocked) = open_unlocked(&vault, "a passphrase")?;
             // Asked first, so a typo does not leave the job half done.
             let new = rekey.then(new_passphrase).transpose()?;
-            let name = commands::remove_device(&vault.folder, &unlocked, &device)?;
+            let name = commands::remove_device(&*backend, &unlocked, &device)?;
             eprintln!("removed {name}");
             if let Some(new) = new {
-                print_recovery_code(&commands::rotate_dek(&vault.folder, &unlocked, &new)?);
+                print_recovery_code(&commands::rotate_dek(&*backend, &unlocked, &new)?);
             }
         }
     }
     Ok(())
 }
 
-impl commands::FolderPath for VaultArgs {
-    fn folder_path(&self) -> &std::path::Path {
-        &self.folder
+impl commands::Place for VaultArgs {
+    fn location(&self) -> &str {
+        &self.location
+    }
+    fn identity(&self) -> Option<&std::path::Path> {
+        self.identity.as_deref()
     }
 }
 

@@ -40,6 +40,7 @@ pub use keys::{
     export as export_key, generate as generate_key, inspect as inspect_key, public_fingerprint,
     Generated, Inspected, KeyKind,
 };
+pub use promptly_term::TermSize;
 pub use reach::{reach, reach_all};
 pub use russh::keys::{Algorithm, PublicKey};
 pub use sftp::{QuietPrompter, SftpBackend, SftpError};

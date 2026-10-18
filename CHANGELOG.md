@@ -55,6 +55,11 @@ Each release's section is what the GitHub Release says; keep it in plain words.
 - On a phone keyboard, backspace erases a whole emoji and keeps working on a command recalled from history. A big paste no longer freezes the app while a program is busy.
 - File permissions keep their special bits, Windows paths rename and navigate in the right folder, port forward rows stay in place after one is removed, and exported keys with the same name no longer overwrite each other.
 - On desktop, the menu bar is slimmer and its menus open below it instead of over it, rows are more compact, and shortcuts no longer touch the menu's right edge. The nine Tab entries moved into a View, Go to tab submenu. The Help page's shortcut list no longer runs keys into their descriptions, and on a phone the host editor picks how to sign in from a list instead of buttons squeezed so tight their words broke. Session text has a small margin on the left instead of touching the edge.
+- Settings that make sense everywhere now sync: the app look, the terminal theme, the bell, the lines kept for scrolling back, the paste warning, letting programs copy to the clipboard, and showing which hosts are up. The text size, the keyboard bar, the security settings and the update check stay on each device.
+- Servers you trust in `~/.ssh/known_hosts` now sync to your other devices too. Promptly adds them to the vault the first time it connects or syncs, and again when the file changes. Hashed, wildcard and `@revoked` lines stay in the file and count only on that computer.
+- Everything in the vault now remembers when it was made and when it last changed, the same on every device, ready for a history view.
+- The command-line tool works on a vault on your own server as well as in a folder: give it `sftp://user@host/path`. It logs in with `--identity`, a password from `PROMPTLY_SSH_PASSWORD`, or your SSH agent, and the server must already be in `~/.ssh/known_hosts`.
+- The list of servers you trust, kept in Promptly's data folder, is now encrypted with the same device key as your saved passwords. On a Linux computer with no keyring it stays plain text, like OpenSSH's own.
 
 ## 1.0.1
 
