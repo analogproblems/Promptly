@@ -105,13 +105,13 @@ pub struct Vault<'a> {
     kept: Kept,
 }
 
-/// What one pull read from one device's folder, before any of it applies.
 /// Files read from the vault by [`Vault::fetch`], not applied yet.
 pub struct Fetched {
     folders: Vec<Folder>,
     devices_seen: Vec<DeviceId>,
 }
 
+/// What one pull read from one device's folder, before any of it applies.
 struct Folder {
     device: DeviceId,
     /// Every segment number listed, in order.

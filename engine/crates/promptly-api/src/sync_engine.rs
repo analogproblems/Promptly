@@ -1468,7 +1468,11 @@ pub fn ensure_loop() {
 }
 
 /// Forget the vault on this device. Records stay; the key and markers go.
+/// Waits for a sync that is running to finish, so it can't write the vault
+/// settings and markers back afterwards now that it no longer holds the
+/// store while it reads and writes the vault.
 pub fn disconnect() -> Result<(), String> {
+    let _guard = ENGINE.run.lock().unwrap();
     let store = store()?;
     store.meta_delete(META_VAULT).map_err(|e| e.to_string())?;
     store
