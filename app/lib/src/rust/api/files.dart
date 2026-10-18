@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `browser`, `friendly`
+// These functions are ignored because they are not marked as `pub`: `browser`, `friendly`, `fs`, `open_error`, `with_fs`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `Browser`
 
 /// Open the file browser for a live SSH session. Returns the browser id.
