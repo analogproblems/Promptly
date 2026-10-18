@@ -458,24 +458,51 @@ async fn place_new(part: &Path, local: &Path) -> io::Result<()> {
 /// Copy `part` to `local`, which must not exist yet.
 async fn copy_to_new(part: &Path, local: &Path) -> io::Result<()> {
     let mut src = tokio::fs::File::open(part).await?;
+    #[cfg(unix)]
+    let mode = {
+        use std::os::unix::fs::PermissionsExt;
+        src.metadata().await?.permissions().mode() & 0o777
+    };
+    #[cfg(not(unix))]
+    let mode = 0;
+    write_new(&mut src, mode, local).await
+}
+
+/// Write all of `src` to a file made new at `local`. Until it is whole the
+/// file is this copy's own, so if the copy fails, or is stopped part way
+/// (its future dropped), the half-written file goes with it.
+async fn write_new(
+    src: &mut (impl tokio::io::AsyncRead + Unpin),
+    #[cfg_attr(not(unix), allow(unused_variables))] mode: u32,
+    local: &Path,
+) -> io::Result<()> {
     let mut opts = tokio::fs::OpenOptions::new();
     opts.write(true).create_new(true);
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        opts.mode(src.metadata().await?.permissions().mode() & 0o777);
-    }
+    opts.mode(mode);
     let mut dst = opts.open(local).await?;
-    let copied = async {
-        tokio::io::copy(&mut src, &mut dst).await?;
-        dst.sync_all().await
+    let unfinished = RemoveOnDrop(Some(local.to_path_buf()));
+    tokio::io::copy(src, &mut dst).await?;
+    dst.sync_all().await?;
+    unfinished.keep();
+    Ok(())
+}
+
+/// Removes a file this copy made when dropped, unless it is kept.
+struct RemoveOnDrop(Option<PathBuf>);
+
+impl RemoveOnDrop {
+    fn keep(mut self) {
+        self.0 = None;
     }
-    .await;
-    if copied.is_err() {
-        // Made by this copy just now, so nothing of anyone else's goes.
-        let _ = tokio::fs::remove_file(local).await;
+}
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = std::fs::remove_file(path);
+        }
     }
-    copied
 }
 
 /// Copy all of `src` into an open remote file and close it.
@@ -907,6 +934,25 @@ mod tests {
             copy_to_new(&part, &free).await.unwrap();
             assert_eq!(std::fs::read(&free).unwrap(), b"new");
         });
+        // A copy stopped part way, as cancelling a transfer stops it, takes
+        // its half-written file with it and leaves others alone.
+        let stopped = dir.join("stopped.txt");
+        let (mut feed, mut src) = tokio::io::duplex(64);
+        let copy = {
+            let stopped = stopped.clone();
+            crate::runtime().spawn(async move { write_new(&mut src, 0o644, &stopped).await })
+        };
+        crate::runtime().block_on(async {
+            use tokio::io::AsyncWriteExt;
+            feed.write_all(b"half of it").await.unwrap();
+            while std::fs::metadata(&stopped).map(|m| m.len()).unwrap_or(0) == 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+            copy.abort();
+            assert!(copy.await.unwrap_err().is_cancelled());
+        });
+        assert!(!stopped.exists(), "the part-written copy went");
+        assert_eq!(std::fs::read(dir.join("taken.txt")).unwrap(), b"theirs");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
