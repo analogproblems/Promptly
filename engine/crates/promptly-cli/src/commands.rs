@@ -783,18 +783,38 @@ pub fn ssh_config(
     Ok(out)
 }
 
-/// A value as ssh_config reads it: in quotes when it has a space, and
-/// never with a quote or line break of its own, which would end the line
-/// early and break every `ssh` command, not just this host's.
+/// A value as ssh_config reads it back, exactly: in double quotes when it
+/// has a space, `#`, either kind of quote or a backslash ssh would take as
+/// an escape, with `"` and those backslashes escaped. A stray quote would
+/// break every `ssh` command, not just this host's. Line breaks and other
+/// control characters can't be written on one line, so they are left out.
 fn config_value(value: &str) -> String {
-    let value: String = value
-        .chars()
-        .filter(|c| *c != '"' && !c.is_control())
-        .collect();
-    if value.is_empty() || value.contains(char::is_whitespace) || value.contains('#') {
-        format!("\"{value}\"")
+    let chars: Vec<char> = value.chars().filter(|c| !c.is_control()).collect();
+    let mut quote = chars.is_empty();
+    let mut out = String::new();
+    for (i, &c) in chars.iter().enumerate() {
+        match c {
+            '"' => {
+                out.push_str("\\\"");
+                quote = true;
+            }
+            // ssh reads a backslash before these as an escape, and one at
+            // the end would escape the closing quote. Any other backslash,
+            // as in `C:\Users`, it keeps as it is.
+            '\\' if matches!(chars.get(i + 1), None | Some('\\' | '"' | '\'')) => {
+                out.push_str("\\\\");
+                quote = true;
+            }
+            c => {
+                quote |= c.is_whitespace() || c == '#' || c == '\'';
+                out.push(c);
+            }
+        }
+    }
+    if quote {
+        format!("\"{out}\"")
     } else {
-        value
+        out
     }
 }
 
@@ -1891,6 +1911,67 @@ mod tests {
         );
         assert!(config.contains("\nHost db-\n"), "{config}");
         assert!(config.contains("    ProxyJump Web-2\n"), "{config}");
+    }
+
+    #[test]
+    fn ssh_reads_back_every_value_as_it_was() {
+        let values = [
+            "plain",
+            "John Smith",
+            "O'Brien",
+            "/home/jason/O'Brien/keys/key",
+            "/keys/a \"q\" b\\",
+            r"C:\Users\me\.ssh\key",
+            r"\\server\share\key",
+            "#1",
+        ];
+        assert_eq!(config_value("plain"), "plain");
+        assert_eq!(config_value("O'Brien"), "\"O'Brien\"");
+        assert_eq!(config_value(r"C:\Users\me"), r"C:\Users\me");
+        assert_eq!(config_value("a\nb"), "ab");
+        // And ssh itself, where it is installed, reads each one back.
+        if std::process::Command::new("ssh")
+            .arg("-V")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("promptly-cli-quote-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for value in values {
+            let file = dir.join("config");
+            std::fs::write(
+                &file,
+                format!(
+                    "Host t\n    User {}\n    IdentityFile {}\nHost other\n    Port 2222\n",
+                    config_value(value),
+                    config_value(value)
+                ),
+            )
+            .unwrap();
+            let out = std::process::Command::new("ssh")
+                .arg("-G")
+                .arg("-F")
+                .arg(&file)
+                .arg("t")
+                .output()
+                .unwrap();
+            let printed = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                out.status.success(),
+                "{value}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(
+                printed.contains(&format!("\nuser {value}\n")),
+                "{value}: {printed}"
+            );
+            assert!(
+                printed.contains(&format!("\nidentityfile {value}\n")),
+                "{value}: {printed}"
+            );
+        }
     }
 
     #[test]

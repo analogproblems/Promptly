@@ -1,6 +1,6 @@
 # Privacy policy
 
-Effective 17 October 2026.
+Effective 18 October 2026.
 
 Promptly is a terminal emulator and SSH client made by its contributors and published under the MIT licence. This page says what the app does with information, in plain words. The short version: **Promptly collects nothing about you, and has no server to send anything to.**
 
@@ -29,7 +29,7 @@ That is all. Promptly makes no other connections.
 ## Permissions
 
 - **Android.** Network access, for SSH and sync, and the fingerprint or face check, used only to unlock Promptly and your keys when you turn that on (the check happens in Android; Promptly learns only whether it passed). A foreground service and a notification, used only while sessions are open, so they keep running in the background. Nothing else. Files are read only when you pick one (a key, a theme, a CSV) or use the file browser.
-- **Desktop.** Promptly reads `~/.ssh/config` and the key files it names only when you ask it to import them, and your SSH agent only when a host is set to use it. It reads `~/.ssh/known_hosts` when it connects, so servers you already trust with `ssh` are trusted in Promptly too, and it copies those entries into its own encrypted data, so with sync on your other devices trust them as well.
+- **Desktop.** Promptly reads `~/.ssh/config` and the key files it names only when you ask it to import them, and your SSH agent only when a host is set to use it. It reads `~/.ssh/known_hosts` when it connects, so servers you already trust with `ssh` are trusted in Promptly too, and it copies the servers named there (not hashed, wildcard or revoked entries, which stay in that file only) into its own encrypted data, so with sync on your other devices trust them as well.
 
 ## Children
 
