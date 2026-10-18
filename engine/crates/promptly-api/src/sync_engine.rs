@@ -808,7 +808,10 @@ fn reconcile_secrets(store: &Store, dek: &Dek, joining: bool) -> Result<(), Stri
 /// would make this device's copy beat a newer change from another device.
 /// One deleted elsewhere was removed from disk by the pull, so it does
 /// not come back either. Those in `edited`, saved here while sync was off,
-/// go up whatever the vault holds; without `all`, only those do.
+/// go up whatever the vault holds; without `all`, only those do. One of
+/// those kept on this device has its record here brought up to date, which
+/// stays here like the rest of them, so the next round does not bring back
+/// the copy from before.
 fn upload_local_secrets(
     store: &Store,
     dek: &Dek,
@@ -817,7 +820,8 @@ fn upload_local_secrets(
 ) -> Result<(), String> {
     let kept = store.with_state(policy::kept_on_device);
     for id in secrets().list().map_err(|e| e.to_string())? {
-        if id == DEK_SECRET_ID || kept.contains(&(Collection::Secrets, id.clone())) {
+        let is_kept = kept.contains(&(Collection::Secrets, id.clone()));
+        if id == DEK_SECRET_ID || (is_kept && !edited.contains(&id)) {
             continue;
         }
         if !all && !edited.contains(&id) {
@@ -2266,6 +2270,62 @@ mod tests {
             }
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_password_kept_on_this_device_and_saved_while_sync_was_off_stays_here() {
+        let _ = crate::api::store::set_no_device_key();
+        let root = std::env::temp_dir().join(format!("promptly-kept-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let backend = LocalFolder::new(&root);
+        let (vault, _) = Vault::create(
+            &backend,
+            DeviceId::generate(),
+            "a long passphrase",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        let dek = Dek(vault.dek().0);
+        let store = Store::open_in_memory().unwrap();
+        let pw = format!("pw-{}", uuid::Uuid::new_v4());
+        // Its record from before still says A; the host is on this device only.
+        put_secret_record(&store, &dek, &pw, "password", b"A").unwrap();
+        let host = json!({"id": "h", "label": "web", "hostname": "10.0.0.1",
+            "sync": "local_only", "auth": {"password_secret_id": pw}});
+        store
+            .put(Collection::Hosts, "h", &host.to_string())
+            .unwrap();
+        // Saved again while sync was off, then the join.
+        secrets().put(&pw, b"B").unwrap();
+        note_edited_offline(&store, &pw).unwrap();
+        // One that travels, to show the vault is being written.
+        let shared = format!("shared-{}", uuid::Uuid::new_v4());
+        secrets().put(&shared, b"C").unwrap();
+        note_edited_offline(&store, &shared).unwrap();
+        store.meta_delete(META_SECRET_MARKERS).unwrap();
+        let (vault, plan) = keep_on_device(&store, &dek, vault).unwrap();
+        reconcile_secrets(&store, &dek, true).unwrap();
+        store.push(&vault).unwrap();
+        save_kept(&store, &plan.kept).unwrap();
+        // And the round after it.
+        let (vault, _) = keep_on_device(&store, &dek, vault).unwrap();
+        reconcile_secrets(&store, &dek, false).unwrap();
+        store.push(&vault).unwrap();
+
+        assert_eq!(secrets().get(&pw).unwrap().as_deref(), Some(&b"B"[..]));
+        let other = Store::open_in_memory().unwrap();
+        let elsewhere = Vault::open(&backend, DeviceId::generate(), "a long passphrase").unwrap();
+        other.pull(&elsewhere).unwrap();
+        assert!(other.get(Collection::Secrets, &shared).unwrap().is_some());
+        assert!(
+            other.get(Collection::Secrets, &pw).unwrap().is_none(),
+            "never reaches the vault"
+        );
+        assert!(other.get(Collection::Hosts, "h").unwrap().is_none());
+        for s in [&pw, &shared] {
+            secrets().delete(s).unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
