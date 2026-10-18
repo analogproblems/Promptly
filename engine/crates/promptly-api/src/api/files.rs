@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use flutter_rust_bridge::frb;
-use promptly_ssh::{RemoteFs, SftpError};
+use promptly_ssh::{Connection, RemoteFs, SftpError};
 
 use crate::ssh_flow::connection;
 use crate::transfers::{Partial, Transfers};
@@ -40,10 +40,30 @@ pub struct FileTransfer {
 }
 
 struct Browser {
-    fs: Arc<RemoteFs>,
+    session_id: u32,
+    /// The connection the files are reached over, and the SFTP channel on
+    /// it. A session that reconnects gets a new connection, and the next
+    /// call moves over to it, so an open editor can still save.
+    open: Mutex<(Arc<Connection>, Arc<RemoteFs>)>,
     /// Which server the files are on, as `host:port`.
     server: String,
     transfers: Arc<Transfers>,
+}
+
+impl Browser {
+    /// The SFTP channel on the session's current connection.
+    fn fs(&self) -> Result<Arc<RemoteFs>, String> {
+        let mut open = self.open.lock().unwrap();
+        if let Ok(now) = connection(self.session_id) {
+            if !Arc::ptr_eq(&now, &open.0) {
+                let fs = promptly_ssh::runtime()
+                    .block_on(RemoteFs::open(&now))
+                    .map_err(open_error)?;
+                *open = (now, Arc::new(fs));
+            }
+        }
+        Ok(open.1.clone())
+    }
 }
 
 static BROWSERS: LazyLock<Mutex<HashMap<u32, Arc<Browser>>>> =
@@ -75,21 +95,26 @@ fn friendly(e: SftpError) -> String {
     }
 }
 
+fn open_error(e: SftpError) -> String {
+    match e {
+        SftpError::NoSubsystem(_) => "This server does not offer SFTP.".to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// Open the file browser for a live SSH session. Returns the browser id.
 pub fn files_open(session_id: u32) -> Result<u32, String> {
     let conn = connection(session_id)?;
     let fs = promptly_ssh::runtime()
         .block_on(RemoteFs::open(&conn))
-        .map_err(|e| match e {
-            SftpError::NoSubsystem(_) => "This server does not offer SFTP.".to_string(),
-            other => other.to_string(),
-        })?;
+        .map_err(open_error)?;
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     BROWSERS.lock().unwrap().insert(
         id,
         Arc::new(Browser {
-            fs: Arc::new(fs),
+            session_id,
             server: conn.server().to_string(),
+            open: Mutex::new((conn, Arc::new(fs))),
             transfers: Arc::default(),
         }),
     );
@@ -105,7 +130,7 @@ pub fn files_close(id: u32) {
 pub fn files_home(id: u32) -> Result<String, String> {
     let b = browser(id)?;
     promptly_ssh::runtime()
-        .block_on(b.fs.home())
+        .block_on(b.fs()?.home())
         .map_err(friendly)
 }
 
@@ -113,7 +138,7 @@ pub fn files_home(id: u32) -> Result<String, String> {
 pub fn files_list(id: u32, path: String) -> Result<Vec<FileEntry>, String> {
     let b = browser(id)?;
     let entries = promptly_ssh::runtime()
-        .block_on(b.fs.list(&path))
+        .block_on(b.fs()?.list(&path))
         .map_err(friendly)?;
     Ok(entries
         .into_iter()
@@ -134,21 +159,21 @@ pub fn files_list(id: u32, path: String) -> Result<Vec<FileEntry>, String> {
 pub fn files_canonical(id: u32, path: String) -> Result<String, String> {
     let b = browser(id)?;
     promptly_ssh::runtime()
-        .block_on(b.fs.canonical(&path))
+        .block_on(b.fs()?.canonical(&path))
         .map_err(friendly)
 }
 
 pub fn files_mkdir(id: u32, path: String) -> Result<(), String> {
     let b = browser(id)?;
     promptly_ssh::runtime()
-        .block_on(b.fs.mkdir(&path))
+        .block_on(b.fs()?.mkdir(&path))
         .map_err(friendly)
 }
 
 pub fn files_rename(id: u32, from: String, to: String) -> Result<(), String> {
     let b = browser(id)?;
     promptly_ssh::runtime()
-        .block_on(b.fs.rename(&from, &to))
+        .block_on(b.fs()?.rename(&from, &to))
         .map_err(friendly)
 }
 
@@ -156,14 +181,14 @@ pub fn files_rename(id: u32, from: String, to: String) -> Result<(), String> {
 pub fn files_delete(id: u32, path: String) -> Result<(), String> {
     let b = browser(id)?;
     promptly_ssh::runtime()
-        .block_on(b.fs.delete(&path))
+        .block_on(b.fs()?.delete(&path))
         .map_err(friendly)
 }
 
 pub fn files_chmod(id: u32, path: String, mode: u32) -> Result<(), String> {
     let b = browser(id)?;
     promptly_ssh::runtime()
-        .block_on(b.fs.chmod(&path, mode))
+        .block_on(b.fs()?.chmod(&path, mode))
         .map_err(friendly)
 }
 
@@ -174,7 +199,7 @@ const MAX_EDIT_BYTES: u64 = 2 * 1024 * 1024;
 pub fn files_read_text(id: u32, path: String) -> Result<String, String> {
     let b = browser(id)?;
     promptly_ssh::runtime()
-        .block_on(b.fs.read_text(&path, MAX_EDIT_BYTES))
+        .block_on(b.fs()?.read_text(&path, MAX_EDIT_BYTES))
         .map_err(friendly)
 }
 
@@ -182,7 +207,7 @@ pub fn files_read_text(id: u32, path: String) -> Result<String, String> {
 pub fn files_write_text(id: u32, path: String, text: String) -> Result<(), String> {
     let b = browser(id)?;
     promptly_ssh::runtime()
-        .block_on(b.fs.write_text(&path, &text))
+        .block_on(b.fs()?.write_text(&path, &text))
         .map_err(friendly)
 }
 
@@ -198,7 +223,7 @@ pub fn files_download(
 ) -> Result<u32, String> {
     let b = browser(id)?;
     let name = remote.rsplit('/').next().unwrap_or(&remote).to_string();
-    let fs = b.fs.clone();
+    let fs = b.fs()?;
     let local = PathBuf::from(local);
     let partial = Partial::Local(local.clone());
     b.transfers
@@ -215,7 +240,7 @@ pub fn files_download(
 pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Result<u32, String> {
     let b = browser(id)?;
     let name = remote.rsplit('/').next().unwrap_or(&remote).to_string();
-    let fs = b.fs.clone();
+    let fs = b.fs()?;
     let partial = Partial::Remote(b.server.clone(), remote.clone());
     b.transfers
         .spawn(name, true, partial, move |progress, staging| async move {
@@ -231,7 +256,7 @@ pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Re
 #[frb(sync)]
 pub fn files_cancel_transfer(id: u32, transfer: u32) -> Result<(), String> {
     let b = browser(id)?;
-    let fs = b.fs.clone();
+    let fs = b.fs()?;
     b.transfers
         .cancel(transfer, move |partial, staging| async move {
             match partial {
@@ -258,4 +283,67 @@ pub fn files_transfers(id: u32) -> Result<Vec<FileTransfer>, String> {
 pub fn files_clear_transfers(id: u32) -> Result<(), String> {
     browser(id)?.transfers.clear_finished();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ssh_flow::remember_connection;
+    use promptly_ssh::{
+        Algorithm, AuthMethod, ConnectParams, Endpoint, HostKeyStatus, KnownHosts, PublicKey,
+        QuietPrompter,
+    };
+
+    struct Trusting;
+    impl KnownHosts for Trusting {
+        fn check(&self, _: &str, _: u16, _: &PublicKey) -> HostKeyStatus {
+            HostKeyStatus::Known
+        }
+        fn remember(&self, _: &str, _: u16, _: &PublicKey) -> std::io::Result<()> {
+            Ok(())
+        }
+        fn known_algorithms(&self, _: &str, _: u16) -> Vec<Algorithm> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn a_browser_moves_to_the_sessions_new_connection() {
+        let Ok(spec) = std::env::var("PROMPTLY_TEST_SSH") else {
+            return;
+        };
+        let (cred, hostport) = spec.rsplit_once('@').unwrap();
+        let (user, password) = cred.split_once(':').unwrap();
+        let params = ConnectParams::new(
+            Endpoint::parse(&format!("{user}@{hostport}")).unwrap(),
+            AuthMethod::Password {
+                password: Some(password.to_string()),
+            },
+            Default::default(),
+        );
+        let connect = || {
+            Arc::new(
+                promptly_ssh::runtime()
+                    .block_on(promptly_ssh::connect_handle(
+                        &params,
+                        Arc::new(QuietPrompter),
+                        Arc::new(Trusting),
+                    ))
+                    .expect("connect"),
+            )
+        };
+        let session = 900_000 + std::process::id() % 1000;
+        let first = connect();
+        remember_connection(session, first.clone());
+        let id = files_open(session).unwrap();
+        let home = files_home(id).unwrap();
+
+        // The session reconnects: the old connection is gone.
+        remember_connection(session, connect());
+        promptly_ssh::runtime().block_on(first.disconnect());
+        assert!(files_list(id, home.clone()).is_ok(), "still browsing");
+        assert_eq!(files_home(id).unwrap(), home);
+        files_close(id);
+        crate::ssh_flow::forget_connection(session);
+    }
 }
