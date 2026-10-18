@@ -1910,6 +1910,7 @@ dependencies = [
 name = "promptly-session"
 version = "1.0.1"
 dependencies = [
+ "libc",
  "portable-pty",
  "promptly-term",
  "thiserror 2.0.21",
