@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/core/device_key.dart';
@@ -56,5 +57,29 @@ void main() {
         expect(slot.value, bad);
       }
     }
+  });
+
+  test('no key next to a database encrypted with one is refused, not replaced', () async {
+    final dir = Directory.systemTemp.createTempSync('promptly-key');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final db = File('${dir.path}/promptly.db');
+    final slot = FakeSlot();
+
+    // A plain database from a keyring-less start: a key can be made now.
+    db.writeAsBytesSync([...utf8.encode('SQLite format 3'), 0, 1, 2, 3]);
+    expect(await loadDeviceKey(slot: slot, linux: true, dataDir: dir.path), isA<DeviceKeyReady>());
+
+    // An encrypted one, and the keyring comes back empty.
+    db.writeAsBytesSync(List.generate(64, (i) => i * 7));
+    for (final linux in [true, false]) {
+      final empty = FakeSlot();
+      expect(await loadDeviceKey(slot: empty, linux: linux, dataDir: dir.path), isA<DeviceKeyRefused>());
+      expect(empty.writes, 0);
+    }
+    expect(
+      await loadDeviceKey(slot: FakeSlot(readFails: true), linux: true, dataDir: dir.path),
+      isA<DeviceKeyRefused>(),
+      reason: 'a keyring gone on Linux does not open it plain',
+    );
   });
 }

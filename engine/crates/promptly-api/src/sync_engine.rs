@@ -747,17 +747,6 @@ pub fn finish_setup(
         vault = as_new_device(&store, &vault)?;
     }
     put_device_record(&store, vault.device(), &config.device_name)?;
-    // Every secret this device already has travels in the vault, except
-    // those of hosts and keys kept on this device.
-    let kept = store.with_state(policy::kept_on_device);
-    for id in secrets().list().map_err(|e| e.to_string())? {
-        if id == DEK_SECRET_ID || kept.contains(&(Collection::Secrets, id.clone())) {
-            continue;
-        }
-        if let Some(value) = secrets().get(&id).map_err(|e| e.to_string())? {
-            put_secret_record(&store, dek, &id, secret_kind(&value), &value)?;
-        }
-    }
     {
         let _guard = ENGINE.run.lock().unwrap();
         let (mut vault, plan) = keep_on_device(&store, dek, vault)?;
@@ -769,6 +758,7 @@ pub fn finish_setup(
             put_device_record(&store, vault.device(), &config.device_name)?;
         }
         apply_pulled_secrets(&store, dek)?;
+        upload_local_secrets(&store, dek)?;
         apply_pulled_known_hosts(&store)?;
         store.push(&vault).map_err(|e| e.to_string())?;
         store
@@ -785,6 +775,34 @@ pub fn finish_setup(
     *ENGINE.failures.lock().unwrap() = 0;
     ensure_loop();
     emit();
+    Ok(())
+}
+
+/// Every secret this device has travels in the vault, except those of
+/// hosts and keys kept on this device. Runs after a pull, so a secret the
+/// vault already holds under this key is left as it is: stamping it again
+/// would make this device's copy beat a newer change from another device.
+/// One deleted elsewhere was removed from disk by the pull, so it does
+/// not come back either.
+fn upload_local_secrets(store: &Store, dek: &Dek) -> Result<(), String> {
+    let kept = store.with_state(policy::kept_on_device);
+    for id in secrets().list().map_err(|e| e.to_string())? {
+        if id == DEK_SECRET_ID || kept.contains(&(Collection::Secrets, id.clone())) {
+            continue;
+        }
+        let in_vault = store
+            .get(Collection::Secrets, &id)
+            .map_err(|e| e.to_string())?
+            .and_then(|r| serde_json::from_str::<serde_json::Value>(&r.json).ok())
+            .and_then(|v| serde_json::from_value::<Vec<u8>>(v.get("ciphertext")?.clone()).ok())
+            .is_some_and(|ct| crypto::open(dek, format!("secret/{id}").as_bytes(), &ct).is_ok());
+        if in_vault {
+            continue;
+        }
+        if let Some(value) = secrets().get(&id).map_err(|e| e.to_string())? {
+            put_secret_record(store, dek, &id, secret_kind(&value), &value)?;
+        }
+    }
     Ok(())
 }
 
@@ -2089,6 +2107,43 @@ mod tests {
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn joining_uploads_only_the_secrets_the_vault_lacks_under_this_key() {
+        let _ = crate::api::store::set_no_device_key();
+        let store = Store::open_in_memory().unwrap();
+        let dek = Dek::generate();
+        let id = |name: &str| format!("{name}-{}", uuid::Uuid::new_v4());
+        let (missing, current, other_key) = (id("missing"), id("current"), id("other-key"));
+        for s in [&missing, &current, &other_key] {
+            secrets().put(s, b"hunter2").unwrap();
+        }
+        // Already in the vault under this key, perhaps changed since on
+        // another device: stamping it again would beat that change.
+        put_secret_record(&store, &dek, &current, "password", b"newer").unwrap();
+        put_secret_record(&store, &Dek::generate(), &other_key, "password", b"hunter2").unwrap();
+        let before = store.newest_ts(Collection::Secrets, &current);
+
+        upload_local_secrets(&store, &dek).unwrap();
+
+        let opens = |id: &str| {
+            let r = store.get(Collection::Secrets, id).unwrap()?;
+            let v: serde_json::Value = serde_json::from_str(&r.json).ok()?;
+            let ct: Vec<u8> = serde_json::from_value(v.get("ciphertext")?.clone()).ok()?;
+            crypto::open(&dek, format!("secret/{id}").as_bytes(), &ct).ok()
+        };
+        assert_eq!(opens(&missing).as_deref(), Some(&b"hunter2"[..]));
+        assert_eq!(store.newest_ts(Collection::Secrets, &current), before);
+        assert_eq!(opens(&current).as_deref(), Some(&b"newer"[..]));
+        assert_eq!(
+            opens(&other_key).as_deref(),
+            Some(&b"hunter2"[..]),
+            "locked again under this key"
+        );
+        for s in [&missing, &current, &other_key] {
+            secrets().delete(s).unwrap();
+        }
     }
 
     #[test]

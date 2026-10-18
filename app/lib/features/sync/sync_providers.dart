@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
 import '../hosts/repositories.dart';
+import '../snippets/repositories.dart';
 import '../settings/settings_providers.dart';
 
 /// The vault's status: the last known value first, then every change the
@@ -83,6 +84,7 @@ class _SyncRefreshState extends ConsumerState<SyncRefresh> {
         ref.invalidate(hostsProvider);
         ref.invalidate(groupsProvider);
         ref.invalidate(identitiesProvider);
+        ref.invalidate(snippetsProvider);
         reloadSyncedSettings(ref);
       }
     });

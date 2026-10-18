@@ -16,16 +16,18 @@ Future<void> main() async {
   registerLicences();
   // Loads the Rust engine (libpromptly_api) built by cargokit alongside the app.
   await RustLib.init();
+  String? dataDir;
   try {
     final dir = await getApplicationSupportDirectory();
     rust.setDataDir(path: dir.path);
+    dataDir = dir.path;
   } catch (_) {
     // The engine falls back to a per-platform default.
   }
   // Before anything touches the local database or saved secrets: the
   // engine will not open the database until it has heard one of these.
   try {
-    switch (await loadDeviceKey()) {
+    switch (await loadDeviceKey(dataDir: dataDir)) {
       case DeviceKeyReady(:final bytes):
         rust_store.setDeviceKey(key: bytes);
       case DeviceKeyRefused():

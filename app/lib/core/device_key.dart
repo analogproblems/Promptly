@@ -60,8 +60,14 @@ class DeviceKeyRefused extends DeviceKey {
 /// Only on Linux does a failure mean there is no secure storage at all;
 /// anywhere else, and for a stored key that is not a key, it means the
 /// storage refused, and a new key must not be made over the old one.
-Future<DeviceKey> loadDeviceKey({KeySlot slot = const SecureStorageSlot(), bool? linux}) async {
-  final noStorage = (linux ?? Platform.isLinux) ? const DeviceKeyNoStorage() : const DeviceKeyRefused();
+///
+/// A storage that finds no key, or fails, while [dataDir] already holds a
+/// database encrypted with one has lost or hidden it (a dismissed keyring
+/// prompt, another keyring), so that is refused too: a new key, or none,
+/// would set the database aside and the app would start empty.
+Future<DeviceKey> loadDeviceKey({KeySlot slot = const SecureStorageSlot(), bool? linux, String? dataDir}) async {
+  final sealed = dataDir != null && hasEncryptedDatabase(dataDir);
+  final noStorage = (linux ?? Platform.isLinux) && !sealed ? const DeviceKeyNoStorage() : const DeviceKeyRefused();
   String? existing;
   try {
     existing = await slot.read();
@@ -77,6 +83,7 @@ Future<DeviceKey> loadDeviceKey({KeySlot slot = const SecureStorageSlot(), bool?
     }
     return const DeviceKeyRefused();
   }
+  if (sealed) return const DeviceKeyRefused();
   final rnd = Random.secure();
   final key = Uint8List.fromList(List.generate(32, (_) => rnd.nextInt(256)));
   final encoded = base64Encode(key);
@@ -89,4 +96,22 @@ Future<DeviceKey> loadDeviceKey({KeySlot slot = const SecureStorageSlot(), bool?
     return noStorage;
   }
   return DeviceKeyReady(key);
+}
+
+/// Whether [dataDir] holds a database encrypted with a device key: one
+/// that is there and does not start the way a plain SQLite file does.
+bool hasEncryptedDatabase(String dataDir) {
+  final file = File('$dataDir${Platform.pathSeparator}promptly.db');
+  try {
+    if (!file.existsSync() || file.lengthSync() == 0) return false;
+    final raf = file.openSync();
+    try {
+      return utf8.decode(raf.readSync(16), allowMalformed: true) != 'SQLite format 3\u0000';
+    } finally {
+      raf.closeSync();
+    }
+  } catch (_) {
+    // Unreadable here: the engine will say so when it opens it.
+    return false;
+  }
 }
