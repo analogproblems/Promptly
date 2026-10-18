@@ -517,6 +517,46 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn closing_a_shell_that_ignores_the_hangup_still_ends_it() {
+        let size = TermSize::new(40, 6);
+        let (shell, reader) =
+            LocalShell::spawn(size, Some("/bin/sh".into()), None).expect("spawn /bin/sh");
+        let session = Arc::new(Session::new(
+            SessionKind::LocalShell {
+                program: "/bin/sh".into(),
+            },
+            size,
+            Palette::promptly_dark(),
+            Box::new(shell),
+        ));
+        let (tx, rx) = mpsc::channel();
+        let _h = pump(session.clone(), reader, move |e| {
+            let _ = tx.send(e);
+        });
+        session
+            .write(b"trap '' HUP; echo ready-$((1+1))\n")
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !session.screen_text().contains("ready-2") {
+            assert!(Instant::now() < deadline, "the shell never started");
+            let _ = rx.recv_timeout(Duration::from_millis(50));
+        }
+        session.close();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(SessionEvent::Exited { .. }) => break,
+                Ok(_) => {}
+                Err(_) => assert!(
+                    Instant::now() < deadline,
+                    "a shell ignoring the hangup outlived its close"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn a_session_can_take_a_new_transport_and_keep_its_screen() {
         let size = TermSize::new(40, 6);
         let (shell, reader) =
