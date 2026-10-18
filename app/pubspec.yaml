@@ -69,6 +69,8 @@ flutter:
 
   assets:
     - assets/fonts/OFL.txt
+    - assets/licences/openssl.txt
+    - assets/licences/sqlcipher.txt
     - assets/icon/promptly.png
     - assets/icon/promptly.svg
 

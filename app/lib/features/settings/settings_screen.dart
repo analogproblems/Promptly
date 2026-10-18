@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/engine/engine.dart';
+import '../../core/platform.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../../core/version.dart';
@@ -143,6 +144,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ],
                 ),
               ),
+              const SizedBox(height: 16),
+              const _Section(title: 'Hardware keyboard', child: HardwareKeyboardChoices()),
               const SizedBox(height: 16),
               const _Section(title: 'Security', child: LockSettingsCard()),
               const SizedBox(height: 16),
@@ -386,6 +389,39 @@ class TerminalChoices extends ConsumerWidget {
           },
           onChanged: (v) => ref.read(scrollbackProvider.notifier).set(v),
         ),
+      ],
+    );
+  }
+}
+
+/// What a keyboard plugged in or paired does in the terminal. Cmd as Ctrl
+/// shows on iPad and Mac only, where there is a Cmd key to move.
+class HardwareKeyboardChoices extends ConsumerWidget {
+  const HardwareKeyboardChoices({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Column(
+      children: [
+        SwitchListTile(
+          key: const Key('caps-lock-escape'),
+          title: const Text('Caps Lock types Escape'),
+          subtitle: const Text(
+            'Handy in vim. Letters then follow Shift alone, even if the Caps Lock light comes on.',
+          ),
+          value: ref.watch(capsLockEscapeProvider),
+          onChanged: (v) => ref.read(capsLockEscapeProvider.notifier).set(v),
+        ),
+        if (isApplePlatform)
+          SwitchListTile(
+            key: const Key('cmd-as-ctrl'),
+            title: const Text('Cmd works as Ctrl'),
+            subtitle: const Text(
+              'In the terminal, Cmd+C stops a program as Ctrl+C does. Copy and paste with Cmd+Shift+C and Cmd+Shift+V.',
+            ),
+            value: ref.watch(cmdAsCtrlProvider),
+            onChanged: (v) => ref.read(cmdAsCtrlProvider.notifier).set(v),
+          ),
       ],
     );
   }

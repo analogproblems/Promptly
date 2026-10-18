@@ -10,6 +10,7 @@ import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../hosts/host_colors.dart';
 import '../settings/settings_providers.dart';
+import '../terminal/key_mapper.dart' show KeyOptions;
 import '../terminal/keyboard_bar.dart';
 import '../terminal/link_kind.dart';
 import '../terminal/paste_guard.dart';
@@ -207,72 +208,105 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                   color: t.surface,
                   border: Border(bottom: BorderSide(color: t.border)),
                 ),
-                child: Row(
-                  children: [
-                    if (widget.showBack)
-                      IconButton(
-                        tooltip: 'Back to sessions',
-                        onPressed: () => context.go('/sessions'),
-                        icon: const Icon(Icons.arrow_back),
-                      )
-                    else
-                      const SizedBox(width: 8),
-                    SessionStatusDot(entry: entry),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        entry.title,
-                        overflow: TextOverflow.ellipsis,
-                        style: monoStyle(
-                          context,
-                          size: widget.compact ? 12 : 13,
-                          weight: FontWeight.w600,
-                          color: widget.focused ? t.text : t.muted,
+                // On a narrow phone, or a narrow pane, the less used tools
+                // fold into a menu and the size goes, so the title keeps room.
+                child: LayoutBuilder(
+                  builder: (context, box) {
+                    final narrow = box.maxWidth < 480;
+                    final forwards = live && (entry.flow?.request.forwards.isNotEmpty ?? false);
+                    final density = widget.compact ? VisualDensity.compact : VisualDensity.standard;
+                    final iconSize = widget.compact ? 18.0 : 24.0;
+                    return Row(
+                      children: [
+                        if (widget.showBack)
+                          IconButton(
+                            tooltip: 'Back to sessions',
+                            onPressed: () => context.go('/sessions'),
+                            icon: const Icon(Icons.arrow_back),
+                          )
+                        else
+                          const SizedBox(width: 8),
+                        SessionStatusDot(entry: entry),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            entry.title,
+                            overflow: TextOverflow.ellipsis,
+                            style: monoStyle(
+                              context,
+                              size: widget.compact ? 12 : 13,
+                              weight: FontWeight.w600,
+                              color: widget.focused ? t.text : t.muted,
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                    if (c != null)
-                      Text('${c.grid.cols}×${c.grid.rows}', style: monoStyle(context, size: 11, color: t.muted)),
-                    if (c != null)
-                      IconButton(
-                        key: const Key('session-search'),
-                        tooltip: 'Search (Ctrl+Shift+F)',
-                        visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard,
-                        onPressed: _searching ? _closeSearch : _openSearch,
-                        icon: Icon(_searching ? Icons.search_off : Icons.search, size: widget.compact ? 18 : 24),
-                      ),
-                    if (live)
-                      IconButton(
-                        key: const Key('session-snippets'),
-                        tooltip: 'Snippets',
-                        visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard,
-                        onPressed: () => showSnippetsDrawer(context, ref, entry),
-                        icon: Icon(Icons.code, size: widget.compact ? 18 : 24),
-                      ),
-                    if (live && !entry.isLocal)
-                      IconButton(
-                        key: const Key('session-files'),
-                        tooltip: 'Files',
-                        visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard,
-                        onPressed: () => context.go('/sessions/${entry.id}/files'),
-                        icon: Icon(Icons.folder_open_outlined, size: widget.compact ? 18 : 24),
-                      ),
-                    if (live && (entry.flow?.request.forwards.isNotEmpty ?? false))
-                      IconButton(
-                        key: const Key('session-forwards'),
-                        tooltip: 'Port forwards',
-                        visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard,
-                        onPressed: () => showForwardsSheet(context, ref, c.id),
-                        icon: Icon(Icons.alt_route, size: widget.compact ? 18 : 24),
-                      ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      tooltip: 'Close session',
-                      visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard,
-                      onPressed: widget.onClose,
-                      icon: Icon(Icons.close, size: widget.compact ? 18 : 24),
-                    ),
-                  ],
+                        if (c != null && !narrow)
+                          Text('${c.grid.cols}×${c.grid.rows}', style: monoStyle(context, size: 11, color: t.muted)),
+                        if (c != null)
+                          IconButton(
+                            key: const Key('session-search'),
+                            tooltip: 'Search (Ctrl+Shift+F)',
+                            visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard,
+                            onPressed: _searching ? _closeSearch : _openSearch,
+                            icon: Icon(_searching ? Icons.search_off : Icons.search, size: widget.compact ? 18 : 24),
+                          ),
+                        if (live && !narrow)
+                          IconButton(
+                            key: const Key('session-snippets'),
+                            tooltip: 'Snippets',
+                            visualDensity: density,
+                            onPressed: () => showSnippetsDrawer(context, ref, entry),
+                            icon: Icon(Icons.code, size: iconSize),
+                          ),
+                        if (live && !entry.isLocal)
+                          IconButton(
+                            key: const Key('session-files'),
+                            tooltip: 'Files',
+                            visualDensity: density,
+                            onPressed: () => context.go('/sessions/${entry.id}/files'),
+                            icon: Icon(Icons.folder_open_outlined, size: iconSize),
+                          ),
+                        if (forwards && !narrow)
+                          IconButton(
+                            key: const Key('session-forwards'),
+                            tooltip: 'Port forwards',
+                            visualDensity: density,
+                            onPressed: () => showForwardsSheet(context, ref, c.id),
+                            icon: Icon(Icons.alt_route, size: iconSize),
+                          ),
+                        if (live && narrow)
+                          PopupMenuButton<String>(
+                            key: const Key('session-more'),
+                            tooltip: 'More',
+                            icon: Icon(Icons.more_vert, size: iconSize),
+                            onSelected: (v) => switch (v) {
+                              'snippets' => showSnippetsDrawer(context, ref, entry),
+                              _ => showForwardsSheet(context, ref, c.id),
+                            },
+                            itemBuilder: (_) => [
+                              const PopupMenuItem(
+                                key: Key('session-snippets'),
+                                value: 'snippets',
+                                child: Text('Snippets'),
+                              ),
+                              if (forwards)
+                                const PopupMenuItem(
+                                  key: Key('session-forwards'),
+                                  value: 'forwards',
+                                  child: Text('Port forwards'),
+                                ),
+                            ],
+                          ),
+                        const SizedBox(width: 4),
+                        IconButton(
+                          tooltip: 'Close session',
+                          visualDensity: density,
+                          onPressed: widget.onClose,
+                          icon: Icon(Icons.close, size: iconSize),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
               if (_searching && c != null) _searchBar(context),
@@ -304,6 +338,10 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
                                     onSwitchSession: widget.onSwitchSession,
                                     confirmPaste: (text) =>
                                         confirmPaste(context, text, warn: ref.read(pasteWarningProvider)),
+                                    keys: KeyOptions(
+                                      capsLockAsEscape: ref.watch(capsLockEscapeProvider),
+                                      cmdAsCtrl: isApplePlatform && ref.watch(cmdAsCtrlProvider),
+                                    ),
                                   ),
                                 ),
                                 if (entry.reconnecting)
@@ -491,40 +529,47 @@ class _ExitedOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = context.tokens;
     final what = isLocal ? 'The shell' : 'The connection';
+    // Room at the sides, a scroll for a long reason, and buttons that stack
+    // when large text leaves no room for them side by side.
     return Container(
       color: Colors.black.withValues(alpha: 0.45),
       alignment: Alignment.center,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                code == null || code == 0 ? '$what ended.' : '$what ended with code $code.',
-                style: TextStyle(color: t.text, fontWeight: FontWeight.w600),
-              ),
-              if (detail != null) ...[
-                const SizedBox(height: 6),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 420),
-                  child: Text(
-                    detail!,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: t.muted, fontSize: 13),
+      padding: const EdgeInsets.all(16),
+      child: SingleChildScrollView(
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  code == null || code == 0 ? '$what ended.' : '$what ended with code $code.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: t.text, fontWeight: FontWeight.w600),
+                ),
+                if (detail != null) ...[
+                  const SizedBox(height: 6),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: Text(
+                      detail!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: t.muted, fontSize: 13),
+                    ),
                   ),
+                ],
+                const SizedBox(height: 14),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    OutlinedButton(onPressed: onClose, child: const Text('Close')),
+                    FilledButton(onPressed: onAgain, child: Text(isLocal ? 'New shell' : 'Reconnect')),
+                  ],
                 ),
               ],
-              const SizedBox(height: 14),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  OutlinedButton(onPressed: onClose, child: const Text('Close')),
-                  const SizedBox(width: 8),
-                  FilledButton(onPressed: onAgain, child: Text(isLocal ? 'New shell' : 'Reconnect')),
-                ],
-              ),
-            ],
+            ),
           ),
         ),
       ),

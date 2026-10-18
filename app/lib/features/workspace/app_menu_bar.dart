@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -11,8 +13,9 @@ import 'desktop_actions.dart';
 import 'workspace.dart';
 
 /// Standard menus with standard shortcuts across the top of the window on
-/// desktop. The shortcuts shown beside the items are registered with the
-/// app, so they work wherever the focus is; the terminal leaves them alone.
+/// Windows and Linux. The shortcuts shown beside the items are registered
+/// with the app, so they work wherever the focus is; the terminal leaves
+/// them alone. A Mac uses [SystemMenuBar] instead.
 class AppMenuBar extends ConsumerStatefulWidget {
   const AppMenuBar({super.key});
 
@@ -25,7 +28,10 @@ class AppMenuBar extends ConsumerStatefulWidget {
 const double _barHeight = 33;
 const double _itemHeight = 36;
 
-class _AppMenuBarState extends ConsumerState<AppMenuBar> {
+/// Registers the shortcuts shown beside the menu items with the app, so they
+/// work wherever the focus is; the terminal leaves them alone. Both menu
+/// bars, the one in the window and the Mac's own, use it.
+mixin _MenuShortcuts<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   ShortcutRegistryEntry? _shortcuts;
 
   @override
@@ -62,7 +68,9 @@ class _AppMenuBarState extends ConsumerState<AppMenuBar> {
     _shortcuts?.dispose();
     super.dispose();
   }
+}
 
+class _AppMenuBarState extends ConsumerState<AppMenuBar> with _MenuShortcuts {
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -289,6 +297,147 @@ class _AppMenuBarState extends ConsumerState<AppMenuBar> {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// The Mac's own menu bar, at the top of the screen, with the same menus as
+/// the one drawn in the window elsewhere, plus the application menu every
+/// Mac app has (About, Settings, Hide, Quit) and a Window menu.
+class SystemMenuBar extends ConsumerStatefulWidget {
+  const SystemMenuBar({super.key, required this.child});
+
+  final Widget child;
+
+  /// On a Mac the system menu bar takes the place of the one in the window.
+  static bool get supported => defaultTargetPlatform == TargetPlatform.macOS;
+
+  @override
+  ConsumerState<SystemMenuBar> createState() => _SystemMenuBarState();
+}
+
+class _SystemMenuBarState extends ConsumerState<SystemMenuBar> with _MenuShortcuts {
+  /// The standard items the Mac provides, those it has.
+  static List<PlatformMenuItem> _provided(List<PlatformProvidedMenuItemType> types) => [
+    for (final type in types)
+      if (PlatformProvidedMenuItem.hasMenu(type)) PlatformProvidedMenuItem(type: type),
+  ];
+
+  static PlatformMenuItem _item(String label, VoidCallback? onSelected, [MenuSerializableShortcut? shortcut]) =>
+      PlatformMenuItem(label: label, onSelected: onSelected, shortcut: shortcut);
+
+  /// A group with a separator around it; none when it would be empty.
+  static List<PlatformMenuItem> _group(List<PlatformMenuItem> members) =>
+      members.isEmpty ? const [] : [PlatformMenuItemGroup(members: members)];
+
+  @override
+  Widget build(BuildContext context) {
+    final actions = DesktopActions(context, ref);
+    final hasSession = ref.watch(focusedSessionProvider) != null;
+    final hostsPanel = ref.watch(workspaceProvider.select((s) => s.hostsPanel));
+    void go(String location) => context.go(location);
+    return PlatformMenuBar(
+      menus: [
+        PlatformMenu(
+          label: 'Promptly',
+          menus: [
+            _item('About Promptly', () => go('/settings/about')),
+            ..._group([
+              _item('Settings…', () => go('/settings'), const SingleActivator(LogicalKeyboardKey.comma, meta: true)),
+            ]),
+            ..._group(_provided(const [PlatformProvidedMenuItemType.servicesSubmenu])),
+            ..._group(
+              _provided(const [
+                PlatformProvidedMenuItemType.hide,
+                PlatformProvidedMenuItemType.hideOtherApplications,
+                PlatformProvidedMenuItemType.showAllApplications,
+              ]),
+            ),
+            ..._group([
+              // Promptly's own quit, so open sessions are closed properly.
+              _item('Quit Promptly', actions.quit, const SingleActivator(LogicalKeyboardKey.keyQ, meta: true)),
+            ]),
+          ],
+        ),
+        PlatformMenu(
+          label: 'File',
+          menus: [
+            _item('New tab', actions.newTab, AppShortcuts.newTab),
+            _item('New local shell', actions.newLocalShell),
+            _item('Add host…', () => go('/hosts/new')),
+            ..._group([_item('Close pane', actions.closePane, AppShortcuts.closePane)]),
+          ],
+        ),
+        PlatformMenu(
+          label: 'Edit',
+          menus: [
+            _item('Copy', hasSession ? actions.copy : null, AppShortcuts.copy),
+            _item('Paste', hasSession ? actions.paste : null, AppShortcuts.paste),
+            ..._group([
+              _item('Find in session…', hasSession ? actions.find : null, AppShortcuts.find),
+              _item('Command palette…', () => showCommandPalette(context, ref), AppShortcuts.palette),
+            ]),
+          ],
+        ),
+        PlatformMenu(
+          label: 'View',
+          menus: [
+            ..._group([
+              _item('Split right', actions.splitRight, AppShortcuts.splitRight),
+              _item('Split down', actions.splitDown, AppShortcuts.splitDown),
+              _item('Focus pane left', () => actions.focus(PaneDirection.left), AppShortcuts.focusLeft),
+              _item('Focus pane right', () => actions.focus(PaneDirection.right), AppShortcuts.focusRight),
+              _item('Focus pane up', () => actions.focus(PaneDirection.up), AppShortcuts.focusUp),
+              _item('Focus pane down', () => actions.focus(PaneDirection.down), AppShortcuts.focusDown),
+            ]),
+            ..._group([
+              _item('Next tab', actions.nextTab, AppShortcuts.nextTab),
+              _item('Previous tab', actions.previousTab, AppShortcuts.previousTab),
+              PlatformMenu(
+                label: 'Go to tab',
+                menus: [
+                  for (var i = 0; i < 9; i++) _item('Tab ${i + 1}', () => actions.selectTab(i), AppShortcuts.tab(i)),
+                ],
+              ),
+            ]),
+            ..._group([
+              _item(
+                hostsPanel ? 'Hide hosts panel' : 'Show hosts panel',
+                actions.toggleHostsPanel,
+                AppShortcuts.hostsPanel,
+              ),
+            ]),
+            ..._group([
+              _item('Bigger text', hasSession ? actions.zoomIn : null, AppShortcuts.zoomIn),
+              _item('Smaller text', hasSession ? actions.zoomOut : null, AppShortcuts.zoomOut),
+              _item('Reset text size', hasSession ? actions.zoomReset : null, AppShortcuts.zoomReset),
+              _item('Terminal themes…', () => go('/settings/themes')),
+            ]),
+            ..._group(_provided(const [PlatformProvidedMenuItemType.toggleFullScreen])),
+          ],
+        ),
+        PlatformMenu(
+          label: 'Session',
+          menus: [
+            _item('Reconnect', hasSession ? actions.reconnect : null),
+            _item('Port forwards…', hasSession ? actions.forwards : null),
+            _item('Snippets…', hasSession ? actions.snippets : null),
+            _item('Files…', hasSession ? actions.files : null),
+            ..._group([_item('Close session', hasSession ? actions.closeSession : null)]),
+          ],
+        ),
+        if (_provided(const [PlatformProvidedMenuItemType.minimizeWindow]).isNotEmpty)
+          PlatformMenu(
+            label: 'Window',
+            menus: _provided(const [
+              PlatformProvidedMenuItemType.minimizeWindow,
+              PlatformProvidedMenuItemType.zoomWindow,
+              PlatformProvidedMenuItemType.arrangeWindowsInFront,
+            ]),
+          ),
+        PlatformMenu(label: 'Help', menus: [_item('Promptly Help', () => go('/settings/help'))]),
+      ],
+      child: widget.child,
     );
   }
 }

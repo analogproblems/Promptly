@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/core/theme/theme.dart';
+import 'package:promptly/features/terminal/key_mapper.dart';
 import 'package:promptly/features/terminal/terminal_controller.dart';
 import 'package:promptly/features/terminal/terminal_grid.dart';
 import 'package:promptly/features/terminal/terminal_view.dart';
@@ -251,6 +252,8 @@ class RecordingEngine implements Engine {
   Future<SyncSetupResult> syncRotateKey(String passphrase) => throw UnimplementedError();
   @override
   String? syncQrPayload() => null;
+  @override
+  PassphraseCheck syncPassphraseCheck(String passphrase) => throw UnimplementedError();
 }
 
 void main() {
@@ -309,6 +312,48 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
     expect(engine.calls, contains('write 1'));
+    controller.dispose();
+  });
+
+  testWidgets('Caps Lock can type Escape and Cmd can be Ctrl, as Settings says', (tester) async {
+    final engine = RecordingEngine();
+    final controller = TerminalController(engine: engine, id: 1, label: 'test');
+    Future<void> show(KeyOptions keys) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildPromptlyTheme(Brightness.dark),
+          home: Scaffold(body: TerminalView(controller: controller, keys: keys)),
+        ),
+      );
+      await tester.pump();
+      engine.written.clear();
+    }
+
+    await show(const KeyOptions(capsLockAsEscape: true, cmdAsCtrl: true));
+    await tester.sendKeyEvent(LogicalKeyboardKey.capsLock);
+    expect(engine.written, [
+      [0x1b],
+    ]);
+    // The system turned Caps Lock on all the same: letters follow Shift alone.
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyA, character: 'A');
+    expect(engine.written.last, [0x61]);
+    await tester.sendKeyEvent(LogicalKeyboardKey.capsLock);
+    engine.written.clear();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    expect(engine.written, [
+      [0x03],
+    ], reason: 'Cmd+C stops a program, as Ctrl+C does');
+
+    // Without them, Caps Lock types nothing and Cmd+C copies.
+    await show(const KeyOptions());
+    await tester.sendKeyEvent(LogicalKeyboardKey.capsLock);
+    await tester.sendKeyEvent(LogicalKeyboardKey.capsLock);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    expect(engine.written, isEmpty);
     controller.dispose();
   });
 

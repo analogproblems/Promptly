@@ -27,6 +27,7 @@ class TerminalView extends StatefulWidget {
     this.imeInput,
     this.confirmPaste,
     this.onSwitchSession,
+    this.keys = const KeyOptions(),
   });
 
   /// The view that last took focus, so the keyboard bar can show or hide
@@ -61,6 +62,9 @@ class TerminalView extends StatefulWidget {
   /// A two-finger swipe sideways on a touch screen: show the next session
   /// (`1`, swiping left) or the one before (`-1`, swiping right).
   final void Function(int step)? onSwitchSession;
+
+  /// Caps Lock as Escape and Cmd as Ctrl, from Settings.
+  final KeyOptions keys;
 
   @override
   State<TerminalView> createState() => _TerminalViewState();
@@ -385,17 +389,23 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     final c = widget.controller;
     final hw = HardwareKeyboard.instance;
-    final ctrl = hw.isControlPressed;
+    final keys = widget.keys;
+    // With Cmd as Ctrl, Cmd is Ctrl here and no longer copies or pastes.
+    final ctrl = hw.isControlPressed || (keys.cmdAsCtrl && hw.isMetaPressed);
     final alt = hw.isAltPressed;
     final shift = hw.isShiftPressed;
-    final meta = hw.isMetaPressed;
+    final meta = hw.isMetaPressed && !keys.cmdAsCtrl;
+    final capsLocked = hw.lockModesEnabled.contains(KeyboardLockMode.capsLock);
     if (event is KeyUpEvent) return KeyEventResult.ignored;
     // The window's own shortcuts (tabs, panes, the palette) pass through.
     if (AppShortcuts.isReserved(event)) return KeyEventResult.ignored;
+    // With Caps Lock as Escape and the system's Caps Lock on, letters are
+    // put right here rather than taken from the soft keyboard as typed.
+    final caseFix = keys.capsLockAsEscape && capsLocked && KeyMapper.isLetter(event.character ?? '');
     // With the soft keyboard attached, printable characters come through
     // it (a hardware keyboard on a phone feeds the IME too); only keys it
     // does not carry are taken from here.
-    if (_ime != null && !ctrl && !alt && !meta && _isPrintable(event)) return KeyEventResult.ignored;
+    if (_ime != null && !ctrl && !alt && !meta && !caseFix && _isPrintable(event)) return KeyEventResult.ignored;
 
     // App shortcuts first.
     final key = event.logicalKey;
@@ -433,7 +443,15 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
       return KeyEventResult.handled;
     }
 
-    final bytes = KeyMapper.bytesFor(event, appCursor: c.grid.appCursor, ctrl: ctrl, alt: alt, shift: shift);
+    final bytes = KeyMapper.bytesFor(
+      event,
+      appCursor: c.grid.appCursor,
+      ctrl: ctrl,
+      alt: alt,
+      shift: shift,
+      capsLockAsEscape: keys.capsLockAsEscape,
+      capsLocked: capsLocked,
+    );
     if (bytes == null) return KeyEventResult.ignored;
     if (c.grid.displayOffset != 0) c.scrollToBottom();
     // Typing drops the selection, the way every other terminal does it.

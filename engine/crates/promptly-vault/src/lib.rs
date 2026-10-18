@@ -10,6 +10,7 @@
 //! - [`crypto`] and [`manifest`]: the file envelope and the key hierarchy.
 //! - [`backend`]: the four calls a storage needs, and the local folder.
 //! - [`policy`]: what stays on this device, and which devices are cut off.
+//! - [`passphrase`]: how easy a passphrase would be to guess.
 //! - [`sync`]: pull, push and compaction over any backend.
 
 pub mod backend;
@@ -18,6 +19,7 @@ pub mod crypto;
 pub mod manifest;
 pub mod model;
 pub mod ops;
+pub mod passphrase;
 pub mod policy;
 pub mod state;
 pub mod sync;

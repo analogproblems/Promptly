@@ -2,9 +2,11 @@ import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/tokens.dart';
+import '../sessions/session_manager.dart';
 import '../workspace/app_menu_bar.dart';
 
 /// The five-tab shell. A rail on the side when there is room (desktop,
@@ -32,16 +34,25 @@ class ShellScaffold extends StatelessWidget {
     (label: 'Settings', icon: Icons.tune_outlined, selected: Icons.tune),
   ];
 
+  /// The Sessions tab carries a count of open sessions.
+  static const _sessionsTab = 1;
+
+  static Widget _icon(int index, IconData icon) =>
+      index == _sessionsTab ? _SessionCount(child: Icon(icon)) : Icon(icon);
+
   void _go(int index) {
     shell.goBranch(index, initialLocation: index == shell.currentIndex);
   }
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
+    // A Mac has its menu bar at the top of the screen, whatever the window's
+    // size; elsewhere the menus are drawn in a wide enough window.
+    final systemMenus = isDesktopPlatform && SystemMenuBar.supported;
+    final layout = LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= wideBreakpoint;
-        final menuBar = constraints.maxWidth >= desktopBreakpoint && isDesktopPlatform;
+        final menuBar = constraints.maxWidth >= desktopBreakpoint && isDesktopPlatform && !systemMenus;
         if (wide) {
           return Scaffold(
             body: Column(
@@ -59,10 +70,10 @@ class ShellScaffold extends StatelessWidget {
                     child: _Wordmark(),
                   ),
                   destinations: [
-                    for (final t in _tabs)
+                    for (final (i, t) in _tabs.indexed)
                       NavigationRailDestination(
-                        icon: Icon(t.icon),
-                        selectedIcon: Icon(t.selected),
+                        icon: _icon(i, t.icon),
+                        selectedIcon: _icon(i, t.selected),
                         label: Text(t.label),
                       ),
                   ],
@@ -83,16 +94,38 @@ class ShellScaffold extends StatelessWidget {
             onDestinationSelected: _go,
             labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
             destinations: [
-              for (final t in _tabs)
+              for (final (i, t) in _tabs.indexed)
                 NavigationDestination(
-                  icon: Icon(t.icon),
-                  selectedIcon: Icon(t.selected),
+                  icon: _icon(i, t.icon),
+                  selectedIcon: _icon(i, t.selected),
                   label: t.label,
                 ),
             ],
           ),
         );
       },
+    );
+    return systemMenus ? SystemMenuBar(child: layout) : layout;
+  }
+}
+
+/// A badge with how many sessions are open, on the Sessions tab's icon.
+/// None when there are none.
+class _SessionCount extends ConsumerWidget {
+  const _SessionCount({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final count = ref.watch(sessionManagerProvider.select((s) => s.length));
+    return Badge(
+      key: const Key('sessions-count'),
+      isLabelVisible: count > 0,
+      label: Text(count > 99 ? '99+' : '$count', semanticsLabel: '$count open'),
+      backgroundColor: context.tokens.accent,
+      textColor: context.tokens.onAccent,
+      child: child,
     );
   }
 }

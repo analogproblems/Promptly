@@ -1,22 +1,19 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'app.dart';
 import 'core/device_key.dart';
+import 'core/licences.dart';
 import 'src/rust/api/engine.dart' as rust;
 import 'src/rust/api/store.dart' as rust_store;
 import 'src/rust/frb_generated.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // The terminal font's licence, shown with every other one under About.
-  LicenseRegistry.addLicense(() async* {
-    final text = await rootBundle.loadString('assets/fonts/OFL.txt');
-    yield LicenseEntryWithLineBreaks(const ['JetBrains Mono'], text);
-  });
+  // The terminal font's and the engine's libraries' licences, shown with
+  // every other one under About.
+  registerLicences();
   // Loads the Rust engine (libpromptly_api) built by cargokit alongside the app.
   await RustLib.init();
   try {

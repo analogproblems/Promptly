@@ -863,6 +863,29 @@ class FakeEngine implements Engine {
   bool syncFolderHasVault(String path) => foldersWithVaults.contains(path);
   @override
   String syncDefaultDeviceName() => 'test-box (Linux)';
+
+  /// A rough stand-in for the engine's estimate: the most used password
+  /// and anything short are refused, and length makes it stronger.
+  @override
+  PassphraseCheck syncPassphraseCheck(String passphrase) {
+    final n = passphrase.length;
+    final level = passphrase == 'password' || n < 8
+        ? 0
+        : n < 14
+        ? 1
+        : n < 20
+        ? 2
+        : 3;
+    return PassphraseCheck(
+      level: level,
+      allowed: level > 0,
+      advice: passphrase == 'password'
+          ? 'This is one of the passwords people use most.'
+          : level == 0
+          ? 'This is short enough to be guessed quickly.'
+          : 'Advice for level $level.',
+    );
+  }
   @override
   Future<SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName) async {
     syncCalls.add('create $path $deviceName');
@@ -960,6 +983,14 @@ class FakeEngine implements Engine {
 
   @override
   String? syncQrPayload() => sync.configured ? syncQrText : null;
+}
+
+/// The add button on the Hosts tab, then Host: the new host form.
+Future<void> addHost(WidgetTester tester) async {
+  await tester.tap(find.byKey(const Key('hosts-add')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const Key('add-host')));
+  await tester.pumpAndSettle();
 }
 
 /// Scroll a lazily built list until a widget shows, then tap it.
@@ -1239,8 +1270,7 @@ void main() {
     final engine = FakeEngine();
     await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Add host'));
-    await tester.pumpAndSettle();
+    await addHost(tester);
     expect(find.text('New host'), findsOneWidget);
     await tester.enterText(find.byKey(const Key('host-label')), 'db-primary');
     await tester.enterText(find.byKey(const Key('host-hostname')), '10.0.0.20');
@@ -1632,7 +1662,7 @@ void main() {
     await tester.enterText(find.byKey(const Key('sync-passphrase-confirm')), 'short');
     await tapVisible(tester, find.byKey(const Key('sync-create')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('at least eight'), findsOneWidget);
+    expect(find.textContaining('guessed quickly'), findsWidgets);
     expect(engine.syncCalls, isEmpty);
     await tester.enterText(find.byKey(const Key('sync-passphrase')), 'correct horse battery');
     await tester.enterText(find.byKey(const Key('sync-passphrase-confirm')), 'correct horse battery');
@@ -1760,7 +1790,7 @@ void main() {
     await tester.enterText(find.byKey(const Key('sync-recreate-confirm')), 'short');
     await tester.tap(find.byKey(const Key('sync-recreate-confirm-button')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('at least eight'), findsOneWidget);
+    expect(find.textContaining('guessed quickly'), findsWidgets);
     expect(engine.syncCalls, isEmpty);
     await tester.enterText(find.byKey(const Key('sync-recreate-passphrase')), 'a long passphrase');
     await tester.enterText(find.byKey(const Key('sync-recreate-confirm')), 'a long passphrase');
@@ -1832,7 +1862,7 @@ void main() {
     await tester.enterText(find.byKey(const Key('sync-rekey-confirm')), 'short');
     await tester.tap(find.byKey(const Key('sync-rekey-confirm-button')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('at least eight'), findsOneWidget);
+    expect(find.textContaining('guessed quickly'), findsWidgets);
     await tester.enterText(find.byKey(const Key('sync-rekey-passphrase')), 'a brand new passphrase');
     await tester.enterText(find.byKey(const Key('sync-rekey-confirm')), 'a brand new passphrase');
     await tester.tap(find.byKey(const Key('sync-rekey-confirm-button')));
@@ -1909,8 +1939,7 @@ void main() {
     final engine = FakeEngine();
     await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Add host'));
-    await tester.pumpAndSettle();
+    await addHost(tester);
     await tester.enterText(find.byKey(const Key('host-label')), 'nas');
     await tester.enterText(find.byKey(const Key('host-hostname')), 'nas.local');
     await tester.enterText(find.byKey(const Key('host-username')), 'admin');
@@ -2901,16 +2930,22 @@ void main() {
       await tester.tap(find.text(tab).first);
       await tester.pumpAndSettle();
     }
-    await scrollTap(tester, find.byKey(const Key('settings-help')));
+    // Settings is long at this size: bigger steps reach its end.
+    Future<void> farTap(Finder finder) async {
+      await tester.scrollUntilVisible(finder, 400, scrollable: find.byType(Scrollable).first);
+      await tester.pumpAndSettle();
+      await tester.tap(finder);
+    }
+
+    await farTap(find.byKey(const Key('settings-help')));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Back to settings'));
     await tester.pumpAndSettle();
-    await scrollTap(tester, find.byKey(const Key('settings-about')));
+    await farTap(find.byKey(const Key('settings-about')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Hosts').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Add host'));
-    await tester.pumpAndSettle();
+    await addHost(tester);
     expect(find.text('New host'), findsOneWidget);
     // An overflow anywhere above would have failed the test with a RenderFlex error.
   });

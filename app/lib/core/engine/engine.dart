@@ -16,7 +16,8 @@ export '../../src/rust/api/hosts.dart' show ReachTarget, Reachability;
 export '../../src/rust/api/import.dart' show CsvHost, ImportReport, SshConfigHost;
 export '../../src/rust/api/keys.dart' show GeneratedKey, KeyInfo, SshKeyKind;
 export '../../src/rust/api/store.dart' show SecretsState, StoreRecord;
-export '../../src/rust/api/sync.dart' show SyncAttention, SyncBackendKind, SyncDevice, SyncSetupResult, SyncStatus;
+export '../../src/rust/api/sync.dart'
+    show PassphraseCheck, SyncAttention, SyncBackendKind, SyncDevice, SyncSetupResult, SyncStatus;
 export '../../src/rust/api/themes.dart' show ThemeInfo;
 export '../../src/rust/api/ssh.dart'
     show
@@ -207,6 +208,10 @@ abstract class Engine {
   Stream<rust_sync.SyncStatus> syncEvents();
   bool syncFolderHasVault(String path);
   String syncDefaultDeviceName();
+
+  /// How easy a new passphrase would be to guess, for the meter. Creating
+  /// or re-keying a vault refuses one that is not allowed.
+  rust_sync.PassphraseCheck syncPassphraseCheck(String passphrase);
   Future<rust_sync.SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName);
   Future<void> syncJoinLocalFolder(
     String path, {
@@ -534,6 +539,10 @@ class RustEngine implements Engine {
 
   @override
   String syncDefaultDeviceName() => rust_sync.syncDefaultDeviceName();
+
+  @override
+  rust_sync.PassphraseCheck syncPassphraseCheck(String passphrase) =>
+      rust_sync.syncPassphraseCheck(passphrase: passphrase);
 
   @override
   Future<rust_sync.SyncSetupResult> syncCreateLocalFolder(String path, String passphrase, String deviceName) =>
