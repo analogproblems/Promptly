@@ -183,7 +183,11 @@ impl RemoteFs {
         self.put_whole(
             &mut src,
             path,
-            true,
+            Put {
+                replace: true,
+                in_place: true,
+                staging: &Staging::new(),
+            },
             text.len() as u64,
             |_, _| {},
             "the text",
@@ -197,22 +201,23 @@ impl RemoteFs {
     /// place only once whole, so a copy that fails or is stopped leaves
     /// whatever was at `local` as it was. The copy gets the remote file's
     /// permissions, less the usual mask, so a private file stays private.
+    /// The file it is written to first is named by `staging`.
     pub async fn download(
         &self,
         remote: &str,
         local: &Path,
+        staging: &Staging,
         progress: impl Fn(u64, u64),
     ) -> Result<u64, SftpError> {
         let meta = self.sftp.metadata(remote).await?;
         let total = meta.size.unwrap_or(0);
         let mut src = self.sftp.open(remote).await?;
-        let part = local_part_path(local);
+        let part = staging.local_part(local);
         let cant_write = |e: io::Error| {
             SftpError::NoSubsystem(format!("could not write {}: {e}", local.display()))
         };
-        // A part file left by a copy that never finished goes, rather than
-        // being written through (it could be a link to somewhere else).
-        let _ = tokio::fs::remove_file(&part).await;
+        // Made new, so nothing already there (or a link to somewhere else)
+        // is written through.
         let mut opts = tokio::fs::OpenOptions::new();
         opts.write(true).create_new(true);
         #[cfg(unix)]
@@ -261,13 +266,14 @@ impl RemoteFs {
     /// Copy a local file to a remote path. What is already there is
     /// replaced only when `replace` says so; otherwise the upload is
     /// refused and the server's file left alone. The copy is written
-    /// beside the target first, so a failed or stopped upload never
-    /// harms the file already there.
+    /// beside the target first, under the names `staging` gives, so a
+    /// failed or stopped upload never harms the file already there.
     pub async fn upload(
         &self,
         local: &Path,
         remote: &str,
         replace: bool,
+        staging: &Staging,
         progress: impl Fn(u64, u64),
     ) -> Result<u64, SftpError> {
         let mut src = tokio::fs::File::open(local).await.map_err(|e| {
@@ -275,16 +281,22 @@ impl RemoteFs {
         })?;
         let total = src.metadata().await.map(|m| m.len()).unwrap_or(0);
         let what = local.display().to_string();
-        self.put_whole(&mut src, remote, replace, total, progress, &what)
+        let how = Put {
+            replace,
+            in_place: false,
+            staging,
+        };
+        self.put_whole(&mut src, remote, how, total, progress, &what)
             .await
     }
 
     /// Tidy up after a copy to `target` that was stopped: its part file
     /// goes, and if it was stopped between moving the old file aside and
-    /// putting the new one in its place, the old one goes back.
-    pub async fn abandon(&self, target: &str) -> Result<(), SftpError> {
-        self.remove_file(&part_path(target)).await?;
-        let old = old_path(target);
+    /// putting the new one in its place, the old one goes back. Only the
+    /// files named by its own `staging` are touched.
+    pub async fn abandon(&self, target: &str, staging: &Staging) -> Result<(), SftpError> {
+        self.remove_file(&staging.part(target)).await?;
+        let old = staging.old(target);
         if self.sftp.metadata(&old).await.is_ok() {
             if self.sftp.metadata(target).await.is_ok() {
                 self.remove_file(&old).await?;
@@ -302,7 +314,7 @@ impl RemoteFs {
         &self,
         src: &mut (impl tokio::io::AsyncRead + Unpin),
         remote: &str,
-        replace: bool,
+        how: Put<'_>,
         total: u64,
         progress: impl Fn(u64, u64),
         what: &str,
@@ -312,16 +324,41 @@ impl RemoteFs {
             Err(e) if is_status(&e, StatusCode::NoSuchFile) => None,
             Err(e) => return Err(e.into()),
         };
+        let Put {
+            replace,
+            in_place,
+            staging,
+        } = how;
         if existing.is_some() && !replace {
             return Err(already_there(remote));
         }
-        let write = OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE;
-        let part = part_path(remote);
-        let mut dst = match self.sftp.open_with_flags(&part, write).await {
+        let part = staging.part(remote);
+        // Made new, so nothing already there (or a link to somewhere else)
+        // is written through. A copy that replaces a file starts private,
+        // so what it holds is never more open than the file it replaces.
+        let mut attrs = FileAttributes::default();
+        if existing.is_some() {
+            attrs.permissions = Some(0o600);
+        }
+        let new_file = OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE;
+        let mut dst = match self
+            .sftp
+            .open_with_flags_and_attributes(&part, new_file, attrs)
+            .await
+        {
             Ok(dst) => dst,
-            // A folder this login may not add files to, though it may
-            // change the file itself: write it in place, the only way left.
             Err(e) if existing.is_some() && is_status(&e, StatusCode::PermissionDenied) => {
+                // A folder this login may not add files to, though it may
+                // change the file itself. Text from the editor is written
+                // in place, the only way left; a copy, which can stop part
+                // way, is refused rather than risk the file.
+                if !in_place {
+                    return Err(SftpError::NoSubsystem(format!(
+                        "{remote} was left as it was: copying over it safely needs a file \
+                         added beside it first, and this folder does not let you add files."
+                    )));
+                }
+                let write = OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE;
                 let mut dst = self.sftp.open_with_flags(remote, write).await?;
                 return copy_into(src, &mut dst, total, &progress, what).await;
             }
@@ -352,12 +389,20 @@ impl RemoteFs {
                     permissions: Some(mode),
                     ..FileAttributes::default()
                 };
-                let _ = self.sftp.set_metadata(&part, attrs).await;
+                // A server that will not set them leaves the copy as it was
+                // made; that is fine only if it is no more open than the old.
+                if let Err(e) = self.sftp.set_metadata(&part, attrs).await {
+                    let made = self.sftp.metadata(&part).await?.permissions;
+                    if made.is_none_or(|m| m & 0o777 & !(mode & 0o777) != 0) {
+                        return Err(e.into());
+                    }
+                }
             }
             // SFTP's rename will not replace a file, so the old one steps
-            // aside first and goes once the new one is in its place.
-            let aside = old_path(remote);
-            let _ = self.remove_file(&aside).await;
+            // aside first and goes once the new one is in its place. The
+            // name it steps aside to is this copy's own, and the rename is
+            // refused rather than replace anything already there.
+            let aside = staging.old(remote);
             self.sftp.rename(remote, &aside).await?;
             if let Err(e) = self.sftp.rename(&part, remote).await {
                 let _ = self.sftp.rename(&aside, remote).await;
@@ -420,23 +465,50 @@ fn sibling(target: &str, tag: &str) -> String {
     }
 }
 
-/// Where an upload to `target` is written until it is whole.
-pub fn part_path(target: &str) -> String {
-    sibling(target, "promptly-part")
+/// How [`RemoteFs::put_whole`] may treat the file already there.
+struct Put<'a> {
+    /// Replace a file already there, rather than refuse.
+    replace: bool,
+    /// Write straight into the file when nothing can be added beside it.
+    in_place: bool,
+    staging: &'a Staging,
 }
 
-/// Where the file an upload replaces waits while the new one moves in.
-fn old_path(target: &str) -> String {
-    sibling(target, "promptly-old")
+/// The names one copy gives the files it writes beside its destination.
+/// Each copy has its own, so it never writes over or removes a file that
+/// someone else, or another copy, has there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Staging(String);
+
+impl Staging {
+    pub fn new() -> Self {
+        Self(format!("{:08x}", rand::random::<u32>()))
+    }
+
+    /// Where a copy to `target` is written until it is whole.
+    pub fn part(&self, target: &str) -> String {
+        sibling(target, &format!("{}.promptly-part", self.0))
+    }
+
+    /// Where the file an upload replaces waits while the new one moves in.
+    pub fn old(&self, target: &str) -> String {
+        sibling(target, &format!("{}.promptly-old", self.0))
+    }
+
+    /// Where a download to `target` is written until it is whole.
+    pub fn local_part(&self, target: &Path) -> PathBuf {
+        let name = target
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        target.with_file_name(format!(".{name}.{}.promptly-part", self.0))
+    }
 }
 
-/// Where a download to `target` is written until it is whole.
-pub fn local_part_path(target: &Path) -> PathBuf {
-    let name = target
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    target.with_file_name(format!(".{name}.promptly-part"))
+impl Default for Staging {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// `dir/name` without doubling the slash.
@@ -511,9 +583,13 @@ mod tests {
             std::fs::write(&local, &body).unwrap();
             let seen = Mutex::new(Vec::new());
             let n = fs
-                .upload(&local, &join(&base, "hello.txt"), false, |done, total| {
-                    seen.lock().unwrap().push((done, total))
-                })
+                .upload(
+                    &local,
+                    &join(&base, "hello.txt"),
+                    false,
+                    &Staging::new(),
+                    |done, total| seen.lock().unwrap().push((done, total)),
+                )
                 .await
                 .unwrap();
             assert_eq!(n, body.len() as u64);
@@ -525,13 +601,25 @@ mod tests {
             let other = dir.join("other.txt");
             std::fs::write(&other, b"other").unwrap();
             let err = fs
-                .upload(&other, &join(&base, "hello.txt"), false, |_, _| {})
+                .upload(
+                    &other,
+                    &join(&base, "hello.txt"),
+                    false,
+                    &Staging::new(),
+                    |_, _| {},
+                )
                 .await
                 .unwrap_err();
             assert!(err.to_string().contains("already on the server"), "{err}");
-            fs.upload(&local, &join(&base, "hello.txt"), true, |_, _| {})
-                .await
-                .unwrap();
+            fs.upload(
+                &local,
+                &join(&base, "hello.txt"),
+                true,
+                &Staging::new(),
+                |_, _| {},
+            )
+            .await
+            .unwrap();
             let gone = join(&base, "never-there.txt");
             fs.remove_file(&gone).await.unwrap();
 
@@ -551,24 +639,74 @@ mod tests {
             assert_eq!(entries[1].permissions, 0o600);
             // Replacing keeps the old file's permissions and leaves nothing
             // beside it.
-            fs.upload(&other, &join(&base, "hello.txt"), true, |_, _| {})
-                .await
-                .unwrap();
+            fs.upload(
+                &other,
+                &join(&base, "hello.txt"),
+                true,
+                &Staging::new(),
+                |_, _| {},
+            )
+            .await
+            .unwrap();
             let entries = fs.list(&base).await.unwrap();
             assert_eq!(entries.len(), 2, "{entries:?}");
             assert_eq!((entries[1].size, entries[1].permissions), (5, 0o600));
-            fs.upload(&local, &join(&base, "hello.txt"), true, |_, _| {})
-                .await
-                .unwrap();
+            fs.upload(
+                &local,
+                &join(&base, "hello.txt"),
+                true,
+                &Staging::new(),
+                |_, _| {},
+            )
+            .await
+            .unwrap();
 
             // A copy stopped after moving the old file aside gets it back.
             let target = join(&base, "kept.txt");
+            let staging = Staging::new();
             fs.write_text(&target, "keep me").await.unwrap();
-            fs.rename(&target, &old_path(&target)).await.unwrap();
-            fs.write_text(&part_path(&target), "half").await.unwrap();
-            fs.abandon(&target).await.unwrap();
+            fs.rename(&target, &staging.old(&target)).await.unwrap();
+            fs.write_text(&staging.part(&target), "half").await.unwrap();
+            fs.abandon(&target, &staging).await.unwrap();
             assert_eq!(fs.read_text(&target, 100).await.unwrap(), "keep me");
             assert_eq!(fs.list(&base).await.unwrap().len(), 3, "nothing left over");
+
+            // A file already where a copy would write beside its target is
+            // someone else's: the copy is refused rather than write over it,
+            // and another copy's tidying leaves it be.
+            let theirs = Staging::new();
+            fs.write_text(&theirs.part(&target), "not yours")
+                .await
+                .unwrap();
+            assert!(fs
+                .upload(&other, &target, true, &theirs, |_, _| {})
+                .await
+                .is_err());
+            fs.abandon(&target, &Staging::new()).await.unwrap();
+            assert_eq!(
+                fs.read_text(&theirs.part(&target), 100).await.unwrap(),
+                "not yours"
+            );
+            assert_eq!(fs.read_text(&target, 100).await.unwrap(), "keep me");
+            fs.remove_file(&theirs.part(&target)).await.unwrap();
+
+            // In a folder nothing can be added to, a copy leaves the file as
+            // it was; the editor, with no other way, writes in place.
+            let locked = join(&base, "locked");
+            fs.mkdir(&locked).await.unwrap();
+            let inside = join(&locked, "f.txt");
+            fs.write_text(&inside, "original").await.unwrap();
+            fs.chmod(&locked, 0o555).await.unwrap();
+            let err = fs
+                .upload(&other, &inside, true, &Staging::new(), |_, _| {})
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("left as it was"), "{err}");
+            assert_eq!(fs.read_text(&inside, 100).await.unwrap(), "original");
+            fs.write_text(&inside, "edited").await.unwrap();
+            assert_eq!(fs.read_text(&inside, 100).await.unwrap(), "edited");
+            fs.chmod(&locked, 0o755).await.unwrap();
+            fs.delete(&locked).await.unwrap();
             fs.remove_file(&target).await.unwrap();
 
             fs.rename(&join(&base, "hello.txt"), &join(&base, "sub/moved.txt"))
@@ -576,7 +714,12 @@ mod tests {
                 .unwrap();
             let back = dir.join("back.txt");
             let n = fs
-                .download(&join(&base, "sub/moved.txt"), &back, |_, _| {})
+                .download(
+                    &join(&base, "sub/moved.txt"),
+                    &back,
+                    &Staging::new(),
+                    |_, _| {},
+                )
                 .await
                 .unwrap();
             assert_eq!(n, 200_000);
@@ -587,17 +730,52 @@ mod tests {
                 let mode = std::fs::metadata(&back).unwrap().permissions().mode();
                 assert_eq!(mode & 0o777, 0o600, "a private file stays private");
             }
-            assert!(!local_part_path(&back).exists());
+            // A download never writes through what is already where its
+            // part file goes, such as a link to another file.
+            #[cfg(unix)]
+            {
+                let staging = Staging::new();
+                let elsewhere = dir.join("elsewhere.txt");
+                std::fs::write(&elsewhere, b"untouched").unwrap();
+                std::os::unix::fs::symlink(&elsewhere, staging.local_part(&back)).unwrap();
+                assert!(fs
+                    .download(&join(&base, "sub/moved.txt"), &back, &staging, |_, _| {})
+                    .await
+                    .is_err());
+                assert_eq!(std::fs::read(&elsewhere).unwrap(), b"untouched");
+                std::fs::remove_file(staging.local_part(&back)).unwrap();
+            }
+            let leftovers = std::fs::read_dir(&dir)
+                .unwrap()
+                .filter(|e| {
+                    e.as_ref()
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .ends_with("promptly-part")
+                })
+                .count();
+            assert_eq!(leftovers, 0);
             // A download over a file replaces it; one that fails leaves it.
             std::fs::write(&back, b"mine").unwrap();
             assert!(fs
-                .download(&join(&base, "missing.txt"), &back, |_, _| {})
+                .download(
+                    &join(&base, "missing.txt"),
+                    &back,
+                    &Staging::new(),
+                    |_, _| {}
+                )
                 .await
                 .is_err());
             assert_eq!(std::fs::read(&back).unwrap(), b"mine");
-            fs.download(&join(&base, "sub/moved.txt"), &back, |_, _| {})
-                .await
-                .unwrap();
+            fs.download(
+                &join(&base, "sub/moved.txt"),
+                &back,
+                &Staging::new(),
+                |_, _| {},
+            )
+            .await
+            .unwrap();
             assert_eq!(std::fs::read(&back).unwrap(), body);
 
             // Edit in place: read, change, write back, re-read.

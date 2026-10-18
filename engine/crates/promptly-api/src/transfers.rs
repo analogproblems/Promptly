@@ -9,6 +9,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::api::files::FileTransfer;
+use promptly_ssh::files::Staging;
 
 static NEXT_TRANSFER: AtomicU32 = AtomicU32::new(1);
 
@@ -35,6 +36,8 @@ pub(crate) enum Partial {
 struct Running {
     task: tokio::task::JoinHandle<()>,
     partial: Partial,
+    /// The names of what it writes beside the destination.
+    staging: Staging,
     /// Raised once both ends are open, so the destination has been touched.
     started: Arc<AtomicBool>,
     transfer: Arc<Mutex<FileTransfer>>,
@@ -51,7 +54,9 @@ pub(crate) struct Transfers {
 
 impl Transfers {
     /// Run a copy in the background and return its transfer id. The job
-    /// reports progress through the closure it is given; its result settles
+    /// reports progress through the closure it is given, and writes beside
+    /// its destination under the names in the staging it is given (which
+    /// the tidying gets too, if it is cancelled); its result settles
     /// the transfer, unless the transfer was cancelled first. Refused while
     /// another copy to the same place is running or being tidied up.
     pub(crate) fn spawn<F>(
@@ -59,7 +64,7 @@ impl Transfers {
         name: String,
         upload: bool,
         partial: Partial,
-        job: impl FnOnce(Progress) -> F,
+        job: impl FnOnce(Progress, Staging) -> F,
     ) -> Result<u32, String>
     where
         F: Future<Output = Result<u64, String>> + Send + 'static,
@@ -97,7 +102,8 @@ impl Transfers {
                 p.total = total;
             })
         };
-        let future = job(progress);
+        let staging = Staging::new();
+        let future = job(progress, staging.clone());
         let this = self.clone();
         let t = transfer.clone();
         let dest = partial.clone();
@@ -120,6 +126,7 @@ impl Transfers {
             Running {
                 task: handle,
                 partial,
+                staging,
                 started,
                 transfer,
             },
@@ -134,7 +141,7 @@ impl Transfers {
     pub(crate) fn cancel<F>(
         &self,
         tid: u32,
-        tidy: impl FnOnce(Partial) -> F + Send + 'static,
+        tidy: impl FnOnce(Partial, Staging) -> F + Send + 'static,
     ) -> bool
     where
         F: Future<Output = Result<(), String>> + Send + 'static,
@@ -147,9 +154,12 @@ impl Transfers {
             // Aborting only asks; the copy may be mid-write until this returns.
             let _ = run.task.await;
             let error = if run.started.load(Ordering::Relaxed) {
-                tidy(run.partial.clone()).await.err().map(|e| {
-                    format!("Cancelled, but the part-copied file could not be removed: {e}")
-                })
+                tidy(run.partial.clone(), run.staging.clone())
+                    .await
+                    .err()
+                    .map(|e| {
+                        format!("Cancelled, but the part-copied file could not be removed: {e}")
+                    })
             } else {
                 None
             };
@@ -216,7 +226,7 @@ mod tests {
                 "a.txt".into(),
                 false,
                 Partial::Local("/nowhere/a.txt".into()),
-                |progress| async move {
+                |progress, _| async move {
                     progress(5, 5);
                     Ok(5)
                 },
@@ -244,7 +254,7 @@ mod tests {
                 "b".into(),
                 true,
                 Partial::Remote("h:22".into(), "/b".into()),
-                |_| async { Err("The server would not allow that.".to_string()) },
+                |_, _| async { Err("The server would not allow that.".to_string()) },
             )
             .unwrap();
         wait_for(|| transfers.snapshot()[0].finished);
@@ -257,9 +267,11 @@ mod tests {
     fn tidy_recorder(
         log: Arc<Mutex<Vec<Partial>>>,
         go: tokio::sync::oneshot::Receiver<Result<(), String>>,
-    ) -> impl FnOnce(Partial) -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
-    {
-        move |partial| {
+    ) -> impl FnOnce(
+        Partial,
+        Staging,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>> {
+        move |partial, _| {
             Box::pin(async move {
                 log.lock().unwrap().push(partial);
                 go.await.unwrap_or(Ok(()))
@@ -276,7 +288,7 @@ mod tests {
                 "big.iso".into(),
                 true,
                 Partial::Remote("h:22".into(), "/srv/big.iso".into()),
-                |progress| async move {
+                |progress, _| async move {
                     progress(0, 100);
                     // Never finishes by itself.
                     let _ = rx.await;
@@ -304,7 +316,7 @@ mod tests {
                 "big.iso".into(),
                 true,
                 Partial::Remote("h:22".into(), "/srv/big.iso".into()),
-                |_| async { Ok(0) },
+                |_, _| async { Ok(0) },
             )
         };
         assert!(again(&transfers).unwrap_err().contains("still running"));
@@ -314,7 +326,7 @@ mod tests {
                 "big.iso".into(),
                 true,
                 Partial::Remote("other:22".into(), "/srv/big.iso".into()),
-                |_| async { Ok(0) },
+                |_, _| async { Ok(0) },
             )
             .unwrap();
         release.send(Ok(())).unwrap();
@@ -343,7 +355,7 @@ mod tests {
                 "x".into(),
                 false,
                 Partial::Local("/tmp/x".into()),
-                |progress| async move {
+                |progress, _| async move {
                     progress(1, 10);
                     std::future::pending::<()>().await;
                     Ok(10)
@@ -369,7 +381,7 @@ mod tests {
                 "x".into(),
                 true,
                 Partial::Remote("h:22".into(), "/srv/x".into()),
-                |_| async move {
+                |_, _| async move {
                     let _ = rx.await;
                     Ok(0)
                 },

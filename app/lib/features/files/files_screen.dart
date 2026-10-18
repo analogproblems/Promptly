@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -145,9 +146,14 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
     final name = fromRemote ? localFileName(entry.name) : entry.name;
     // Looked up now rather than taken from the pane, which may be out of
     // date. An upload refuses a file that appears after this.
+    // A Mac or Windows disk takes names that differ only in capitals for
+    // the same file, so a copy here would replace it.
+    final caseless =
+        fromRemote && (defaultTargetPlatform == TargetPlatform.macOS || defaultTargetPlatform == TargetPlatform.windows);
+    bool same(String other) => caseless ? other.toLowerCase() == name.toLowerCase() : other == name;
     final bool clash;
     try {
-      clash = (await pane.widget.fs.list(dir)).any((e) => e.name == name);
+      clash = (await pane.widget.fs.list(dir)).any((e) => same(e.name));
     } catch (e) {
       _say(e);
       return;

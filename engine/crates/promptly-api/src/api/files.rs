@@ -196,8 +196,8 @@ pub fn files_download(id: u32, remote: String, local: String) -> Result<u32, Str
     let local = PathBuf::from(local);
     let partial = Partial::Local(local.clone());
     b.transfers
-        .spawn(name, false, partial, move |progress| async move {
-            fs.download(&remote, &local, progress)
+        .spawn(name, false, partial, move |progress, staging| async move {
+            fs.download(&remote, &local, &staging, progress)
                 .await
                 .map_err(friendly)
         })
@@ -212,8 +212,8 @@ pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Re
     let fs = b.fs.clone();
     let partial = Partial::Remote(b.server.clone(), remote.clone());
     b.transfers
-        .spawn(name, true, partial, move |progress| async move {
-            fs.upload(&PathBuf::from(local), &remote, replace, progress)
+        .spawn(name, true, partial, move |progress, staging| async move {
+            fs.upload(&PathBuf::from(local), &remote, replace, &staging, progress)
                 .await
                 .map_err(friendly)
         })
@@ -226,17 +226,18 @@ pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Re
 pub fn files_cancel_transfer(id: u32, transfer: u32) -> Result<(), String> {
     let b = browser(id)?;
     let fs = b.fs.clone();
-    b.transfers.cancel(transfer, move |partial| async move {
-        match partial {
-            Partial::Local(path) => {
-                match tokio::fs::remove_file(promptly_ssh::files::local_part_path(&path)).await {
-                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
-                    _ => Ok(()),
+    b.transfers
+        .cancel(transfer, move |partial, staging| async move {
+            match partial {
+                Partial::Local(path) => {
+                    match tokio::fs::remove_file(staging.local_part(&path)).await {
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                        _ => Ok(()),
+                    }
                 }
+                Partial::Remote(_, path) => fs.abandon(&path, &staging).await.map_err(friendly),
             }
-            Partial::Remote(_, path) => fs.abandon(&path).await.map_err(friendly),
-        }
-    });
+        });
     Ok(())
 }
 
