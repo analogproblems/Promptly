@@ -37,7 +37,7 @@ How Promptly reaches people, what each channel costs, and the order we take them
 
 ## Signing keys
 
-- **Android:** a keystore we generate once (`tools/android-keystore.sh`) and keep out of the repository. CI reads it from the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` secrets; without them it signs with the debug key, so a build still comes out for testing. Play App Signing keeps the final key; ours is only the upload key.
+- **Android:** a keystore we generate once (`tools/android-keystore.sh`) and keep out of the repository. CI reads it from the `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` secrets; without them a release leaves the Android files out, with a warning, since a build signed with another key can't be installed over the real app. Test builds in CI, and local release builds, use the debug key when there's no keystore. Play App Signing keeps the final key; ours is only the upload key.
 - **macOS:** unsigned (the build tools' own ad-hoc signature) until the developer programme; then a Developer ID certificate kept in CI's secrets, and notarisation in the release workflow.
 - **Windows and Linux:** unsigned for now. Every release ships a `SHA256SUMS` file so anyone can check what they downloaded.
 
