@@ -32,7 +32,8 @@ cat > "$WORK/$NAME/README.txt" <<TXT
 Promptly $VERSION for Linux (x86_64)
 
 Run ./promptly from this folder. Nothing else needs installing beyond
-GTK 3, which every desktop has.
+GTK 3 and libsecret, which nearly every desktop has (on Debian and
+Ubuntu, the packages libgtk-3-0 and libsecret-1-0).
 
 To add it to your app menu, copy $ID.desktop to
 ~/.local/share/applications/ and set its Exec line to the full path of
@@ -64,7 +65,7 @@ Section: net
 Priority: optional
 Architecture: $ARCH
 Installed-Size: $SIZE_KB
-Depends: libgtk-3-0, libstdc++6, libc6
+Depends: libgtk-3-0, libsecret-1-0, libstdc++6, libc6
 Maintainer: Promptly <https://github.com/analogproblems/Promptly/issues>
 Homepage: https://github.com/analogproblems/Promptly
 Description: Terminal and SSH client with free, zero-knowledge sync
