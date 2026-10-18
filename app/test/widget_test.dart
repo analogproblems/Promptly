@@ -19,6 +19,8 @@ import 'package:promptly/features/files/files_screen.dart';
 import 'package:promptly/features/files/fs.dart';
 import 'package:promptly/features/help/about_screen.dart';
 import 'package:promptly/features/settings/settings_screen.dart' show TerminalChoices;
+import 'package:promptly/features/terminal/font_files.dart';
+import 'package:promptly/features/terminal/terminal_fonts.dart';
 import 'package:promptly/features/terminal/keyboard_bar.dart';
 import 'package:promptly/features/terminal/terminal_view.dart';
 import 'package:promptly/features/sessions/session_body.dart';
@@ -1039,6 +1041,40 @@ class FakeUpdateService implements UpdateService {
 
 Widget app([FakeEngine? engine]) => appWith(engine);
 
+/// Fonts kept in memory: the ones "added" and "installed", and which
+/// families were loaded from their files.
+class FakeFontLibrary implements FontLibrary {
+  FakeFontLibrary({List<String> installedFamilies = const ['Fira Code', 'Ubuntu Mono']})
+    : system = [for (final f in installedFamilies) FontFamilyFiles(family: f, paths: ['/fonts/$f.ttf'])];
+
+  final List<FontFamilyFiles> mine = [];
+  final List<FontFamilyFiles> system;
+  final List<String> loaded = [];
+
+  @override
+  Future<List<FontFamilyFiles>> added() async => List.of(mine);
+  @override
+  Future<List<FontFamilyFiles>> installed() async => system;
+  @override
+  bool get installedByName => true;
+  @override
+  Future<String> add(String name, Uint8List bytes) async {
+    final face = parseFontBytes(bytes, name);
+    if (face == null) throw const FormatException('not a font');
+    mine.add(FontFamilyFiles(family: face.family, paths: [name], added: true, monospaced: face.monospaced));
+    return face.family;
+  }
+
+  @override
+  Future<void> remove(FontFamilyFiles font) async => mine.removeWhere((f) => f.family == font.family);
+  @override
+  Future<bool> load(FontFamilyFiles font) async {
+    if (!font.added || loaded.contains(font.family)) return false;
+    loaded.add(font.family);
+    return true;
+  }
+}
+
 /// The app on a fake engine. The welcome tour counts as seen unless a test
 /// asks for a first run.
 Widget appWith(
@@ -1051,12 +1087,15 @@ Widget appWith(
   Authenticator? authenticator,
   SaveTextFile? fileSaver,
   DeviceFiles? deviceFiles,
+  FontLibrary? fonts,
 }) {
   engine ??= FakeEngine();
   if (onboarded) engine.settings.putIfAbsent('onboarding_done', () => 'true');
   return ProviderScope(
     overrides: [
       engineProvider.overrideWithValue(engine),
+      // Fonts from memory: no data folder, and the system's fonts unread.
+      fontLibraryProvider.overrideWithValue(fonts ?? FakeFontLibrary()),
       filePickerProvider.overrideWithValue(
         ({required String label, required List<String> extensions}) async => pickedFile,
       ),
@@ -2937,6 +2976,11 @@ void main() {
       await tester.tap(finder);
     }
 
+    await farTap(find.byKey(const Key('terminal-font')));
+    await tester.pumpAndSettle();
+    expect(find.text('Terminal font'), findsOneWidget);
+    await tester.tap(find.byTooltip('Back to settings'));
+    await tester.pumpAndSettle();
     await farTap(find.byKey(const Key('settings-help')));
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Back to settings'));
@@ -3573,6 +3617,28 @@ void main() {
       await tester.pump();
       expect(view.controller.fontSize, 19);
       expect(engine.settings['terminal_font_size'], '19.0');
+    });
+
+    testWidgets('sessions draw with the chosen font and ligatures, and the keyboard follows Settings', (tester) async {
+      final engine = FakeEngine()..connectedSessionId = 1;
+      await openShell(tester, engine);
+      var view = tester.widget<TerminalView>(find.byType(TerminalView));
+      expect(view.font.family, 'JetBrains Mono');
+      expect(view.font.ligatures, isFalse);
+      expect(view.font.fallback, contains('Symbols Nerd Font Mono'));
+      expect(view.autocorrect, isFalse);
+
+      final chosen = FakeEngine()
+        ..connectedSessionId = 1
+        ..settings['terminal_font'] = '"Fira Code"'
+        ..settings['terminal_ligatures'] = 'true'
+        ..settings['terminal_autocorrect'] = 'true';
+      await openShell(tester, chosen);
+      view = tester.widget<TerminalView>(find.byType(TerminalView));
+      expect(view.font.family, 'Fira Code');
+      expect(view.font.fallback.first, 'JetBrains Mono', reason: 'the built-in font fills in what it lacks');
+      expect(view.font.ligatures, isTrue);
+      expect(view.autocorrect, isTrue);
     });
 
     testWidgets('new sessions keep the scrollback the setting asks for', (tester) async {

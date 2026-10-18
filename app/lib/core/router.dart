@@ -10,6 +10,7 @@ import '../features/hosts/hosts_screen.dart';
 import '../features/keys/keys_screen.dart';
 import '../features/onboarding/onboarding.dart';
 import '../features/sessions/sessions_root.dart';
+import '../features/settings/fonts_screen.dart';
 import '../features/settings/keyboard_bar_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../features/settings/themes_screen.dart';
@@ -97,6 +98,7 @@ final routerProvider = Provider<GoRouter>((ref) {
               routes: [
                 GoRoute(path: 'themes', builder: (_, _) => const ThemesScreen()),
                 GoRoute(path: 'keyboard-bar', builder: (_, _) => const KeyboardBarScreen()),
+                GoRoute(path: 'fonts', builder: (_, _) => const FontsScreen()),
                 GoRoute(path: 'sync', builder: (_, _) => const SyncScreen()),
                 GoRoute(path: 'help', builder: (_, _) => const HelpScreen()),
                 GoRoute(path: 'about', builder: (_, _) => const AboutScreen()),

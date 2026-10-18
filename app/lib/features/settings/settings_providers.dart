@@ -23,6 +23,9 @@ abstract final class SettingKeys {
   static const capsLockEscape = 'caps_lock_escape';
   static const cmdAsCtrl = 'cmd_as_ctrl';
   static const collapsedGroups = 'hosts_collapsed_groups';
+  static const font = 'terminal_font';
+  static const ligatures = 'terminal_ligatures';
+  static const autocorrect = 'terminal_autocorrect';
 }
 
 /// Read the settings that travel in the vault again, once other devices'
@@ -312,3 +315,41 @@ class CollapsedGroupsNotifier extends JsonSettingNotifier<Set<String>> {
 
 final collapsedGroupsProvider =
     NotifierProvider<CollapsedGroupsNotifier, Set<String>>(CollapsedGroupsNotifier.new);
+
+/// The terminal font's family name; empty for the one built in. A font
+/// added from a file or installed on one device may be missing on another,
+/// so this stays on the device.
+class FontFamilyNotifier extends JsonSettingNotifier<String> {
+  @override
+  String get key => SettingKeys.font;
+  @override
+  String get fallback => '';
+  @override
+  String? decode(Object? json) => json is String ? json : null;
+  @override
+  Object? encode(String value) => value;
+}
+
+final fontFamilyProvider = NotifierProvider<FontFamilyNotifier, String>(FontFamilyNotifier.new);
+
+/// Whether the terminal joins pairs such as `->` and `!=` into one symbol,
+/// in fonts that have them. Off by default.
+class LigaturesNotifier extends BoolSettingNotifier {
+  @override
+  String get key => SettingKeys.ligatures;
+  @override
+  bool get fallback => false;
+}
+
+final ligaturesProvider = NotifierProvider<LigaturesNotifier, bool>(LigaturesNotifier.new);
+
+/// Whether a phone or tablet keyboard may suggest and correct words in the
+/// terminal. Off by default: commands are rarely dictionary words.
+class AutocorrectNotifier extends BoolSettingNotifier {
+  @override
+  String get key => SettingKeys.autocorrect;
+  @override
+  bool get fallback => false;
+}
+
+final autocorrectProvider = NotifierProvider<AutocorrectNotifier, bool>(AutocorrectNotifier.new);

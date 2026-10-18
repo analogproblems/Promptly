@@ -342,15 +342,41 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 /// Text sizes offered in Settings; zooming can land between them.
 const fontSizeChoices = [10.0, 12.0, 13.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0];
 
-/// The terminal's bell, text size and scrollback, in the Terminal section.
+/// The terminal's font, ligatures, keyboard suggestions, bell, text size
+/// and scrollback, in the Terminal section.
 class TerminalChoices extends ConsumerWidget {
   const TerminalChoices({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final fontSize = ref.watch(fontSizeProvider);
+    final family = ref.watch(fontFamilyProvider);
     return Column(
       children: [
+        ListTile(
+          key: const Key('terminal-font'),
+          title: const Text('Font'),
+          subtitle: Text(family.isEmpty ? '${PromptlyTokens.monoFamily}, built in' : family),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => context.go('/settings/fonts'),
+        ),
+        SwitchListTile(
+          key: const Key('ligatures'),
+          title: const Text('Ligatures'),
+          subtitle: const Text('Draws pairs such as -> and != as one symbol, in fonts that have them.'),
+          value: ref.watch(ligaturesProvider),
+          onChanged: (v) => ref.read(ligaturesProvider.notifier).set(v),
+        ),
+        if (isTouchPlatform)
+          SwitchListTile(
+            key: const Key('autocorrect'),
+            title: const Text('Keyboard suggestions and autocorrect'),
+            subtitle: const Text(
+              'Lets the keyboard suggest words and correct them as you type. Off, what you type is sent exactly as typed.',
+            ),
+            value: ref.watch(autocorrectProvider),
+            onChanged: (v) => ref.read(autocorrectProvider.notifier).set(v),
+          ),
         _ChoiceTile<BellMode>(
           key: const Key('bell'),
           title: 'Bell',
