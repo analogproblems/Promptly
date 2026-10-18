@@ -220,18 +220,21 @@ pub fn files_upload(id: u32, local: String, remote: String, replace: bool) -> Re
 }
 
 /// Stop a running upload or download, and remove the half-written copy it
-/// leaves. Nothing happens if it has already finished.
+/// leaves beside its destination; what was already there stays. Nothing
+/// happens if it has already finished.
 #[frb(sync)]
 pub fn files_cancel_transfer(id: u32, transfer: u32) -> Result<(), String> {
     let b = browser(id)?;
     let fs = b.fs.clone();
     b.transfers.cancel(transfer, move |partial| async move {
         match partial {
-            Partial::Local(path) => match tokio::fs::remove_file(&path).await {
-                Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
-                _ => Ok(()),
-            },
-            Partial::Remote(_, path) => fs.remove_file(&path).await.map_err(friendly),
+            Partial::Local(path) => {
+                match tokio::fs::remove_file(promptly_ssh::files::local_part_path(&path)).await {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+                    _ => Ok(()),
+                }
+            }
+            Partial::Remote(_, path) => fs.abandon(&path).await.map_err(friendly),
         }
     });
     Ok(())

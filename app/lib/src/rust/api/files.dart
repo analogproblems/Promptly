@@ -94,7 +94,8 @@ int filesUpload({
 );
 
 /// Stop a running upload or download, and remove the half-written copy it
-/// leaves. Nothing happens if it has already finished.
+/// leaves beside its destination; what was already there stays. Nothing
+/// happens if it has already finished.
 void filesCancelTransfer({required int id, required int transfer}) => RustLib
     .instance
     .api
