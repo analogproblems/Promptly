@@ -763,12 +763,7 @@ pub fn finish_setup(
             vault = as_new_device(&store, &vault)?;
             put_device_record(&store, vault.device(), &config.device_name)?;
         }
-        let edited = edited_offline(&store);
-        apply_pulled_secrets(&store, dek, &edited)?;
-        upload_local_secrets(&store, dek, &edited)?;
-        store
-            .meta_delete(META_EDITED_OFFLINE)
-            .map_err(|e| e.to_string())?;
+        reconcile_secrets(&store, dek, true)?;
         apply_pulled_known_hosts(&store)?;
         store.push(&vault).map_err(|e| e.to_string())?;
         store
@@ -788,17 +783,44 @@ pub fn finish_setup(
     Ok(())
 }
 
+/// After a pull: the vault's secrets onto disk, then this device's own up.
+/// Those saved while sync was off keep this device's copy and go up, on the
+/// join or, when the join stopped part way, on the next round. On a join,
+/// every secret the vault lacks goes up too.
+fn reconcile_secrets(store: &Store, dek: &Dek, joining: bool) -> Result<(), String> {
+    let edited = edited_offline(store);
+    apply_pulled_secrets(store, dek, &edited)?;
+    if joining || !edited.is_empty() {
+        upload_local_secrets(store, dek, &edited, joining)?;
+    }
+    if !edited.is_empty() {
+        // Only now: each is in a record, which the next push sends.
+        store
+            .meta_delete(META_EDITED_OFFLINE)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Every secret this device has travels in the vault, except those of
 /// hosts and keys kept on this device. Runs after a pull, so a secret the
 /// vault already holds under this key is left as it is: stamping it again
 /// would make this device's copy beat a newer change from another device.
 /// One deleted elsewhere was removed from disk by the pull, so it does
 /// not come back either. Those in `edited`, saved here while sync was off,
-/// go up whatever the vault holds.
-fn upload_local_secrets(store: &Store, dek: &Dek, edited: &HashSet<String>) -> Result<(), String> {
+/// go up whatever the vault holds; without `all`, only those do.
+fn upload_local_secrets(
+    store: &Store,
+    dek: &Dek,
+    edited: &HashSet<String>,
+    all: bool,
+) -> Result<(), String> {
     let kept = store.with_state(policy::kept_on_device);
     for id in secrets().list().map_err(|e| e.to_string())? {
         if id == DEK_SECRET_ID || kept.contains(&(Collection::Secrets, id.clone())) {
+            continue;
+        }
+        if !all && !edited.contains(&id) {
             continue;
         }
         let in_vault = store
@@ -1016,7 +1038,7 @@ pub fn sync_once() -> Result<(), String> {
         if is_removed(&store, vault.device()) {
             return Err(removed_failure());
         }
-        apply_pulled_secrets(&store, &dek, &HashSet::new())?;
+        reconcile_secrets(&store, &dek, false)?;
         apply_pulled_known_hosts(&store)?;
         // A key change that stopped part way: lock again whatever secrets
         // are still under the old key, from this device's copies.
@@ -2164,7 +2186,7 @@ mod tests {
         put_secret_record(&store, &Dek::generate(), &other_key, "password", b"hunter2").unwrap();
         let before = store.newest_ts(Collection::Secrets, &current);
 
-        upload_local_secrets(&store, &dek, &HashSet::new()).unwrap();
+        upload_local_secrets(&store, &dek, &HashSet::new(), true).unwrap();
 
         let opens = |id: &str| {
             let r = store.get(Collection::Secrets, id).unwrap()?;
@@ -2188,49 +2210,62 @@ mod tests {
     #[test]
     fn rejoining_keeps_a_password_saved_while_sync_was_off() {
         let _ = crate::api::store::set_no_device_key();
-        let store = Store::open_in_memory().unwrap();
-        let dek = Dek::generate();
-        let id = |name: &str| format!("{name}-{}", uuid::Uuid::new_v4());
-        let (edited, unchanged) = (id("edited"), id("unchanged"));
-        // Both went up while sync was on; the vault may since hold a newer
-        // copy from another device.
-        put_secret_record(&store, &dek, &edited, "password", b"old").unwrap();
-        put_secret_record(&store, &dek, &unchanged, "password", b"newer").unwrap();
-        // Sync off: one is saved again here, the other was never touched.
-        secrets().put(&edited, b"saved-while-off").unwrap();
-        note_edited_offline(&store, &edited).unwrap();
-        secrets().put(&unchanged, b"older").unwrap();
-        // Rejoining starts with no markers, as after a disconnect.
-        store.meta_delete(META_SECRET_MARKERS).unwrap();
+        let dir = std::env::temp_dir().join(format!("promptly-offline-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // On the join itself, and on the next round after a join that
+        // stopped part way, with the app restarted in between.
+        for joining in [true, false] {
+            let path = dir.join(format!("joining-{joining}.db"));
+            let store = Store::open(&path, None).unwrap();
+            let dek = Dek::generate();
+            let id = |name: &str| format!("{name}-{}", uuid::Uuid::new_v4());
+            let (edited, unchanged) = (id("edited"), id("unchanged"));
+            // Both went up while sync was on; the vault may since hold a
+            // newer copy from another device.
+            put_secret_record(&store, &dek, &edited, "password", b"old").unwrap();
+            put_secret_record(&store, &dek, &unchanged, "password", b"newer").unwrap();
+            // Sync off: one is saved again here, the other was never touched.
+            secrets().put(&edited, b"saved-while-off").unwrap();
+            note_edited_offline(&store, &edited).unwrap();
+            secrets().put(&unchanged, b"older").unwrap();
+            // Rejoining starts with no markers, as after a disconnect.
+            store.meta_delete(META_SECRET_MARKERS).unwrap();
+            drop(store);
+            let store = Store::open(&path, None).unwrap();
 
-        let skip = edited_offline(&store);
-        apply_pulled_secrets(&store, &dek, &skip).unwrap();
-        upload_local_secrets(&store, &dek, &skip).unwrap();
+            reconcile_secrets(&store, &dek, joining).unwrap();
 
-        let opens = |id: &str| {
-            let r = store.get(Collection::Secrets, id).unwrap()?;
-            let v: serde_json::Value = serde_json::from_str(&r.json).ok()?;
-            let ct: Vec<u8> = serde_json::from_value(v.get("ciphertext")?.clone()).ok()?;
-            crypto::open(&dek, format!("secret/{id}").as_bytes(), &ct).ok()
-        };
-        assert_eq!(
-            secrets().get(&edited).unwrap().as_deref(),
-            Some(&b"saved-while-off"[..])
-        );
-        assert_eq!(
-            opens(&edited).as_deref(),
-            Some(&b"saved-while-off"[..]),
-            "goes up"
-        );
-        assert_eq!(
-            secrets().get(&unchanged).unwrap().as_deref(),
-            Some(&b"newer"[..]),
-            "an untouched copy takes the vault's"
-        );
-        assert_eq!(opens(&unchanged).as_deref(), Some(&b"newer"[..]));
-        for s in [&edited, &unchanged] {
-            secrets().delete(s).unwrap();
+            let opens = |id: &str| {
+                let r = store.get(Collection::Secrets, id).unwrap()?;
+                let v: serde_json::Value = serde_json::from_str(&r.json).ok()?;
+                let ct: Vec<u8> = serde_json::from_value(v.get("ciphertext")?.clone()).ok()?;
+                crypto::open(&dek, format!("secret/{id}").as_bytes(), &ct).ok()
+            };
+            assert_eq!(
+                secrets().get(&edited).unwrap().as_deref(),
+                Some(&b"saved-while-off"[..]),
+                "joining: {joining}"
+            );
+            assert_eq!(
+                opens(&edited).as_deref(),
+                Some(&b"saved-while-off"[..]),
+                "goes up; joining: {joining}"
+            );
+            assert_eq!(
+                secrets().get(&unchanged).unwrap().as_deref(),
+                Some(&b"newer"[..]),
+                "an untouched copy takes the vault's; joining: {joining}"
+            );
+            assert_eq!(opens(&unchanged).as_deref(), Some(&b"newer"[..]));
+            assert!(
+                edited_offline(&store).is_empty(),
+                "done with; joining: {joining}"
+            );
+            for s in [&edited, &unchanged] {
+                secrets().delete(s).unwrap();
+            }
         }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
