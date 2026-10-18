@@ -34,6 +34,7 @@ import 'package:promptly/features/workspace/workspace_screen.dart';
 import 'package:promptly/features/updates/updates.dart';
 import 'package:promptly/features/lock/app_lock.dart';
 import 'package:promptly/features/sync/sync_screen.dart' show SyncScreen;
+import 'package:promptly/features/snippets/repositories.dart' show snippetsProvider;
 
 /// A device with nothing to check who is there with.
 class NoChecks implements Authenticator {
@@ -2107,6 +2108,21 @@ void main() {
     engine.landChanges();
     await tester.pumpAndSettle();
     expect(tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode, ThemeMode.dark);
+  });
+
+  testWidgets('snippets changed on another device show once its changes land', (tester) async {
+    final engine = FakeEngine()
+      ..configured()
+      ..records['snippets'] = {'s1': snippetJson('s1', 'deploy', 'make deploy')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    final container = ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
+    expect(container.read(snippetsProvider).single.command, 'make deploy');
+
+    engine.records['snippets'] = {'s1': snippetJson('s1', 'deploy', 'make deploy-v2')};
+    engine.landChanges();
+    await tester.pumpAndSettle();
+    expect(container.read(snippetsProvider).single.command, 'make deploy-v2', reason: 'a stale copy would overwrite it');
   });
 
   testWidgets('the sync screen shows files that could not be read yet in plain words', (tester) async {

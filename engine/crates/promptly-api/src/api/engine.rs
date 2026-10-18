@@ -55,6 +55,14 @@ pub fn set_data_dir(path: String) {
     *DATA_DIR.lock().unwrap() = Some(PathBuf::from(path));
 }
 
+/// The folder the engine really uses, after [`set_data_dir`], the
+/// `PROMPTLY_DATA_DIR` override and the fallback, so the app looks for the
+/// database where the engine will open it.
+#[flutter_rust_bridge::frb(sync)]
+pub fn engine_data_dir() -> String {
+    data_dir().to_string_lossy().into_owned()
+}
+
 /// Runs once when the Dart side loads the library.
 #[flutter_rust_bridge::frb(init)]
 pub fn init_engine() {

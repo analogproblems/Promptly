@@ -22,10 +22,13 @@ Future<void> main() async {
   } catch (_) {
     // The engine falls back to a per-platform default.
   }
+  // Where the engine will really open the database: an override or the
+  // fallback can put it somewhere other than the folder just set.
+  final dataDir = rust.engineDataDir();
   // Before anything touches the local database or saved secrets: the
   // engine will not open the database until it has heard one of these.
   try {
-    switch (await loadDeviceKey()) {
+    switch (await loadDeviceKey(dataDir: dataDir)) {
       case DeviceKeyReady(:final bytes):
         rust_store.setDeviceKey(key: bytes);
       case DeviceKeyRefused():
