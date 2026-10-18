@@ -8,6 +8,7 @@ use alacritty_terminal::grid::{Dimensions, Row, Scroll};
 use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::term::cell::{Cell, Flags};
+use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::search::{RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{self, Processor};
@@ -280,7 +281,7 @@ impl Emulator {
                 .map(|cell| cell.c)
                 .collect();
             return Some(Link {
-                hidden: shown.trim() != link.uri() || obscured(row, first, last),
+                hidden: shown.trim() != link.uri() || self.obscured(row, first, last),
                 uri: link.uri().to_string(),
             });
         }
@@ -294,11 +295,44 @@ impl Emulator {
             if point.column.0 >= first && point.column.0 <= last {
                 return Some(Link {
                     uri: text[found.start..found.end].to_string(),
-                    hidden: obscured(row, first, last),
+                    hidden: self.obscured(row, first, last),
                 });
             }
         }
         None
+    }
+
+    /// The colours a cell is drawn in: its text, then its background.
+    fn cell_colors(&self, cell: &Cell, overrides: &Colors) -> (Rgb, Rgb) {
+        let cf = cell.flags;
+        let mut f = self.palette.resolve(cell.fg, overrides, cf, true);
+        let mut b = self.palette.resolve(cell.bg, overrides, cf, false);
+        if cf.contains(Flags::DIM) {
+            f = dim(f);
+        }
+        if cf.contains(Flags::INVERSE) {
+            std::mem::swap(&mut f, &mut b);
+        }
+        if cf.contains(Flags::HIDDEN) {
+            f = b;
+        }
+        (f, b)
+    }
+
+    /// Whether any character from `first` to `last` can't be read: drawn
+    /// in its background colour, or close to it, as concealed text is.
+    /// Part of a link the user can't see could change where it goes, so
+    /// such a link asks before it opens.
+    fn obscured(&self, row: &Row<Cell>, first: usize, last: usize) -> bool {
+        let overrides = self.term.colors();
+        let near = |a: Rgb, b: Rgb| {
+            (0..3).all(|i| ((a >> (8 * i)) & 0xFF).abs_diff((b >> (8 * i)) & 0xFF) < 32)
+        };
+        (first..=last).any(|c| {
+            let cell = &row[Column(c)];
+            let (f, b) = self.cell_colors(cell, overrides);
+            cell.c != ' ' && near(f, b)
+        })
     }
 
     /// A viewport position as a grid point, clamped to cells that exist.
@@ -588,17 +622,7 @@ impl Emulator {
                 }
             }
 
-            let mut f: Rgb = self.palette.resolve(cell.fg, overrides, cf, true);
-            let mut b: Rgb = self.palette.resolve(cell.bg, overrides, cf, false);
-            if cf.contains(Flags::DIM) {
-                f = dim(f);
-            }
-            if cf.contains(Flags::INVERSE) {
-                std::mem::swap(&mut f, &mut b);
-            }
-            if cf.contains(Flags::HIDDEN) {
-                f = b;
-            }
+            let (mut f, mut b) = self.cell_colors(cell, overrides);
             let u = match cell.underline_color() {
                 _ if cf.contains(Flags::HIDDEN) => b,
                 Some(c) => self.palette.resolve(c, overrides, cf, false),
@@ -800,16 +824,6 @@ fn mark(marks: &mut [u16], columns: &[usize], wide: &[bool], start: usize, end: 
             marks[col + 1] |= flag;
         }
     }
-}
-
-/// Whether any cell from `first` to `last` can't be seen: concealed, or
-/// drawn in its own background colour. Part of a link the user can't see
-/// could change where it goes, so such a link asks before it opens.
-fn obscured(row: &Row<Cell>, first: usize, last: usize) -> bool {
-    (first..=last).any(|c| {
-        let cell = &row[Column(c)];
-        cell.flags.contains(Flags::HIDDEN) || (cell.c != ' ' && cell.fg == cell.bg)
-    })
 }
 
 #[cfg(test)]
@@ -1053,8 +1067,21 @@ mod tests {
         e.feed(b"https://trusted.example\x1b[8m@evil.example/\x1b[28m\r\n");
         assert_eq!(e.link_at(3, 1).map(|l| l.hidden), Some(true));
         // Or drawn in the background colour instead of concealed.
-        e.feed(b"https://trusted.example\x1b[30;40m@evil.example/\x1b[0m");
+        e.feed(b"https://trusted.example\x1b[30;40m@evil.example/\x1b[0m\r\n");
         assert_eq!(e.link_at(3, 2).map(|l| l.hidden), Some(true));
+        // The same black written two different ways, as a plain address
+        // and as a hyperlink whose text matches its address.
+        e.feed(b"https://trusted.example\x1b[38;2;0;0;0;48;5;16m@evil.example/\x1b[0m");
+        assert_eq!(e.link_at(3, 3).map(|l| l.hidden), Some(true));
+        let mut e = Emulator::new(TermSize::new(80, 4), Palette::promptly_dark());
+        e.feed(b"\x1b]8;;https://trusted.example@evil.example/\x1b\\https://trusted.example\x1b[38;2;0;0;0;48;5;16m@evil.example/\x1b[0m\x1b]8;;\x1b\\\r\n");
+        assert_eq!(e.link_at(3, 0).map(|l| l.hidden), Some(true));
+        // Nearly the background colour is as good as hidden.
+        e.feed(b"https://trusted.example\x1b[38;2;8;8;8;48;2;0;0;0m@evil.example/\x1b[0m\r\n");
+        assert_eq!(e.link_at(3, 1).map(|l| l.hidden), Some(true));
+        // Ordinary coloured text is still just a link.
+        e.feed(b"\x1b[32mhttps://trusted.example/\x1b[0m");
+        assert_eq!(e.link_at(3, 2).map(|l| l.hidden), Some(false));
     }
 
     #[test]
