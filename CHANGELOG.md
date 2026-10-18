@@ -2,7 +2,9 @@
 
 Each release's section is what the GitHub Release says; keep it in plain words.
 
-## Unreleased
+## 1.1.0
+
+**Before you update:** passwords and private keys saved by 1.0.0 or 1.0.1 aren't carried over, because they are now kept encrypted on your device. After updating, type the passwords again and re-import the keys. On Linux, Promptly now needs libsecret.
 
 - When a connection fails, Promptly now says what happened in plain words and what to try, such as "Nothing is answering on port 22: check the port number, and that the SSH server is running". The technical reason is still there under *Details*. A login the server refuses says which ways in it accepts, and an SSH agent that can't be used says why.
 - A host set to *Password* now also signs in to servers that only ask for the password through their own login prompt (PAM). The saved or typed password answers that one question; any further questions, such as a two-factor code, are shown to you as usual.
