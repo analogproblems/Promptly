@@ -599,7 +599,7 @@ class _RecoveryPanelState extends State<RecoveryPanel> {
                     icon: const Icon(Icons.copy),
                     onPressed: () async {
                       await copySecret(widget.result.recoveryCode);
-                      if (context.mounted) notYet(context, 'Copied. Paste it somewhere safe; it leaves the clipboard after a minute.');
+                      if (context.mounted) notYet(context, 'Copied. Paste it somewhere safe; it leaves the clipboard after a minute, or when you come back to Promptly.');
                     },
                   ),
                 ],

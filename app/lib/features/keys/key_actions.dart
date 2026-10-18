@@ -309,7 +309,7 @@ class _ExportKeyDialogState extends ConsumerState<ExportKeyDialog> {
     if (text == null) return;
     copySecret(text);
     Navigator.pop(context);
-    notYet(context, 'Private key copied. Paste it where it goes; it leaves the clipboard after a minute.');
+    notYet(context, 'Private key copied. Paste it where it goes; it leaves the clipboard after a minute, or when you come back to Promptly.');
   }
 
   Future<void> _save(SaveTextFile save) async {
