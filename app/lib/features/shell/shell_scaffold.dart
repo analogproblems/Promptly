@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/platform.dart';
 import '../../core/theme/tokens.dart';
 import '../sessions/session_manager.dart';
+import '../sessions/sessions_in_background.dart';
 import '../workspace/app_menu_bar.dart';
 
 /// The five-tab shell. A rail on the side when there is room (desktop,
@@ -105,7 +107,19 @@ class ShellScaffold extends StatelessWidget {
         );
       },
     );
-    return systemMenus ? SystemMenuBar(child: layout) : layout;
+    final shown = systemMenus ? SystemMenuBar(child: layout) : layout;
+    if (!isAndroid) return shown;
+    // Back with nothing left to go back to puts the app in the background,
+    // as Android 12 and later do anyway. Before 12 it would close the app
+    // and end every open session with it.
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        SessionsInBackground.channel.invokeMethod<void>('moveToBack').catchError((Object _) {});
+      },
+      child: shown,
+    );
   }
 }
 

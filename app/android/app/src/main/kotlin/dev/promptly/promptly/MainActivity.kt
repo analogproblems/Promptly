@@ -25,6 +25,11 @@ class MainActivity : FlutterFragmentActivity() {
                         keepAlive((call.arguments as? Number)?.toInt() ?: 0)
                         result.success(null)
                     }
+                    // Back on a tab's first page (lib/features/shell/shell_scaffold.dart).
+                    "moveToBack" -> {
+                        moveTaskToBack(true)
+                        result.success(null)
+                    }
                     else -> result.notImplemented()
                 }
             }
