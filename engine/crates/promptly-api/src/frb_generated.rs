@@ -357,9 +357,11 @@ fn wire__crate__api__files__files_download_impl(
             let api_id = <u32>::sse_decode(&mut deserializer);
             let api_remote = <String>::sse_decode(&mut deserializer);
             let api_local = <String>::sse_decode(&mut deserializer);
+            let api_replace = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::files::files_download(api_id, api_remote, api_local)?;
+                let output_ok =
+                    crate::api::files::files_download(api_id, api_remote, api_local, api_replace)?;
                 std::result::Result::Ok(output_ok)
             })())
         },

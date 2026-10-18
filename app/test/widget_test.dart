@@ -516,8 +516,8 @@ class FakeEngine implements Engine {
   }
 
   @override
-  int filesDownload(int id, String remote, String local) {
-    fileCalls.add('download $remote $local');
+  int filesDownload(int id, String remote, String local, {required bool replace}) {
+    fileCalls.add('download $remote $local${replace ? ' (replace)' : ''}');
     return _transfer(remote, upload: false, size: 2048).id;
   }
 
@@ -2763,7 +2763,7 @@ void main() {
     await download('notes.txt');
     await tester.tap(find.byKey(const Key('files-replace-ok')));
     await tester.pumpAndSettle();
-    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /home/me/notes.txt');
+    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /home/me/notes.txt (replace)');
 
     // A name a server made up to climb out of the folder stays in it.
     await download(r'..\..\.bashrc');

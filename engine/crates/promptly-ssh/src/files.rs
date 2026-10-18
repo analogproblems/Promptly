@@ -177,7 +177,9 @@ impl RemoteFs {
 
     /// Replace a file's contents with `text`. An existing file keeps its
     /// permissions; a new one gets the server's default. The text is
-    /// written beside it first, so a failure leaves the file as it was.
+    /// written beside it first, so a failure leaves the file as it was;
+    /// the one exception is a folder that takes no new files, where it is
+    /// written straight into the file, the only way to save it there.
     pub async fn write_text(&self, path: &str, text: &str) -> Result<(), SftpError> {
         let mut src = text.as_bytes();
         self.put_whole(
@@ -201,11 +203,14 @@ impl RemoteFs {
     /// place only once whole, so a copy that fails or is stopped leaves
     /// whatever was at `local` as it was. The copy gets the remote file's
     /// permissions, less the usual mask, so a private file stays private.
-    /// The file it is written to first is named by `staging`.
+    /// The file it is written to first is named by `staging`. A file at
+    /// `local` is replaced only when `replace` says so; otherwise the copy
+    /// is refused, even if that file appeared while it ran.
     pub async fn download(
         &self,
         remote: &str,
         local: &Path,
+        replace: bool,
         staging: &Staging,
         progress: impl Fn(u64, u64),
     ) -> Result<u64, SftpError> {
@@ -256,11 +261,29 @@ impl RemoteFs {
                 return Err(e);
             }
         };
-        if let Err(e) = tokio::fs::rename(&part, local).await {
-            let _ = tokio::fs::remove_file(&part).await;
-            return Err(cant_write(e));
+        let placed = if replace {
+            tokio::fs::rename(&part, local).await
+        } else {
+            place_new(&part, local).await
+        };
+        let _ = tokio::fs::remove_file(&part).await;
+        match placed {
+            Ok(()) => Ok(done),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let name = local
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                Err(SftpError::Io(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!(
+                        "{name} is already on this device, so it was left alone. \
+                         Download it again to replace it."
+                    ),
+                )))
+            }
+            Err(e) => Err(cant_write(e)),
         }
-        Ok(done)
     }
 
     /// Copy a local file to a remote path. What is already there is
@@ -417,6 +440,23 @@ impl RemoteFs {
             return Err(e);
         }
         Ok(done)
+    }
+}
+
+/// Give the finished copy at `part` the name `local`, unless something
+/// (by any capitals, on a disk that ignores them) already has it. A hard
+/// link is refused rather than replace a file; on a disk without links,
+/// such as a FAT memory stick, the name is checked just before the move.
+async fn place_new(part: &Path, local: &Path) -> io::Result<()> {
+    match tokio::fs::hard_link(part, local).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(e),
+        Err(_) => {
+            if tokio::fs::symlink_metadata(local).await.is_ok() {
+                return Err(io::ErrorKind::AlreadyExists.into());
+            }
+            tokio::fs::rename(part, local).await
+        }
     }
 }
 
@@ -717,6 +757,7 @@ mod tests {
                 .download(
                     &join(&base, "sub/moved.txt"),
                     &back,
+                    false,
                     &Staging::new(),
                     |_, _| {},
                 )
@@ -739,7 +780,13 @@ mod tests {
                 std::fs::write(&elsewhere, b"untouched").unwrap();
                 std::os::unix::fs::symlink(&elsewhere, staging.local_part(&back)).unwrap();
                 assert!(fs
-                    .download(&join(&base, "sub/moved.txt"), &back, &staging, |_, _| {})
+                    .download(
+                        &join(&base, "sub/moved.txt"),
+                        &back,
+                        false,
+                        &staging,
+                        |_, _| {}
+                    )
                     .await
                     .is_err());
                 assert_eq!(std::fs::read(&elsewhere).unwrap(), b"untouched");
@@ -756,12 +803,32 @@ mod tests {
                 })
                 .count();
             assert_eq!(leftovers, 0);
+            // A file that turns up while a download runs is not replaced
+            // unless the download was told it may be.
+            let late = dir.join("late.txt");
+            let err = fs
+                .download(
+                    &join(&base, "sub/moved.txt"),
+                    &late,
+                    false,
+                    &Staging::new(),
+                    |done, _| {
+                        if done == 0 {
+                            std::fs::write(&late, b"arrived meanwhile").unwrap();
+                        }
+                    },
+                )
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains("already on this device"), "{err}");
+            assert_eq!(std::fs::read(&late).unwrap(), b"arrived meanwhile");
             // A download over a file replaces it; one that fails leaves it.
             std::fs::write(&back, b"mine").unwrap();
             assert!(fs
                 .download(
                     &join(&base, "missing.txt"),
                     &back,
+                    true,
                     &Staging::new(),
                     |_, _| {}
                 )
@@ -771,6 +838,7 @@ mod tests {
             fs.download(
                 &join(&base, "sub/moved.txt"),
                 &back,
+                true,
                 &Staging::new(),
                 |_, _| {},
             )

@@ -167,7 +167,7 @@ class RecordingEngine implements Engine {
   @override
   Future<void> filesWriteText(int id, String path, String text) async {}
   @override
-  int filesDownload(int id, String remote, String local) => 1;
+  int filesDownload(int id, String remote, String local, {required bool replace}) => 1;
   @override
   int filesUpload(int id, String local, String remote, {required bool replace}) => 1;
   @override

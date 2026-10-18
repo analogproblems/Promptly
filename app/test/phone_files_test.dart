@@ -195,7 +195,7 @@ void main() {
     await openFiles(tester, engine, device);
 
     await entryAction(tester, 'notes.txt', 'Download to this device');
-    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /cache/1/notes.txt');
+    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /cache/1/notes.txt (replace)');
     expect(device.calls, isEmpty, reason: 'not shared until it has all arrived');
 
     engine.finishAll();
@@ -212,7 +212,7 @@ void main() {
     await openFiles(tester, engine, device);
 
     await entryAction(tester, 'notes.txt', 'Open in another app');
-    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /cache/1/notes.txt');
+    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /cache/1/notes.txt (replace)');
     await tester.tap(find.byTooltip('Cancel download of notes.txt'));
     await tester.pump();
     engine.finishAll();
@@ -233,7 +233,7 @@ void main() {
     await entryAction(tester, 'notes.txt', 'Download to this device');
     await tester.pump();
     expect(device.calls, ['save as notes.txt'], reason: 'no share sheet');
-    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /home/me/Downloads/notes.txt');
+    expect(engine.fileCalls.last, 'download /home/ops/notes.txt /home/me/Downloads/notes.txt (replace)');
 
     // Cancelling the dialog downloads nothing.
     device.saveTo = null;

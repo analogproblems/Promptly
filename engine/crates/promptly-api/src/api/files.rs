@@ -187,9 +187,15 @@ pub fn files_write_text(id: u32, path: String, text: String) -> Result<(), Strin
 }
 
 /// Start copying a remote file to a local path. Returns the transfer id;
-/// `files_transfers` reports its progress.
+/// `files_transfers` reports its progress. A file already there, even one
+/// that appears meanwhile, is replaced only with `replace`.
 #[frb(sync)]
-pub fn files_download(id: u32, remote: String, local: String) -> Result<u32, String> {
+pub fn files_download(
+    id: u32,
+    remote: String,
+    local: String,
+    replace: bool,
+) -> Result<u32, String> {
     let b = browser(id)?;
     let name = remote.rsplit('/').next().unwrap_or(&remote).to_string();
     let fs = b.fs.clone();
@@ -197,7 +203,7 @@ pub fn files_download(id: u32, remote: String, local: String) -> Result<u32, Str
     let partial = Partial::Local(local.clone());
     b.transfers
         .spawn(name, false, partial, move |progress, staging| async move {
-            fs.download(&remote, &local, &staging, progress)
+            fs.download(&remote, &local, replace, &staging, progress)
                 .await
                 .map_err(friendly)
         })

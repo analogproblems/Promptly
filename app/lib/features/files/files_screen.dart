@@ -162,7 +162,7 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
     if (clash && !await _confirmReplace([name], onServer: !fromRemote)) return;
     _start(
       (engine, id) => fromRemote
-          ? engine.filesDownload(id, entry.path, _local.join(dir, name))
+          ? engine.filesDownload(id, entry.path, _local.join(dir, name), replace: clash)
           : engine.filesUpload(id, entry.path, _remote!.join(dir, name), replace: clash),
     );
   }
@@ -276,7 +276,8 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
       return;
     }
     if (path == null || !mounted) return;
-    _start((engine, id) => engine.filesDownload(id, e.path, path!));
+    // The save dialog has asked already.
+    _start((engine, id) => engine.filesDownload(id, e.path, path!, replace: true));
   }
 
   /// Fetch a server file to this device's cache, then share or open it.
@@ -289,7 +290,7 @@ class _FilesScreenState extends ConsumerState<FilesScreen> {
       return;
     }
     if (!mounted) return;
-    final tid = _start((engine, id) => engine.filesDownload(id, e.path, path));
+    final tid = _start((engine, id) => engine.filesDownload(id, e.path, path, replace: true));
     if (tid == null) return;
     _after[tid] = (then: then, path: path);
     // It may have finished already.

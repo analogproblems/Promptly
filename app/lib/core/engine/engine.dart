@@ -158,7 +158,7 @@ abstract class Engine {
   Future<void> filesWriteText(int id, String path, String text);
 
   /// Start a copy; returns the transfer id. `filesTransfers` follows it.
-  int filesDownload(int id, String remote, String local);
+  int filesDownload(int id, String remote, String local, {required bool replace});
 
   /// A file already at `remote` is replaced only with `replace`.
   int filesUpload(int id, String local, String remote, {required bool replace});
@@ -449,8 +449,8 @@ class RustEngine implements Engine {
   Future<void> filesWriteText(int id, String path, String text) =>
       rust_files.filesWriteText(id: id, path: path, text: text);
   @override
-  int filesDownload(int id, String remote, String local) =>
-      rust_files.filesDownload(id: id, remote: remote, local: local);
+  int filesDownload(int id, String remote, String local, {required bool replace}) =>
+      rust_files.filesDownload(id: id, remote: remote, local: local, replace: replace);
   @override
   int filesUpload(int id, String local, String remote, {required bool replace}) =>
       rust_files.filesUpload(id: id, local: local, remote: remote, replace: replace);
