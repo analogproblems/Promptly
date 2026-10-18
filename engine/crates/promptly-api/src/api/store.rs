@@ -289,10 +289,14 @@ pub fn secret_get(id: String) -> Result<Option<String>, String> {
 #[frb(sync)]
 pub fn secret_delete(id: String) -> Result<(), String> {
     secrets().delete(&id).map_err(|e| e.to_string())?;
-    // Its vault record goes too, even while sync is off: one left behind
-    // would bring the password back on the next join.
-    if store()?
-        .delete(Collection::Secrets, &id)
+    delete_secret_record(&*store()?, &id)
+}
+
+/// A deleted secret's vault record goes too, even while sync is off: one left
+/// behind would bring the password back on the next join.
+fn delete_secret_record(store: &Store, id: &str) -> Result<(), String> {
+    if store
+        .delete(Collection::Secrets, id)
         .map_err(|e| e.to_string())?
     {
         sync_engine::notify_change();
@@ -308,20 +312,17 @@ mod tests {
 
     #[test]
     fn deleting_a_secret_deletes_its_vault_record_even_with_sync_off() {
-        let _ = set_no_device_key();
-        let id = format!("pw-{}", uuid::Uuid::new_v4());
-        secrets().put(&id, b"hunter2").unwrap();
-        let store = store().unwrap();
+        // Its own store, so the sync tests' shared one is left alone.
+        let store = Store::open_in_memory().unwrap();
         store
             .put(
                 Collection::Secrets,
-                &id,
+                "pw",
                 r#"{"kind":"password","ciphertext":[1]}"#,
             )
             .unwrap();
-        secret_delete(id.clone()).unwrap();
-        assert!(secrets().get(&id).unwrap().is_none());
-        assert!(store.get(Collection::Secrets, &id).unwrap().is_none());
+        delete_secret_record(&store, "pw").unwrap();
+        assert!(store.get(Collection::Secrets, "pw").unwrap().is_none());
     }
 
     #[test]
