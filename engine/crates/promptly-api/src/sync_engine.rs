@@ -102,7 +102,7 @@ fn import_user_known_hosts(store: &Store, files: &FileKnownHosts) -> Result<(), 
         .map_err(|e| e.to_string())?
         .into_iter()
         .filter_map(|r| serde_json::from_str::<KnownHost>(&r.json).ok())
-        .map(|k| (k.host, k.port))
+        .map(|k| (k.host.to_ascii_lowercase(), k.port))
         .collect();
     let mut added = false;
     for t in files.user_trusts() {
@@ -155,7 +155,7 @@ impl KnownHosts for VaultKnownHosts {
             let info = HostKeyInfo::from_key(host, port, key);
             let record = KnownHost {
                 id: promptly_vault::model::new_id(),
-                host: host.to_string(),
+                host: host.to_ascii_lowercase(),
                 port,
                 key_type: info.algorithm,
                 fingerprint_sha256: info.fingerprint,
@@ -170,7 +170,7 @@ impl KnownHosts for VaultKnownHosts {
                 let Ok(k) = serde_json::from_str::<KnownHost>(&r.json) else {
                     continue;
                 };
-                if k.host != record.host || k.port != record.port {
+                if !k.host.eq_ignore_ascii_case(&record.host) || k.port != record.port {
                     continue;
                 }
                 if k.public_key == record.public_key && !exists {
@@ -214,7 +214,7 @@ fn apply_pulled_known_hosts(store: &Store) -> Result<(), String> {
             continue;
         };
         let fresh = now.insert(r.id);
-        let slot = newest.entry((k.host.clone(), k.port));
+        let slot = newest.entry((k.host.to_ascii_lowercase(), k.port));
         match slot {
             std::collections::btree_map::Entry::Vacant(v) => {
                 v.insert((k, fresh));
@@ -2061,10 +2061,10 @@ mod tests {
         assert!(records(&store).is_empty());
 
         // The file changes: new hosts come in, but a host the vault already
-        // trusts keeps its key.
+        // trusts keeps its key, however its name is capitalised.
         let trusted = uuid::Uuid::now_v7().to_string();
         let record = json!({
-            "id": trusted, "host": "db.test", "port": 2222, "key_type": "ED25519",
+            "id": trusted, "host": "DB.test", "port": 2222, "key_type": "ED25519",
             "fingerprint_sha256": "SHA256:x", "public_key": line(&web),
             "first_seen_at": "2026-01-01T00:00:00Z", "first_seen_device": "laptop",
         });
@@ -2084,7 +2084,7 @@ mod tests {
         assert_eq!(
             records(&store),
             [
-                ("db.test".into(), 2222, line(&web)),
+                ("DB.test".into(), 2222, line(&web)),
                 ("web.test".into(), 22, line(&changed)),
             ]
         );
