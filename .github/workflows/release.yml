@@ -106,7 +106,8 @@ jobs:
         with:
           channel: stable
           cache: true
-      - name: Upload key, when the secrets exist
+      - name: Upload key
+        id: key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -119,21 +120,28 @@ jobs:
               "$PWD/android/upload.jks" "$ANDROID_KEYSTORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" \
               > android/key.properties
             echo "Signing with the upload key."
+            echo "signed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No keystore secret: signing with the debug key."
+            # Never ship a build signed with the debug key: phones refuse to
+            # install a build signed with another key over the real app, so
+            # people would have to uninstall it and lose their data.
+            echo "::warning::No Android signing key (the ANDROID_* secrets), so this release has no Android files. See docs/DISTRIBUTION.md."
           fi
       - name: Build
+        if: steps.key.outputs.signed == 'true'
         run: |
           flutter pub get
           flutter build apk --release
           flutter build appbundle --release
       - name: Package
+        if: steps.key.outputs.signed == 'true'
         run: |
           version="${GITHUB_REF_NAME#v}"
           mkdir -p ../dist
           cp build/app/outputs/flutter-apk/app-release.apk "../dist/promptly-$version-android.apk"
           cp build/app/outputs/bundle/release/app-release.aab "../dist/promptly-$version-android.aab"
       - uses: actions/upload-artifact@v7
+        if: steps.key.outputs.signed == 'true'
         with:
           name: android
           path: dist/*
