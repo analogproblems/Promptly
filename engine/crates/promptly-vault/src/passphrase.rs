@@ -178,29 +178,12 @@ pub fn assess(passphrase: &str) -> Assessment {
     let lower: Vec<char> = passphrase.to_lowercase().chars().collect();
     let common = is_common(&lower);
 
-    // Each character costs what it would take to guess it, given the one
-    // before: a fresh character its whole alphabet, a repeat or the next in
-    // a run hardly anything.
-    let mut bits = 0.0;
-    let mut cheap = 0usize;
-    for i in 0..chars.len() {
-        let fresh = alphabet_bits(chars[i]);
-        let predictable = i > 0
-            && (lower[i] == lower[i - 1]
-                || in_run(lower[i - 1], lower[i])
-                || repeats_chunk(&lower, i));
-        if predictable {
-            cheap += 1;
-            bits += 1.5;
-        } else {
-            bits += fresh;
-        }
-    }
+    let (mut bits, cheap) = pattern_bits(&chars, &lower);
     if common {
         // The base word is among the first tried; only what was added to
-        // it counts, and not much.
+        // it counts.
         let base = common_base_len(&lower);
-        bits = 10.0 + (chars.len() - base) as f64 * 2.0;
+        bits = 10.0 + pattern_bits(&chars[base..], &lower[base..]).0;
     }
 
     let strength = if bits < TOO_WEAK_BELOW {
@@ -244,6 +227,37 @@ pub fn check(passphrase: &str) -> Result<(), &'static str> {
     } else {
         Err(a.advice)
     }
+}
+
+/// Bits to guess `chars`, and how many of them were predictable. A fresh
+/// character costs its whole alphabet. A stretch of repeats, of a run or of
+/// a repeated chunk costs only saying how long it goes on, so making one
+/// longer hardly helps.
+fn pattern_bits(chars: &[char], lower: &[char]) -> (f64, usize) {
+    let mut bits = 0.0;
+    let mut cheap = 0usize;
+    let mut stretch = 0usize;
+    let end_stretch = |stretch: &mut usize, bits: &mut f64| {
+        if *stretch > 0 {
+            *bits += 2.0 + (*stretch as f64).log2();
+            *stretch = 0;
+        }
+    };
+    for i in 0..chars.len() {
+        let predictable = i > 0
+            && (lower[i] == lower[i - 1]
+                || in_run(lower[i - 1], lower[i])
+                || repeats_chunk(lower, i));
+        if predictable {
+            cheap += 1;
+            stretch += 1;
+        } else {
+            end_stretch(&mut stretch, &mut bits);
+            bits += alphabet_bits(chars[i]);
+        }
+    }
+    end_stretch(&mut stretch, &mut bits);
+    (bits, cheap)
 }
 
 /// Bits to guess one character with nothing to go on but its kind.
@@ -345,6 +359,21 @@ mod tests {
             assert_eq!(strength(p), Strength::TooWeak, "{p}");
         }
         assert!(assess("aaaaaaaaaaaa").advice.contains("runs like abc"));
+    }
+
+    #[test]
+    fn making_a_pattern_longer_does_not_make_it_strong() {
+        let long_digits = format!("password{}", "0".repeat(30));
+        for p in [
+            "a".repeat(48),
+            "a".repeat(18),
+            "ab".repeat(30),
+            "abc1".repeat(20),
+            "1234567890".repeat(5),
+            long_digits,
+        ] {
+            assert_eq!(strength(&p), Strength::TooWeak, "{p}");
+        }
     }
 
     #[test]
