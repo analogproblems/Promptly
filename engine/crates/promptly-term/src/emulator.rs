@@ -4,10 +4,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::grid::{Dimensions, Row, Scroll};
 use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::search::{RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{self, Processor};
@@ -280,7 +280,7 @@ impl Emulator {
                 .map(|cell| cell.c)
                 .collect();
             return Some(Link {
-                hidden: shown.trim() != link.uri(),
+                hidden: shown.trim() != link.uri() || obscured(row, first, last),
                 uri: link.uri().to_string(),
             });
         }
@@ -294,7 +294,7 @@ impl Emulator {
             if point.column.0 >= first && point.column.0 <= last {
                 return Some(Link {
                     uri: text[found.start..found.end].to_string(),
-                    hidden: false,
+                    hidden: obscured(row, first, last),
                 });
             }
         }
@@ -802,6 +802,16 @@ fn mark(marks: &mut [u16], columns: &[usize], wide: &[bool], start: usize, end: 
     }
 }
 
+/// Whether any cell from `first` to `last` can't be seen: concealed, or
+/// drawn in its own background colour. Part of a link the user can't see
+/// could change where it goes, so such a link asks before it opens.
+fn obscured(row: &Row<Cell>, first: usize, last: usize) -> bool {
+    (first..=last).any(|c| {
+        let cell = &row[Column(c)];
+        cell.flags.contains(Flags::HIDDEN) || (cell.c != ' ' && cell.fg == cell.bg)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1031,6 +1041,20 @@ mod tests {
         // A hyperlink that shows its own address hides nothing.
         e.feed(b"\r\n\x1b]8;;https://a.example/\x1b\\https://a.example/\x1b]8;;\x1b\\");
         assert_eq!(e.link_at(3, 2).map(|l| l.hidden), Some(false));
+    }
+
+    #[test]
+    fn a_link_with_a_part_you_cannot_see_asks_first() {
+        let mut e = Emulator::new(TermSize::new(80, 4), Palette::promptly_dark());
+        // Its text matches its address, but the host part is concealed.
+        e.feed(b"\x1b]8;;https://trusted.example@evil.example/\x1b\\https://trusted.example\x1b[8m@evil.example/\x1b[28m\x1b]8;;\x1b\\\r\n");
+        assert_eq!(e.link_at(3, 0).map(|l| l.hidden), Some(true));
+        // The same trick on a plain address the terminal spotted itself.
+        e.feed(b"https://trusted.example\x1b[8m@evil.example/\x1b[28m\r\n");
+        assert_eq!(e.link_at(3, 1).map(|l| l.hidden), Some(true));
+        // Or drawn in the background colour instead of concealed.
+        e.feed(b"https://trusted.example\x1b[30;40m@evil.example/\x1b[0m");
+        assert_eq!(e.link_at(3, 2).map(|l| l.hidden), Some(true));
     }
 
     #[test]
