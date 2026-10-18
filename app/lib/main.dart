@@ -16,14 +16,15 @@ Future<void> main() async {
   registerLicences();
   // Loads the Rust engine (libpromptly_api) built by cargokit alongside the app.
   await RustLib.init();
-  String? dataDir;
   try {
     final dir = await getApplicationSupportDirectory();
     rust.setDataDir(path: dir.path);
-    dataDir = dir.path;
   } catch (_) {
     // The engine falls back to a per-platform default.
   }
+  // Where the engine will really open the database: an override or the
+  // fallback can put it somewhere other than the folder just set.
+  final dataDir = rust.engineDataDir();
   // Before anything touches the local database or saved secrets: the
   // engine will not open the database until it has heard one of these.
   try {

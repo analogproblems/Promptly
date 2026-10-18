@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `collection`, `known_hosts_files`, `open_store`, `secret_store`, `secrets`, `set_key`, `store`, `validate`
+// These functions are ignored because they are not marked as `pub`: `collection`, `delete_secret_record`, `known_hosts_files`, `open_store`, `secret_store`, `secrets`, `set_key`, `store`, `validate`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `DeviceKey`
 
 /// Hand the engine the device key from the platform's secure storage, so

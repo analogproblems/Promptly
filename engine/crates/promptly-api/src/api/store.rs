@@ -272,6 +272,8 @@ pub fn secret_put(id: String, kind: String, value: String) -> Result<(), String>
         let store = store()?;
         sync_engine::put_secret_record(&store, &dek, &id, &kind, value.as_bytes())?;
         sync_engine::notify_change();
+    } else {
+        sync_engine::note_edited_offline(&*store()?, &id)?;
     }
     Ok(())
 }

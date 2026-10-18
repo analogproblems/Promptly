@@ -13,6 +13,11 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 void setDataDir({required String path}) =>
     RustLib.instance.api.crateApiEngineSetDataDir(path: path);
 
+/// The folder the engine really uses, after [`set_data_dir`], the
+/// `PROMPTLY_DATA_DIR` override and the fallback, so the app looks for the
+/// database where the engine will open it.
+String engineDataDir() => RustLib.instance.api.crateApiEngineEngineDataDir();
+
 /// The engine's version string.
 String engineVersion() => RustLib.instance.api.crateApiEngineEngineVersion();
 

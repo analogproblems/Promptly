@@ -3,6 +3,7 @@
 //!
 //! Lives outside `api/` so the bridge generator does not see its internals.
 
+use std::collections::HashSet;
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
@@ -36,6 +37,11 @@ pub const META_KEPT: &str = "kept_on_device";
 /// own id: a device removed from a vault joins it again as a new one.
 pub const META_DEVICE: &str = "vault_device";
 pub const DEK_SECRET_ID: &str = "vault-dek";
+/// The secrets saved on this device while sync was off. With no vault key
+/// they could not be sealed then, so on the next join this device's copy
+/// is the newer one and goes up, rather than the vault's older one coming
+/// down over it.
+pub const META_EDITED_OFFLINE: &str = "secrets_edited_offline";
 
 /// Settle time after a local change before pushing.
 const DEBOUNCE: Duration = Duration::from_secs(2);
@@ -757,8 +763,12 @@ pub fn finish_setup(
             vault = as_new_device(&store, &vault)?;
             put_device_record(&store, vault.device(), &config.device_name)?;
         }
-        apply_pulled_secrets(&store, dek)?;
-        upload_local_secrets(&store, dek)?;
+        let edited = edited_offline(&store);
+        apply_pulled_secrets(&store, dek, &edited)?;
+        upload_local_secrets(&store, dek, &edited)?;
+        store
+            .meta_delete(META_EDITED_OFFLINE)
+            .map_err(|e| e.to_string())?;
         apply_pulled_known_hosts(&store)?;
         store.push(&vault).map_err(|e| e.to_string())?;
         store
@@ -783,8 +793,9 @@ pub fn finish_setup(
 /// vault already holds under this key is left as it is: stamping it again
 /// would make this device's copy beat a newer change from another device.
 /// One deleted elsewhere was removed from disk by the pull, so it does
-/// not come back either.
-fn upload_local_secrets(store: &Store, dek: &Dek) -> Result<(), String> {
+/// not come back either. Those in `edited`, saved here while sync was off,
+/// go up whatever the vault holds.
+fn upload_local_secrets(store: &Store, dek: &Dek, edited: &HashSet<String>) -> Result<(), String> {
     let kept = store.with_state(policy::kept_on_device);
     for id in secrets().list().map_err(|e| e.to_string())? {
         if id == DEK_SECRET_ID || kept.contains(&(Collection::Secrets, id.clone())) {
@@ -796,7 +807,7 @@ fn upload_local_secrets(store: &Store, dek: &Dek) -> Result<(), String> {
             .and_then(|r| serde_json::from_str::<serde_json::Value>(&r.json).ok())
             .and_then(|v| serde_json::from_value::<Vec<u8>>(v.get("ciphertext")?.clone()).ok())
             .is_some_and(|ct| crypto::open(dek, format!("secret/{id}").as_bytes(), &ct).is_ok());
-        if in_vault {
+        if in_vault && !edited.contains(&id) {
             continue;
         }
         if let Some(value) = secrets().get(&id).map_err(|e| e.to_string())? {
@@ -872,9 +883,31 @@ fn mark_secret(
         .map_err(|e| e.to_string())
 }
 
+/// Note a secret saved or deleted while sync is off; see [`META_EDITED_OFFLINE`].
+pub fn note_edited_offline(store: &Store, id: &str) -> Result<(), String> {
+    let mut edited = edited_offline(store);
+    if edited.insert(id.to_string()) {
+        let json = serde_json::to_string(&edited).expect("ids serialise");
+        store
+            .meta_set(META_EDITED_OFFLINE, &json)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn edited_offline(store: &Store) -> HashSet<String> {
+    store
+        .meta_get(META_EDITED_OFFLINE)
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 /// Bring the secret files in line with the `secrets` records: new or
-/// changed ones are decrypted and written, deleted ones removed.
-fn apply_pulled_secrets(store: &Store, dek: &Dek) -> Result<(), String> {
+/// changed ones are decrypted and written, deleted ones removed. Those in
+/// `skip` are left as this device has them.
+fn apply_pulled_secrets(store: &Store, dek: &Dek, skip: &HashSet<String>) -> Result<(), String> {
     let mut m = markers(store)?;
     let mut changed = false;
     let records = store.with_state(|state| {
@@ -893,6 +926,9 @@ fn apply_pulled_secrets(store: &Store, dek: &Dek) -> Result<(), String> {
     });
     for (id, visible, fields, newest) in records {
         let Some(newest) = newest else { continue };
+        if skip.contains(&id) {
+            continue;
+        }
         let seen = m
             .get(&id)
             .and_then(|v| serde_json::from_value::<promptly_vault::Timestamp>(v.clone()).ok());
@@ -980,7 +1016,7 @@ pub fn sync_once() -> Result<(), String> {
         if is_removed(&store, vault.device()) {
             return Err(removed_failure());
         }
-        apply_pulled_secrets(&store, &dek)?;
+        apply_pulled_secrets(&store, &dek, &HashSet::new())?;
         apply_pulled_known_hosts(&store)?;
         // A key change that stopped part way: lock again whatever secrets
         // are still under the old key, from this device's copies.
@@ -1394,6 +1430,9 @@ pub fn disconnect() -> Result<(), String> {
         .meta_delete(META_KNOWN_HOST_MARKER)
         .map_err(|e| e.to_string())?;
     store.meta_delete(META_KEPT).map_err(|e| e.to_string())?;
+    store
+        .meta_delete(META_EDITED_OFFLINE)
+        .map_err(|e| e.to_string())?;
     store.reset_sync_state().map_err(|e| e.to_string())?;
     secrets().delete(DEK_SECRET_ID).map_err(|e| e.to_string())?;
     forget_sftp();
@@ -2125,7 +2164,7 @@ mod tests {
         put_secret_record(&store, &Dek::generate(), &other_key, "password", b"hunter2").unwrap();
         let before = store.newest_ts(Collection::Secrets, &current);
 
-        upload_local_secrets(&store, &dek).unwrap();
+        upload_local_secrets(&store, &dek, &HashSet::new()).unwrap();
 
         let opens = |id: &str| {
             let r = store.get(Collection::Secrets, id).unwrap()?;
@@ -2142,6 +2181,54 @@ mod tests {
             "locked again under this key"
         );
         for s in [&missing, &current, &other_key] {
+            secrets().delete(s).unwrap();
+        }
+    }
+
+    #[test]
+    fn rejoining_keeps_a_password_saved_while_sync_was_off() {
+        let _ = crate::api::store::set_no_device_key();
+        let store = Store::open_in_memory().unwrap();
+        let dek = Dek::generate();
+        let id = |name: &str| format!("{name}-{}", uuid::Uuid::new_v4());
+        let (edited, unchanged) = (id("edited"), id("unchanged"));
+        // Both went up while sync was on; the vault may since hold a newer
+        // copy from another device.
+        put_secret_record(&store, &dek, &edited, "password", b"old").unwrap();
+        put_secret_record(&store, &dek, &unchanged, "password", b"newer").unwrap();
+        // Sync off: one is saved again here, the other was never touched.
+        secrets().put(&edited, b"saved-while-off").unwrap();
+        note_edited_offline(&store, &edited).unwrap();
+        secrets().put(&unchanged, b"older").unwrap();
+        // Rejoining starts with no markers, as after a disconnect.
+        store.meta_delete(META_SECRET_MARKERS).unwrap();
+
+        let skip = edited_offline(&store);
+        apply_pulled_secrets(&store, &dek, &skip).unwrap();
+        upload_local_secrets(&store, &dek, &skip).unwrap();
+
+        let opens = |id: &str| {
+            let r = store.get(Collection::Secrets, id).unwrap()?;
+            let v: serde_json::Value = serde_json::from_str(&r.json).ok()?;
+            let ct: Vec<u8> = serde_json::from_value(v.get("ciphertext")?.clone()).ok()?;
+            crypto::open(&dek, format!("secret/{id}").as_bytes(), &ct).ok()
+        };
+        assert_eq!(
+            secrets().get(&edited).unwrap().as_deref(),
+            Some(&b"saved-while-off"[..])
+        );
+        assert_eq!(
+            opens(&edited).as_deref(),
+            Some(&b"saved-while-off"[..]),
+            "goes up"
+        );
+        assert_eq!(
+            secrets().get(&unchanged).unwrap().as_deref(),
+            Some(&b"newer"[..]),
+            "an untouched copy takes the vault's"
+        );
+        assert_eq!(opens(&unchanged).as_deref(), Some(&b"newer"[..]));
+        for s in [&edited, &unchanged] {
             secrets().delete(s).unwrap();
         }
     }
