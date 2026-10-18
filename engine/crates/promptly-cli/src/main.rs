@@ -114,7 +114,9 @@ fn new_passphrase() -> Result<String> {
     let new = rpassword::prompt_password("New passphrase: ")?;
     let again = rpassword::prompt_password("Again: ")?;
     anyhow::ensure!(new == again, "the two passphrases differ");
-    anyhow::ensure!(new.chars().count() >= 8, "use at least eight characters");
+    if let Err(why) = promptly_vault::passphrase::check(&new) {
+        anyhow::bail!("{why}");
+    }
     Ok(new)
 }
 

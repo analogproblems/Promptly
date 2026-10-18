@@ -20,6 +20,9 @@ abstract final class SettingKeys {
   static const bell = 'terminal_bell';
   static const scrollback = 'terminal_scrollback';
   static const fontSize = 'terminal_font_size';
+  static const capsLockEscape = 'caps_lock_escape';
+  static const cmdAsCtrl = 'cmd_as_ctrl';
+  static const collapsedGroups = 'hosts_collapsed_groups';
 }
 
 /// Read the settings that travel in the vault again, once other devices'
@@ -187,6 +190,26 @@ class PasteWarningNotifier extends BoolSettingNotifier {
 
 final pasteWarningProvider = NotifierProvider<PasteWarningNotifier, bool>(PasteWarningNotifier.new);
 
+/// Whether Caps Lock on a hardware keyboard types Escape in the terminal.
+class CapsLockEscapeNotifier extends BoolSettingNotifier {
+  @override
+  String get key => SettingKeys.capsLockEscape;
+  @override
+  bool get fallback => false;
+}
+
+final capsLockEscapeProvider = NotifierProvider<CapsLockEscapeNotifier, bool>(CapsLockEscapeNotifier.new);
+
+/// Whether Cmd works as Ctrl in the terminal, on iPad and Mac.
+class CmdAsCtrlNotifier extends BoolSettingNotifier {
+  @override
+  String get key => SettingKeys.cmdAsCtrl;
+  @override
+  bool get fallback => false;
+}
+
+final cmdAsCtrlProvider = NotifierProvider<CmdAsCtrlNotifier, bool>(CmdAsCtrlNotifier.new);
+
 /// A setting kept in the store as one JSON value, with its value when never
 /// set. [decode] returns null for anything it does not accept, which reads
 /// as the fallback.
@@ -271,3 +294,21 @@ class FontSizeNotifier extends JsonSettingNotifier<double> {
 }
 
 final fontSizeProvider = NotifierProvider<FontSizeNotifier, double>(FontSizeNotifier.new);
+
+/// The groups folded shut in the hosts list, by id.
+class CollapsedGroupsNotifier extends JsonSettingNotifier<Set<String>> {
+  @override
+  String get key => SettingKeys.collapsedGroups;
+  @override
+  Set<String> get fallback => const {};
+  @override
+  Set<String>? decode(Object? json) => json is List ? {for (final id in json) if (id is String) id} : null;
+  @override
+  Object? encode(Set<String> value) => value.toList()..sort();
+
+  void toggle(String groupId) =>
+      set(state.contains(groupId) ? ({...state}..remove(groupId)) : {...state, groupId});
+}
+
+final collapsedGroupsProvider =
+    NotifierProvider<CollapsedGroupsNotifier, Set<String>>(CollapsedGroupsNotifier.new);
