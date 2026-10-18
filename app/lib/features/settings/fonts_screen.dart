@@ -202,10 +202,16 @@ class _FontTile extends StatelessWidget {
 
 /// Pick a font file, keep a copy of it, and use it.
 Future<void> addFontFile(BuildContext context, WidgetRef ref) async {
-  final picked = await ref.read(binaryFilePickerProvider)(
-    label: 'Font files',
-    extensions: const ['ttf', 'otf', 'ttc'],
-  );
+  final PickedBinaryFile? picked;
+  try {
+    picked = await ref.read(binaryFilePickerProvider)(
+      label: 'Font files',
+      extensions: const ['ttf', 'otf', 'ttc'],
+    );
+  } catch (e) {
+    if (context.mounted) notYet(context, 'Could not open the file picker: $e');
+    return;
+  }
   if (picked == null || !context.mounted) return;
   try {
     final family = await ref.read(fontLibraryProvider).add(picked.name, picked.bytes);

@@ -161,8 +161,11 @@ class DeviceFontLibrary implements FontLibrary {
 
   @override
   Future<bool> load(FontFamilyFiles font) async {
-    if (_loaded.contains(font.family) || (!font.added && installedByName)) return false;
-    _loaded.add(font.family);
+    // By family and files, so a face added to a family already loaded,
+    // such as its bold, is loaded too.
+    final key = [font.family, ...font.paths].join('\n');
+    if (_loaded.contains(key) || (!font.added && installedByName)) return false;
+    _loaded.add(key);
     try {
       final loader = FontLoader(font.family);
       for (final path in font.paths) {
@@ -171,7 +174,7 @@ class DeviceFontLibrary implements FontLibrary {
       await loader.load();
       return true;
     } catch (_) {
-      _loaded.remove(font.family);
+      _loaded.remove(key);
       return false;
     }
   }

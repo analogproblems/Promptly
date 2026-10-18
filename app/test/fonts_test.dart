@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:file_selector/file_selector.dart' show XTypeGroup;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -106,6 +107,42 @@ void main() {
       const chosen = TerminalFont(family: 'Fira Code', symbols: ['Hack Nerd Font', ...TerminalFont.symbolFamilies]);
       expect(chosen.fallback.take(3), ['JetBrains Mono', 'Hack Nerd Font', 'Symbols Nerd Font Mono']);
     });
+    testWidgets('a face added to a family already loaded is loaded too', (tester) async {
+      await tester.runAsync(() async {
+        final library = DeviceFontLibrary();
+        const regular = FontFamilyFiles(
+          family: 'Load Test Mono',
+          paths: ['assets/fonts/JetBrainsMono-Regular.ttf'],
+          added: true,
+        );
+        const withBold = FontFamilyFiles(
+          family: 'Load Test Mono',
+          paths: ['assets/fonts/JetBrainsMono-Regular.ttf', 'assets/fonts/JetBrainsMono-Bold.ttf'],
+          added: true,
+        );
+        expect(await library.load(regular), isTrue);
+        expect(await library.load(regular), isFalse, reason: 'already loaded');
+        expect(await library.load(withBold), isTrue, reason: 'the bold face is new');
+        expect(await library.load(withBold), isFalse);
+      });
+    });
+
+    test('the picker on iOS offers files in a way iOS accepts', () {
+      // file_selector_ios goes through the groups in order and, before the
+      // picker opens, refuses one that neither allows every file nor names
+      // type identifiers.
+      bool iosAccepts(List<XTypeGroup> groups) {
+        for (final g in groups) {
+          if (g.allowsAny) return true;
+          if (g.uniformTypeIdentifiers?.isEmpty ?? true) return false;
+        }
+        return true;
+      }
+
+      expect(iosAccepts(pickerTypeGroups('Font files', const ['ttf', 'otf'], ios: true)), isTrue);
+      expect(iosAccepts(pickerTypeGroups('Font files', const ['ttf', 'otf'], ios: false)), isFalse);
+      expect(pickerTypeGroups('Font files', const ['ttf', 'otf'], ios: false).first.extensions, ['ttf', 'otf']);
+    });
   });
 
   group('font settings', () {
@@ -113,9 +150,11 @@ void main() {
     late FakeFontLibrary fonts;
     late ProviderContainer container;
     PickedBinaryFile? picked;
+    Object? pickError;
 
     Future<void> show(WidgetTester tester, Widget child) async {
       engine = FakeEngine();
+      pickError = null;
       fonts = FakeFontLibrary();
       // A fresh start, with nothing kept from a screen shown before.
       await tester.pumpWidget(const SizedBox());
@@ -125,7 +164,10 @@ void main() {
             engineProvider.overrideWithValue(engine),
             fontLibraryProvider.overrideWithValue(fonts),
             binaryFilePickerProvider.overrideWithValue(
-              ({required String label, required List<String> extensions}) async => picked,
+              ({required String label, required List<String> extensions}) async {
+                if (pickError != null) throw pickError!;
+                return picked;
+              },
             ),
           ],
           child: MaterialApp(
@@ -156,6 +198,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(engine.settings['terminal_font'], '""');
       expect(container.read(terminalFontProvider), TerminalFont.standard);
+    });
+
+    testWidgets('a picker that fails to open says so', (tester) async {
+      await show(tester, const FontsScreen());
+      pickError = ArgumentError('no type identifiers');
+      await tester.tap(find.byKey(const Key('font-add')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Could not open the file picker'), findsOneWidget);
+      expect(fonts.mine, isEmpty);
     });
 
     testWidgets('a font file is added, used, and lends its symbols to other fonts', (tester) async {

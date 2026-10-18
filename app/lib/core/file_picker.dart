@@ -17,13 +17,18 @@ class PickedTextFile {
 /// supports it; `label` names the kind of file in the picker.
 typedef PickTextFile = Future<PickedTextFile?> Function({required String label, required List<String> extensions});
 
+/// What the picker offers. iOS filters only by type identifiers, and
+/// refuses a group of extensions alone, so there it offers every file.
+List<XTypeGroup> pickerTypeGroups(String label, List<String> extensions, {bool? ios}) {
+  if (ios ?? Platform.isIOS) return [XTypeGroup(label: label)];
+  return [
+    XTypeGroup(label: label, extensions: extensions),
+    const XTypeGroup(label: 'All files'),
+  ];
+}
+
 Future<PickedTextFile?> _pickWithPlatform({required String label, required List<String> extensions}) async {
-  final file = await openFile(
-    acceptedTypeGroups: [
-      XTypeGroup(label: label, extensions: extensions),
-      const XTypeGroup(label: 'All files'),
-    ],
-  );
+  final file = await openFile(acceptedTypeGroups: pickerTypeGroups(label, extensions));
   if (file == null) return null;
   return PickedTextFile(name: file.name, text: await file.readAsString());
 }
@@ -42,12 +47,7 @@ class PickedBinaryFile {
 typedef PickBinaryFile = Future<PickedBinaryFile?> Function({required String label, required List<String> extensions});
 
 Future<PickedBinaryFile?> _pickBinaryWithPlatform({required String label, required List<String> extensions}) async {
-  final file = await openFile(
-    acceptedTypeGroups: [
-      XTypeGroup(label: label, extensions: extensions),
-      const XTypeGroup(label: 'All files'),
-    ],
-  );
+  final file = await openFile(acceptedTypeGroups: pickerTypeGroups(label, extensions));
   if (file == null) return null;
   return PickedBinaryFile(name: file.name, bytes: await file.readAsBytes());
 }
