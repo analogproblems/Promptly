@@ -43,6 +43,7 @@ export '../../src/rust/api/terminal.dart'
         TerminalEvent,
         TerminalEventKind,
         TerminalFrame,
+        TerminalLink,
         TerminalMouseAction,
         TerminalMouseButton,
         TerminalRow,
@@ -106,7 +107,7 @@ abstract class Engine {
   rust_term.TerminalSearchHit? terminalSearchStep(int id, bool backward);
 
   /// The link under a viewport cell, if any.
-  String? terminalLinkAt(int id, int col, int line);
+  rust_term.TerminalLink? terminalLinkAt(int id, int col, int line);
   void terminalClose(int id);
 
   /// Where the engine keeps its files. Called once at startup.
@@ -375,7 +376,7 @@ class RustEngine implements Engine {
       rust_term.terminalSearchStep(id: id, backward: backward);
 
   @override
-  String? terminalLinkAt(int id, int col, int line) => rust_term.terminalLinkAt(id: id, col: col, line: line);
+  rust_term.TerminalLink? terminalLinkAt(int id, int col, int line) => rust_term.terminalLinkAt(id: id, col: col, line: line);
 
   @override
   void terminalClose(int id) => rust_term.terminalClose(id: id);

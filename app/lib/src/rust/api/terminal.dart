@@ -138,7 +138,7 @@ TerminalSearchHit? terminalSearchStep({
 
 /// The link under a viewport cell: an OSC 8 hyperlink, or a URL, file path
 /// or IP address in the text. Only a URL contains `://`.
-String? terminalLinkAt({
+TerminalLink? terminalLinkAt({
   required int id,
   required int col,
   required int line,
@@ -340,6 +340,28 @@ class TerminalFrame {
           altScreen == other.altScreen &&
           bracketedPaste == other.bracketedPaste &&
           mouseReporting == other.mouseReporting;
+}
+
+/// A link under a cell.
+class TerminalLink {
+  final String uri;
+
+  /// An OSC 8 hyperlink whose text on screen is not its address: where
+  /// it goes is shown before it opens.
+  final bool hidden;
+
+  const TerminalLink({required this.uri, required this.hidden});
+
+  @override
+  int get hashCode => uri.hashCode ^ hidden.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TerminalLink &&
+          runtimeType == other.runtimeType &&
+          uri == other.uri &&
+          hidden == other.hidden;
 }
 
 /// What the mouse did, for [`terminal_mouse`].

@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/engine/engine.dart' show TerminalSearchHit;
+import '../../core/engine/engine.dart' show TerminalLink, TerminalSearchHit;
 import '../../core/links.dart';
 import '../../core/platform.dart';
 import '../../core/theme/theme.dart';
@@ -129,9 +129,13 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
     });
   }
 
-  /// A web link opens in the browser; a file path or address is copied,
-  /// since it means something on the other machine, not this one.
-  Future<void> _openLink(String uri) async {
+  /// A web link opens in the browser; anything else is copied, since a
+  /// path or address means something on the other machine, and another
+  /// kind of link could make this computer do something the server chose.
+  /// A link whose text shows something other than where it goes asks
+  /// first, with the real address.
+  Future<void> _openLink(TerminalLink link) async {
+    final uri = link.uri;
     if (linkKind(uri) != LinkKind.web) {
       await Clipboard.setData(ClipboardData(text: uri));
       if (mounted) {
@@ -139,10 +143,30 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
       }
       return;
     }
+    if (link.hidden && !await _confirmHiddenLink(uri)) return;
     final ok = await openExternalLink(uri);
     if (!ok && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open $uri')));
     }
+  }
+
+  Future<bool> _confirmHiddenLink(String uri) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Open this link?'),
+        content: Text('The text you clicked goes somewhere else:\n\n$uri'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            key: const Key('link-open-ok'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Open'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
   }
 
   static bool get _touchPlatform => isTouchPlatform;

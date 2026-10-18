@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/engine/engine.dart' show TerminalMouseAction, TerminalMouseButton, TerminalSelectKind;
+import '../../core/engine/engine.dart' show TerminalLink, TerminalMouseAction, TerminalMouseButton, TerminalSelectKind;
 import '../../core/platform.dart';
 import '../workspace/app_shortcuts.dart';
 import 'key_mapper.dart';
@@ -52,7 +52,7 @@ class TerminalView extends StatefulWidget {
 
   /// Ctrl+click (or Cmd+click) on a link, file path or address, and "Open
   /// link" in the menu. [linkKind] tells which it is.
-  final void Function(String uri)? onOpenLink;
+  final void Function(TerminalLink link)? onOpenLink;
 
   /// Take typed text from the platform's text input (the IME) as well as
   /// from key events: the soft keyboard on a phone or tablet, and an input
@@ -895,7 +895,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
   Future<void> _showContextMenu(Offset global, _Cell cell) async {
     final hasSelection = widget.controller.selectionText()?.isNotEmpty == true;
     final link = _isLinkCell(cell) ? widget.controller.linkAt(cell.col, cell.line) : null;
-    final kind = link == null ? null : linkKind(link);
+    final kind = link == null ? null : linkKind(link.uri);
     final choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
@@ -913,7 +913,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
       case 'open-link':
         widget.onOpenLink?.call(link!);
       case 'copy-link':
-        await Clipboard.setData(ClipboardData(text: link!));
+        await Clipboard.setData(ClipboardData(text: link!.uri));
       case 'copy':
         await _copySelection();
       case 'paste':

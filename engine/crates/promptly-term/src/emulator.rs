@@ -4,10 +4,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::grid::{Dimensions, Row, Scroll};
 use alacritty_terminal::index::{Column, Direction, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
-use alacritty_terminal::term::cell::Flags;
+use alacritty_terminal::term::cell::{Cell, Flags};
+use alacritty_terminal::term::color::Colors;
 use alacritty_terminal::term::search::{RegexIter, RegexSearch};
 use alacritty_terminal::term::{Config, Term, TermDamage, TermMode};
 use alacritty_terminal::vte::ansi::{self, Processor};
@@ -86,6 +87,15 @@ impl EventListener for Listener {
     fn send_event(&self, event: Event) {
         self.0.lock().unwrap().push(event);
     }
+}
+
+/// A link under a cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Link {
+    pub uri: String,
+    /// An OSC 8 hyperlink whose text on screen is not its address, so
+    /// where it goes must be shown before it is opened.
+    pub hidden: bool,
 }
 
 pub struct Emulator {
@@ -247,11 +257,33 @@ impl Emulator {
     /// The link under a viewport cell: an OSC 8 hyperlink, or a URL, file
     /// path or IP address written in the text of that row. Only a URL has
     /// `://` in it, which is how the UI tells what to do with one.
-    pub fn link_at(&self, col: u16, line: i32) -> Option<String> {
+    pub fn link_at(&self, col: u16, line: i32) -> Option<Link> {
         let point = self.point_at(col, line);
         let grid = self.term.grid();
-        if let Some(link) = grid[point.line][point.column].hyperlink() {
-            return Some(link.uri().to_string());
+        let row = &grid[point.line];
+        if let Some(link) = row[point.column].hyperlink() {
+            // What it says on screen: the run of cells carrying this link.
+            let same = |c: usize| row[Column(c)].hyperlink().as_ref() == Some(&link);
+            let mut first = point.column.0;
+            while first > 0 && same(first - 1) {
+                first -= 1;
+            }
+            let mut last = point.column.0;
+            while last + 1 < grid.columns() && same(last + 1) {
+                last += 1;
+            }
+            let shown: String = (first..=last)
+                .map(|c| &row[Column(c)])
+                .filter(|cell| {
+                    !cell.flags.contains(Flags::WIDE_CHAR_SPACER)
+                        && !cell.flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
+                })
+                .map(|cell| cell.c)
+                .collect();
+            return Some(Link {
+                hidden: shown.trim() != link.uri() || self.obscured(row, first, last),
+                uri: link.uri().to_string(),
+            });
         }
         let (text, columns, wide) = row_text(grid, point.line);
         for found in crate::links::find(&text) {
@@ -261,10 +293,46 @@ impl Emulator {
                 last += 1;
             }
             if point.column.0 >= first && point.column.0 <= last {
-                return Some(text[found.start..found.end].to_string());
+                return Some(Link {
+                    uri: text[found.start..found.end].to_string(),
+                    hidden: self.obscured(row, first, last),
+                });
             }
         }
         None
+    }
+
+    /// The colours a cell is drawn in: its text, then its background.
+    fn cell_colors(&self, cell: &Cell, overrides: &Colors) -> (Rgb, Rgb) {
+        let cf = cell.flags;
+        let mut f = self.palette.resolve(cell.fg, overrides, cf, true);
+        let mut b = self.palette.resolve(cell.bg, overrides, cf, false);
+        if cf.contains(Flags::DIM) {
+            f = dim(f);
+        }
+        if cf.contains(Flags::INVERSE) {
+            std::mem::swap(&mut f, &mut b);
+        }
+        if cf.contains(Flags::HIDDEN) {
+            f = b;
+        }
+        (f, b)
+    }
+
+    /// Whether any character from `first` to `last` can't be read: drawn
+    /// in its background colour, or close to it, as concealed text is.
+    /// Part of a link the user can't see could change where it goes, so
+    /// such a link asks before it opens.
+    fn obscured(&self, row: &Row<Cell>, first: usize, last: usize) -> bool {
+        let overrides = self.term.colors();
+        let near = |a: Rgb, b: Rgb| {
+            (0..3).all(|i| ((a >> (8 * i)) & 0xFF).abs_diff((b >> (8 * i)) & 0xFF) < 32)
+        };
+        (first..=last).any(|c| {
+            let cell = &row[Column(c)];
+            let (f, b) = self.cell_colors(cell, overrides);
+            cell.c != ' ' && near(f, b)
+        })
     }
 
     /// A viewport position as a grid point, clamped to cells that exist.
@@ -554,17 +622,7 @@ impl Emulator {
                 }
             }
 
-            let mut f: Rgb = self.palette.resolve(cell.fg, overrides, cf, true);
-            let mut b: Rgb = self.palette.resolve(cell.bg, overrides, cf, false);
-            if cf.contains(Flags::DIM) {
-                f = dim(f);
-            }
-            if cf.contains(Flags::INVERSE) {
-                std::mem::swap(&mut f, &mut b);
-            }
-            if cf.contains(Flags::HIDDEN) {
-                f = b;
-            }
+            let (mut f, mut b) = self.cell_colors(cell, overrides);
             let u = match cell.underline_color() {
                 _ if cf.contains(Flags::HIDDEN) => b,
                 Some(c) => self.palette.resolve(c, overrides, cf, false),
@@ -971,8 +1029,11 @@ mod tests {
             "the comma after the url is not part of it"
         );
         assert_eq!(
-            e.link_at(10, 0).as_deref(),
-            Some("https://example.com/docs"),
+            e.link_at(10, 0),
+            Some(Link {
+                uri: "https://example.com/docs".into(),
+                hidden: false
+            }),
             "trailing punctuation is not part of the link"
         );
         assert_eq!(e.link_at(1, 0), None);
@@ -981,8 +1042,46 @@ mod tests {
         assert_ne!(second.flags[0] & frame::flags::LINK, 0);
         assert_ne!(second.flags[7] & frame::flags::LINK, 0);
         assert_eq!(second.flags[9] & frame::flags::LINK, 0);
-        assert_eq!(e.link_at(2, 1).as_deref(), Some("https://hidden.example/x"));
+        assert_eq!(
+            e.link_at(2, 1),
+            Some(Link {
+                uri: "https://hidden.example/x".into(),
+                hidden: true
+            }),
+            "its text is not where it goes"
+        );
         assert_eq!(e.link_at(12, 1), None);
+
+        // A hyperlink that shows its own address hides nothing.
+        e.feed(b"\r\n\x1b]8;;https://a.example/\x1b\\https://a.example/\x1b]8;;\x1b\\");
+        assert_eq!(e.link_at(3, 2).map(|l| l.hidden), Some(false));
+    }
+
+    #[test]
+    fn a_link_with_a_part_you_cannot_see_asks_first() {
+        let mut e = Emulator::new(TermSize::new(80, 4), Palette::promptly_dark());
+        // Its text matches its address, but the host part is concealed.
+        e.feed(b"\x1b]8;;https://trusted.example@evil.example/\x1b\\https://trusted.example\x1b[8m@evil.example/\x1b[28m\x1b]8;;\x1b\\\r\n");
+        assert_eq!(e.link_at(3, 0).map(|l| l.hidden), Some(true));
+        // The same trick on a plain address the terminal spotted itself.
+        e.feed(b"https://trusted.example\x1b[8m@evil.example/\x1b[28m\r\n");
+        assert_eq!(e.link_at(3, 1).map(|l| l.hidden), Some(true));
+        // Or drawn in the background colour instead of concealed.
+        e.feed(b"https://trusted.example\x1b[30;40m@evil.example/\x1b[0m\r\n");
+        assert_eq!(e.link_at(3, 2).map(|l| l.hidden), Some(true));
+        // The same black written two different ways, as a plain address
+        // and as a hyperlink whose text matches its address.
+        e.feed(b"https://trusted.example\x1b[38;2;0;0;0;48;5;16m@evil.example/\x1b[0m");
+        assert_eq!(e.link_at(3, 3).map(|l| l.hidden), Some(true));
+        let mut e = Emulator::new(TermSize::new(80, 4), Palette::promptly_dark());
+        e.feed(b"\x1b]8;;https://trusted.example@evil.example/\x1b\\https://trusted.example\x1b[38;2;0;0;0;48;5;16m@evil.example/\x1b[0m\x1b]8;;\x1b\\\r\n");
+        assert_eq!(e.link_at(3, 0).map(|l| l.hidden), Some(true));
+        // Nearly the background colour is as good as hidden.
+        e.feed(b"https://trusted.example\x1b[38;2;8;8;8;48;2;0;0;0m@evil.example/\x1b[0m\r\n");
+        assert_eq!(e.link_at(3, 1).map(|l| l.hidden), Some(true));
+        // Ordinary coloured text is still just a link.
+        e.feed(b"\x1b[32mhttps://trusted.example/\x1b[0m");
+        assert_eq!(e.link_at(3, 2).map(|l| l.hidden), Some(false));
     }
 
     #[test]
@@ -1175,8 +1274,14 @@ mod tests {
         assert_ne!(r.flags[24] & path, 0);
         assert_ne!(r.flags[34] & path, 0);
         assert!(r.flags[36..].iter().all(|f| f & path == 0), "not a version");
-        assert_eq!(e.link_at(10, 0).as_deref(), Some("/var/log/syslog"));
-        assert_eq!(e.link_at(30, 0).as_deref(), Some("10.0.0.1:22"));
+        assert_eq!(
+            e.link_at(10, 0).map(|l| l.uri).as_deref(),
+            Some("/var/log/syslog")
+        );
+        assert_eq!(
+            e.link_at(30, 0).map(|l| l.uri).as_deref(),
+            Some("10.0.0.1:22")
+        );
         assert_eq!(e.link_at(38, 0), None);
     }
 

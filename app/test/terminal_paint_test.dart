@@ -250,15 +250,19 @@ void main() {
     expect(on.paragraphWidths.first, closeTo(4 * p.metrics.width, 0.01), reason: 'still four cells wide');
   });
 
-  test('links are opened, paths and addresses copied', () {
+  test('web links are opened, and paths, addresses and other links copied', () {
     expect(linkKind('https://example.com'), LinkKind.web);
     expect(linkKind('mailto:me@example.com'), LinkKind.web);
-    expect(linkKind('file:///etc/hosts'), LinkKind.web);
+    expect(linkKind('file:///etc/hosts'), LinkKind.other);
+    expect(linkKind('ssh://server'), LinkKind.other);
+    expect(linkKind('ms-msdt:/id'), LinkKind.other);
+    expect(linkKind('HTTPS://example.com'), LinkKind.web);
     expect(linkKind('/etc/hosts'), LinkKind.path);
     expect(linkKind('~/src'), LinkKind.path);
     expect(linkKind('10.0.0.1'), LinkKind.address);
     expect(linkKind('192.168.1.20:2222'), LinkKind.address);
     expect(copyLabel(LinkKind.path), 'Copy path');
     expect(copyLabel(LinkKind.address), 'Copy address');
+    expect(copyLabel(LinkKind.other), 'Copy link');
   });
 }
