@@ -18,8 +18,9 @@ pub fn new_id() -> RecordId {
 /// When a record first appeared and when it last changed, RFC 3339. The
 /// local store stamps them on every record it writes (the app's models
 /// leave them out), and they merge like any other field, so every device
-/// ends up with the same two times. For display and a history view only:
-/// merging never looks at them.
+/// ends up with the same two times. For display and a history view,
+/// except that a deleted record shows again only once its `created_at` is
+/// newer than the deletion: it was written again whole (VAULT.md section 7).
 pub const CREATED_AT: &str = "created_at";
 pub const UPDATED_AT: &str = "updated_at";
 

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::clock::{DeviceId, Timestamp};
-use crate::model::Collection;
+use crate::model::{Collection, CREATED_AT};
 use crate::ops::{Op, FORMAT};
 
 /// A field's value and the timestamp that last set it.
@@ -38,11 +38,17 @@ impl Record {
             .collect()
     }
 
-    /// A record shows up in lists while it has at least one visible field.
+    /// A record shows up in lists while it has a field and is not deleted.
+    /// A deleted record comes back only when it is written again whole,
+    /// which sets its [`CREATED_AT`] after the deletion. An edit to a few
+    /// fields made on a device that had not yet heard of the deletion
+    /// does not bring it back: it would come back as those fields alone,
+    /// with no label or address, and the deletion was meant.
     pub fn is_visible(&self) -> bool {
-        self.fields
-            .values()
-            .any(|f| self.deleted.as_ref().is_none_or(|d| f.ts > *d))
+        match &self.deleted {
+            None => !self.fields.is_empty(),
+            Some(d) => self.fields.get(CREATED_AT).is_some_and(|f| f.ts > *d),
+        }
     }
 
     /// The newest timestamp this record carries, deletion included.
@@ -340,14 +346,62 @@ mod tests {
         // An older put arriving late stays hidden.
         s.apply(&put("h", 1, 'b', json!({"notes": "late"})));
         assert!(s.get(Collection::Hosts, "h").is_none());
-        // A newer put brings the record back with the fields it carries.
-        s.apply(&put("h", 3, 'b', json!({"label": "back"})));
+        // A newer edit of some fields, made where the deletion had not
+        // arrived yet, leaves it deleted: it would come back half empty.
+        s.apply(&put("h", 3, 'b', json!({"last_connected_at": "now"})));
+        assert!(s.get(Collection::Hosts, "h").is_none());
+        assert!(s.list(Collection::Hosts).is_empty());
+        // Written again whole, as put_diff does for a deleted record, it
+        // comes back with every field set since the deletion.
+        s.apply(&put(
+            "h",
+            4,
+            'b',
+            json!({"label": "back", "created_at": "2026-10-18T00:00:00Z"}),
+        ));
         assert_eq!(
             Value::Object(s.get(Collection::Hosts, "h").unwrap()),
-            json!({"label": "back"})
+            json!({"label": "back", "created_at": "2026-10-18T00:00:00Z", "last_connected_at": "now"})
         );
         // An older deletion arriving late changes nothing.
         assert!(!s.apply(&del("h", 1, 'c')));
+    }
+
+    #[test]
+    fn a_deletion_beats_an_edit_made_before_it_arrived_in_any_order() {
+        // One device deletes the host; another, not yet synced, connects
+        // to it, which edits one field with a later timestamp.
+        let ops = [
+            put(
+                "h",
+                1,
+                'a',
+                json!({"id": "h", "label": "web", "created_at": "t0"}),
+            ),
+            del("h", 2, 'a'),
+            put("h", 3, 'b', json!({"last_connected_at": "t3"})),
+        ];
+        let perms = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        for p in perms {
+            let mut s = State::new();
+            for i in p {
+                s.apply(&ops[i]);
+            }
+            assert!(s.get(Collection::Hosts, "h").is_none(), "{p:?}");
+            assert!(s.list(Collection::Hosts).is_empty(), "{p:?}");
+            // A snapshot of it says the same to whoever reads it.
+            let snap = s.to_snapshot(dev('a'), 1, 3);
+            assert!(State::from_snapshot(&snap)
+                .get(Collection::Hosts, "h")
+                .is_none());
+        }
     }
 
     #[test]

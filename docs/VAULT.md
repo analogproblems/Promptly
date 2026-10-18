@@ -107,7 +107,7 @@ Decrypted segment content is a JSON object:
 - `ts` is a logical timestamp: a Lamport counter plus the device id as a tiebreaker. The device id makes every timestamp in the system unique, so ordering is total and deterministic.
 - `at` is wall-clock time for display only ("edited on iPhone, 2 minutes ago"). It never influences merging.
 
-Every record also carries `created_at` and `updated_at`, wall-clock times in RFC 3339 that the writing device stamps into its `put`: `updated_at` on every change, and `created_at` when the record is new or comes back after a deletion (a record imported from an export keeps its own). They merge like any other field, so every device ends up with the same two, and like `at` they are for display and a later history view only.
+Every record also carries `created_at` and `updated_at`, wall-clock times in RFC 3339 that the writing device stamps into its `put`: `updated_at` on every change, and `created_at` when the record is new or comes back after a deletion (a record imported from an export keeps its own). They merge like any other field, so every device ends up with the same two, and like `at` they are for display and a later history view, except that `created_at` decides when a deleted record comes back (section 7).
 
 Two collections hold more than the app's lists:
 
@@ -124,8 +124,10 @@ State is a map from (collection, record id) to a record. Each field remembers th
 
 Applying an operation:
 
-- `put`: for each field, if the operation's `ts` is greater than the field's stored `ts`, replace the value and store the new `ts`. If the record was deleted with a `ts` lower than this `put`, the record comes back to life with these fields.
-- `del`: if the operation's `ts` is greater than the record's deletion `ts`, mark the record deleted at that `ts`. Fields with a lower `ts` are hidden; fields set later resurrect the record.
+- `put`: for each field, if the operation's `ts` is greater than the field's stored `ts`, replace the value and store the new `ts`.
+- `del`: if the operation's `ts` is greater than the record's deletion `ts`, mark the record deleted at that `ts`. Fields with a lower `ts` are hidden.
+
+A deleted record comes back only when it is written again whole: a `put` newer than the deletion that sets `created_at`, which every `put` that creates a record carries, along with every other field. A `put` that changes only some fields does not bring it back, even when it is newer than the deletion. That `put` comes from a device that had not yet heard of the deletion (connecting to a host updates its `last_connected_at`, for example), and the record would otherwise come back as those few fields alone, with no name or address. The deletion wins, on every device, whatever order the operations arrive in.
 
 Because every rule is "higher ts wins" and timestamps are unique, applying the same operation twice, or applying operations in any order, produces the same result. This is what makes snapshots from several devices safe to apply on top of each other: duplicates are harmless.
 
