@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../core/platform.dart';
+
 /// The keys the app keeps for itself on desktop. Everything else reaches
 /// the program in the terminal, which is why these all carry Shift or Alt:
 /// Ctrl+W, Ctrl+T, Ctrl+B and Ctrl+D mean something in a shell or tmux and
@@ -38,8 +40,10 @@ abstract final class AppShortcuts {
     LogicalKeyboardKey.digit9,
   ];
 
-  /// Alt+1 to Alt+9 pick a tab.
-  static SingleActivator tab(int index) => SingleActivator(_digits[index], alt: true);
+  /// Alt+1 to Alt+9 pick a tab; Cmd+1 to Cmd+9 on a Mac or iPad, where
+  /// Option+digit types characters such as `#` on a UK Mac.
+  static SingleActivator tab(int index) =>
+      isApplePlatform ? SingleActivator(_digits[index], meta: true) : SingleActivator(_digits[index], alt: true);
 
   static final _ctrlShiftLetters = <LogicalKeyboardKey>{
     LogicalKeyboardKey.keyT,
@@ -52,12 +56,11 @@ abstract final class AppShortcuts {
     LogicalKeyboardKey.tab,
   };
 
-  static final _altKeys = <LogicalKeyboardKey>{
+  static final _arrows = <LogicalKeyboardKey>{
     LogicalKeyboardKey.arrowLeft,
     LogicalKeyboardKey.arrowRight,
     LogicalKeyboardKey.arrowUp,
     LogicalKeyboardKey.arrowDown,
-    ..._digits,
   };
 
   /// True for a key press the terminal must leave alone so the window
@@ -68,7 +71,9 @@ abstract final class AppShortcuts {
     final key = event.logicalKey;
     if (hw.isControlPressed && key == LogicalKeyboardKey.tab) return true;
     if (hw.isControlPressed && hw.isShiftPressed && _ctrlShiftLetters.contains(key)) return true;
-    if (hw.isAltPressed && !hw.isControlPressed && _altKeys.contains(key)) return true;
+    if (hw.isAltPressed && !hw.isControlPressed && _arrows.contains(key)) return true;
+    final tabModifier = isApplePlatform ? hw.isMetaPressed : hw.isAltPressed && !hw.isControlPressed;
+    if (tabModifier && _digits.contains(key)) return true;
     return false;
   }
 }

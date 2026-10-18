@@ -404,6 +404,7 @@ Everything you type goes to the program in the terminal. Promptly keeps only a f
 
 - **Caps Lock types Escape.** Handy in `vim`. Letters then follow Shift alone, even if the Caps Lock light comes on.
 - **Cmd works as Ctrl** (iPad and Mac). In the terminal, Cmd+C stops a program as Ctrl+C does. Copy and paste with Cmd+Shift+C and Cmd+Shift+V instead.
+- **Option works as Alt** (iPad and Mac). For Alt shortcuts in programs such as `emacs`, and Option+B and Option+F to move by words in a shell. Off, Option types the characters your keyboard layout puts on it, such as `@` on a German keyboard, as the Mac's own Terminal does.
 
 On a computer you can type with an input method, such as Chinese pinyin, Japanese or Korean, or accents made with a dead key or a compose key (ibus and fcitx on Linux, and the input methods built into macOS and Windows). While you compose, the text shows underlined at the cursor, the input method's list of choices opens beside it, and keys such as Backspace, Enter and the arrows work on what you're composing. Nothing reaches the program until you pick the text, and then it's typed in one go. If what you pick has more than one line, it's treated as a paste and shown first, as below.
 
@@ -493,7 +494,7 @@ On a computer, with the window at least 900 pixels wide, the **Sessions** tab be
 Tabs run across the top of the workspace. Each tab holds one or more panes; its title shows the focused session, with a count when there are more (`web-1 +1`).
 
 - **New tab:** Ctrl+Shift+T, or the **+** at the right of the tab strip.
-- **Switch tabs:** click a tab, press Ctrl+Tab and Ctrl+Shift+Tab, or press Alt+1 to Alt+9 for a particular tab. **View › Go to tab** lists the tabs by number.
+- **Switch tabs:** click a tab, press Ctrl+Tab and Ctrl+Shift+Tab, or press Alt+1 to Alt+9 (Cmd+1 to Cmd+9 on a Mac) for a particular tab. **View › Go to tab** lists the tabs by number.
 - **Close a tab:** click the **×** on the tab. This closes every session in it.
 
 ### Split panes
@@ -852,6 +853,7 @@ Open sessions change as you tap. Choose a monospaced font: in any other, the col
 | | **Keyboard bar** | Which keys sit above the keyboard on a phone or tablet, and their order. See [On a phone or tablet](#on-a-phone-or-tablet). |
 | **Hardware keyboard** | **Caps Lock types Escape** | Caps Lock sends Escape, and letters follow Shift alone. Off by default. See [Typing](#typing). |
 | | **Cmd works as Ctrl** | iPad and Mac only. In the terminal, Cmd acts as Ctrl. Off by default. |
+| | **Option works as Alt** | iPad and Mac only. In the terminal, Option acts as Alt instead of typing characters. Off by default. |
 | **Security** | **Unlock SSH keys before use** | Asks for your fingerprint, face, device PIN or Windows Hello before connecting with a key, testing a connection, or setting up sync with a host that uses one. Once sync is set up, it uses the host's key in the background without asking. On by default. |
 | | **Lock Promptly** | Asks the same when Promptly opens, and when you come back to it after the time below. Off by default. If the device's screen lock is later turned off, Promptly stays locked until it's back. |
 | | **Ask again** | How long a check lasts before keys ask again, and how long Promptly can be away before it locks: every time, or after 1, 5, 15 or 60 minutes. 5 minutes by default. |
@@ -877,7 +879,7 @@ These shortcuts work on Linux, Windows and macOS. Every other key combination go
 | Ctrl+Shift+T | New tab |
 | Ctrl+Shift+W | Close the pane (the tab closes with its last pane) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Next / previous tab |
-| Alt+1 … Alt+9 | Go to tab 1 to 9 |
+| Alt+1 … Alt+9 (Cmd on a Mac) | Go to tab 1 to 9 |
 | Ctrl+Shift+D | Split the pane right |
 | Ctrl+Shift+E | Split the pane down |
 | Alt+Arrow keys | Move to the pane in that direction |

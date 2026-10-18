@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
@@ -503,7 +504,8 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     final keys = widget.keys;
     // With Cmd as Ctrl, Cmd is Ctrl here and no longer copies or pastes.
     final ctrl = hw.isControlPressed || (keys.cmdAsCtrl && hw.isMetaPressed);
-    final alt = hw.isAltPressed;
+    // On a Mac or iPad, Option types characters unless it is set to be Alt.
+    final alt = hw.isAltPressed && (!isApplePlatform || keys.optionAsMeta);
     final shift = hw.isShiftPressed;
     final meta = hw.isMetaPressed && !keys.cmdAsCtrl;
     final capsLocked = hw.lockModesEnabled.contains(KeyboardLockMode.capsLock);
@@ -568,6 +570,7 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
       shift: shift,
       capsLockAsEscape: keys.capsLockAsEscape,
       capsLocked: capsLocked,
+      ctrlAltTypes: defaultTargetPlatform == TargetPlatform.windows,
     );
     if (bytes == null) return KeyEventResult.ignored;
     if (c.grid.displayOffset != 0) c.scrollToBottom();

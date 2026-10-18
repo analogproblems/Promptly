@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/links.dart';
+import '../../core/platform.dart';
 import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../shell/shell_scaffold.dart';
@@ -110,7 +111,7 @@ final desktopShortcuts = <({String keys, String what})>[
   (keys: describeShortcut(AppShortcuts.newTab), what: 'New tab'),
   (keys: describeShortcut(AppShortcuts.closePane), what: 'Close the pane; the tab closes with its last pane'),
   (keys: '${describeShortcut(AppShortcuts.nextTab)} / ${describeShortcut(AppShortcuts.previousTab)}', what: 'Next or previous tab'),
-  (keys: 'Alt+1 … Alt+9', what: 'A particular tab'),
+  (keys: isApplePlatform ? 'Cmd+1 … Cmd+9' : 'Alt+1 … Alt+9', what: 'A particular tab'),
   (keys: '${describeShortcut(AppShortcuts.splitRight)} / ${describeShortcut(AppShortcuts.splitDown)}', what: 'Split the pane right or down'),
   (keys: 'Alt+Arrows', what: 'Move between panes'),
   (keys: describeShortcut(AppShortcuts.hostsPanel), what: 'Hosts panel, for dragging hosts onto panes'),
@@ -125,7 +126,7 @@ final desktopShortcuts = <({String keys, String what})>[
 String describeShortcut(SingleActivator s) {
   final parts = <String>[
     if (s.control) 'Ctrl',
-    if (s.meta) 'Meta',
+    if (s.meta) isApplePlatform ? 'Cmd' : 'Meta',
     if (s.alt) 'Alt',
     if (s.shift) 'Shift',
   ];

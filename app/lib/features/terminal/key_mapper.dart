@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 
 /// What Settings, Hardware keyboard changes about a keyboard's keys.
 class KeyOptions {
-  const KeyOptions({this.capsLockAsEscape = false, this.cmdAsCtrl = false});
+  const KeyOptions({this.capsLockAsEscape = false, this.cmdAsCtrl = false, this.optionAsMeta = false});
 
   /// Caps Lock types Escape, and letters follow Shift alone whatever the
   /// Caps Lock light says, since the system still toggles it.
@@ -13,6 +13,11 @@ class KeyOptions {
   /// Cmd counts as Ctrl in the terminal, so Cmd+C stops a program. Offered
   /// on iPad and Mac, where Cmd sits where Ctrl does elsewhere.
   final bool cmdAsCtrl;
+
+  /// Option works as Alt (Meta) in the terminal, on iPad and Mac. Off, it
+  /// types the characters the keyboard layout puts on it, such as `@` on
+  /// a German Mac's Option+L, as the Mac's own Terminal does.
+  final bool optionAsMeta;
 }
 
 /// Turns a key press into the bytes a terminal program expects.
@@ -23,7 +28,10 @@ abstract final class KeyMapper {
   static const _esc = 0x1b;
 
   /// `capsLocked` is whether the system has Caps Lock on, which only
-  /// matters with [KeyOptions.capsLockAsEscape].
+  /// matters with [KeyOptions.capsLockAsEscape]. With `ctrlAltTypes`, a
+  /// Ctrl+Alt press that comes with a character types that character:
+  /// Windows reports AltGr as Ctrl+Alt, and AltGr is how many layouts
+  /// type `@`, `€` or `ą`.
   static List<int>? bytesFor(
     KeyEvent event, {
     required bool appCursor,
@@ -32,6 +40,7 @@ abstract final class KeyMapper {
     bool shift = false,
     bool capsLockAsEscape = false,
     bool capsLocked = false,
+    bool ctrlAltTypes = false,
   }) {
     if (event is KeyUpEvent) return null;
     final key = event.logicalKey;
@@ -78,7 +87,23 @@ abstract final class KeyMapper {
       LogicalKeyboardKey.f12 => _tilde(24, mod),
       _ => null,
     };
-    if (bytes != null) return bytes;
+    if (bytes != null) {
+      // Alt in front of these is ESC, as for any other key: Alt+Backspace
+      // deletes a word in most shells.
+      final plain = key == LogicalKeyboardKey.enter ||
+          key == LogicalKeyboardKey.numpadEnter ||
+          key == LogicalKeyboardKey.backspace ||
+          key == LogicalKeyboardKey.tab ||
+          key == LogicalKeyboardKey.escape;
+      return alt && plain ? [_esc, ...bytes] : bytes;
+    }
+
+    if (ctrl && alt && ctrlAltTypes) {
+      final ch = event.character;
+      if (ch != null && ch.isNotEmpty && ch.codeUnitAt(0) >= 0x20 && ch.codeUnitAt(0) != 0x7f) {
+        return utf8.encode(ch);
+      }
+    }
 
     if (ctrl) {
       final c = _controlByte(key);
