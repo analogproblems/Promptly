@@ -31,4 +31,4 @@ pub use manifest::{KdfParams, Manifest, RecoveryCode};
 pub use ops::{Op, Segment};
 pub use policy::{Kept, KeptPlan};
 pub use state::{Snapshot, State};
-pub use sync::{Marker, PullReport, SyncError, SyncState, Vault};
+pub use sync::{Fetched, Marker, PullReport, SyncError, SyncState, Vault};
