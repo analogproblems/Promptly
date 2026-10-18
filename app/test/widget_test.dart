@@ -35,6 +35,7 @@ import 'package:promptly/features/updates/updates.dart';
 import 'package:promptly/features/lock/app_lock.dart';
 import 'package:promptly/features/sync/sync_screen.dart' show SyncScreen;
 import 'package:promptly/features/snippets/repositories.dart' show snippetsProvider;
+import 'package:promptly/core/router.dart' show routerProvider;
 
 /// A device with nothing to check who is there with.
 class NoChecks implements Authenticator {
@@ -1584,6 +1585,43 @@ void main() {
       engine.laterFrames.add(dropped);
       await tester.pumpAndSettle();
       expect(told, [1, 2, 1, 0]);
+    });
+
+    testWidgets('on Android Back on a tab\'s first page puts the app in the background', (tester) async {
+      androidOverride = true;
+      addTearDown(() => androidOverride = null);
+      final told = <String>[];
+      final system = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SessionsInBackground.channel, (call) async {
+        told.add(call.method);
+        return null;
+      });
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        system.add(call.method);
+        return null;
+      });
+      addTearDown(() {
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SessionsInBackground.channel, null);
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
+      });
+      final engine = FakeEngine();
+      await tester.pumpWidget(app(engine));
+      await tester.pumpAndSettle();
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(told, ['moveToBack']);
+      expect(system, isNot(contains('SystemNavigator.pop')), reason: 'closing the app would end its sessions');
+
+      // A page further in still goes back a page.
+      told.clear();
+      final router = ProviderScope.containerOf(tester.element(find.byType(MaterialApp))).read(routerProvider);
+      router.go('/settings/about');
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(told, isEmpty);
+      expect(router.routerDelegate.currentConfiguration.uri.path, '/settings');
     });
 
     testWidgets('on Android the service stays up while an SSH session reconnects', (tester) async {
