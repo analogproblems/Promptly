@@ -74,6 +74,9 @@ impl SshTransport {
                 match cmd {
                     Cmd::Data(bytes) => {
                         if write_half.data(&bytes[..]).await.is_err() {
+                            // The connection has gone; its forwards go too,
+                            // since no Close will reach this task now.
+                            conn.disconnect().await;
                             break;
                         }
                     }
