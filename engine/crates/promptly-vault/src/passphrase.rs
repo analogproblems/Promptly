@@ -176,15 +176,7 @@ pub fn assess(passphrase: &str) -> Assessment {
         };
     }
     let lower: Vec<char> = passphrase.to_lowercase().chars().collect();
-    let common = is_common(&lower);
-
-    let (mut bits, cheap) = pattern_bits(&chars, &lower);
-    if common {
-        // The base word is among the first tried; only what was added to
-        // it counts.
-        let base = common_base_len(&lower);
-        bits = 10.0 + pattern_bits(&chars[base..], &lower[base..]).0;
-    }
+    let (bits, cheap, common) = score(&chars, &lower);
 
     let strength = if bits < TOO_WEAK_BELOW {
         Strength::TooWeak
@@ -227,6 +219,35 @@ pub fn check(passphrase: &str) -> Result<(), &'static str> {
     } else {
         Err(a.advice)
     }
+}
+
+/// Bits to guess `chars`, how many of them were predictable, and whether
+/// it is built on a common password.
+fn score(chars: &[char], lower: &[char]) -> (f64, usize, bool) {
+    if lower.len() == chars.len() {
+        if let Some(p) = whole_repeat(lower) {
+            // Typing the same thing again costs only saying how many times.
+            let (bits, _, common) = score(&chars[..p], &lower[..p]);
+            let copies = lower.len() as f64 / p as f64;
+            return (bits + 2.0 + copies.log2(), lower.len() - p, common);
+        }
+    }
+    let common = is_common(lower);
+    if common {
+        // The base word is among the first tried; only what was added to
+        // it counts.
+        let base = common_base_len(lower);
+        let (rest, cheap) = pattern_bits(&chars[base..], &lower[base..]);
+        return (10.0 + rest, cheap + base, true);
+    }
+    let (bits, cheap) = pattern_bits(chars, lower);
+    (bits, cheap, common)
+}
+
+/// The shortest chunk that `s` is made of, typed again and again (the last
+/// copy may be cut short), when `s` is at least two copies of it.
+fn whole_repeat(s: &[char]) -> Option<usize> {
+    (1..=s.len() / 2).find(|&p| (p..s.len()).all(|i| s[i] == s[i - p]))
 }
 
 /// Bits to guess `chars`, and how many of them were predictable. A fresh
@@ -371,9 +392,14 @@ mod tests {
             "abc1".repeat(20),
             "1234567890".repeat(5),
             long_digits,
+            "password".repeat(3),
+            "Password1!".repeat(4),
+            "hello".repeat(6),
         ] {
             assert_eq!(strength(&p), Strength::TooWeak, "{p}");
         }
+        // A word typed four times is no stronger than typed once.
+        assert_eq!(strength(&"sunflower".repeat(4)), strength("sunflower"));
     }
 
     #[test]
