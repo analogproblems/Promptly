@@ -1602,6 +1602,38 @@ mod tests {
     }
 
     #[test]
+    fn a_closed_connection_frees_its_forward_ports_for_the_next_one() {
+        let Some((endpoint, password)) = test_server() else {
+            return;
+        };
+        let server_port = endpoint.port;
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut params = ConnectParams::new(
+            endpoint,
+            AuthMethod::Password {
+                password: Some(password.clone()),
+            },
+            TermSize::new(60, 8),
+        );
+        let mut spec = forward(crate::forward::ForwardKind::Local, server_port);
+        spec.bind_port = port;
+        params.forwards = vec![spec];
+        let (first, _reader, _) = connect_only("forward-first", params.clone(), &password);
+        assert!(first.connection().forwards()[0].active);
+        // What a reconnect does before connecting again.
+        crate::runtime().block_on(first.connection().disconnect());
+        let (mut second, _reader, _) = connect_only("forward-second", params, &password);
+        let status = second.connection().forwards();
+        assert!(status[0].active, "{:?}", status[0].error);
+        assert_eq!(status[0].bound_port, port);
+        second.close();
+    }
+
+    #[test]
     fn remote_forward_reaches_this_device() {
         let Some((endpoint, password)) = test_server() else {
             return;
