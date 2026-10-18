@@ -125,7 +125,9 @@ Future<SyncSetupResult> syncRecreateVault({required String passphrase}) =>
     RustLib.instance.api.crateApiSyncSyncRecreateVault(passphrase: passphrase);
 
 /// Forget the vault on this device. Everything stays usable locally.
-void syncDisconnect() => RustLib.instance.api.crateApiSyncSyncDisconnect();
+/// Not a sync call: it waits for a sync that is running to finish.
+Future<void> syncDisconnect() =>
+    RustLib.instance.api.crateApiSyncSyncDisconnect();
 
 /// Remove another device. It is marked removed, so every device ignores
 /// what it writes from now on and it stops syncing once it finds out; its

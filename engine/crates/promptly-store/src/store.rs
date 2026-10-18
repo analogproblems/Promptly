@@ -1327,6 +1327,9 @@ mod tests {
         inner: MemoryBackend,
         store: std::sync::OnceLock<std::sync::Arc<Store>>,
         locked: std::sync::atomic::AtomicUsize,
+        /// Save a snippet from inside the next upload, as the app might
+        /// while a push is under way.
+        save_while_uploading: std::sync::atomic::AtomicBool,
     }
 
     impl WhileLocked {
@@ -1351,6 +1354,20 @@ mod tests {
         }
         fn put_new(&self, path: &str, bytes: &[u8]) -> Result<(), BackendError> {
             self.check();
+            if self
+                .save_while_uploading
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                if let Some(store) = self.store.get() {
+                    store
+                        .put(
+                            Collection::Snippets,
+                            "late",
+                            r#"{"id":"late","label":"pwd","command":"pwd"}"#,
+                        )
+                        .unwrap();
+                }
+            }
             self.inner.put_new(path, bytes)
         }
         fn delete(&self, path: &str) -> Result<(), BackendError> {
@@ -1392,6 +1409,27 @@ mod tests {
         );
         assert!(b.get(Collection::Hosts, "h").unwrap().is_some());
         assert_eq!(b.pending_count().unwrap(), 0);
+
+        // A save that lands while a push uploads stays pending, and the
+        // next push sends it.
+        b.put(
+            Collection::Snippets,
+            "s",
+            r#"{"id":"s","label":"ls -l","command":"ls -l"}"#,
+        )
+        .unwrap();
+        backend
+            .save_while_uploading
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(b.push(&vb).unwrap().is_some());
+        assert_eq!(b.pending_count().unwrap(), 1, "the late save is kept");
+        assert!(b.push(&vb).unwrap().is_some());
+        assert_eq!(b.pending_count().unwrap(), 0);
+        let other = Store::open_in_memory().unwrap();
+        let vo = Vault::open(&backend, other.device_id().clone(), "pw").unwrap();
+        other.pull(&vo).unwrap();
+        assert!(other.get(Collection::Snippets, "late").unwrap().is_some());
+        assert!(other.get(Collection::Snippets, "s").unwrap().is_some());
     }
 
     #[test]

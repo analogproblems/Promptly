@@ -354,7 +354,7 @@ pub fn sync_recreate_vault(passphrase: String) -> Result<SyncSetupResult, String
 }
 
 /// Forget the vault on this device. Everything stays usable locally.
-#[frb(sync)]
+/// Not a sync call: it waits for a sync that is running to finish.
 pub fn sync_disconnect() -> Result<(), String> {
     sync_engine::disconnect()
 }

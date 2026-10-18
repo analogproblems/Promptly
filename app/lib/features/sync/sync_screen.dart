@@ -767,7 +767,7 @@ class _ConfiguredView extends ConsumerWidget {
     );
     if (ok == true) {
       try {
-        ref.read(engineProvider).syncDisconnect();
+        await ref.read(engineProvider).syncDisconnect();
       } catch (e) {
         if (context.mounted) notYet(context, 'Could not disconnect: $e');
       }
@@ -1179,13 +1179,18 @@ class _AttentionCardState extends ConsumerState<AttentionCard> {
             if (widget.attention == SyncAttention.removed)
               FilledButton.icon(
                 key: const Key('sync-removed-disconnect'),
-                onPressed: () {
-                  try {
-                    ref.read(engineProvider).syncDisconnect();
-                  } catch (e) {
-                    setState(() => _error = e is String ? e : e.toString());
-                  }
-                },
+                onPressed: _busy
+                    ? null
+                    : () async {
+                        setState(() => _busy = true);
+                        try {
+                          await ref.read(engineProvider).syncDisconnect();
+                        } catch (e) {
+                          if (mounted) setState(() => _error = e is String ? e : e.toString());
+                        } finally {
+                          if (mounted) setState(() => _busy = false);
+                        }
+                      },
                 icon: const Icon(Icons.link_off, size: 18),
                 label: const Text('Disconnect this device'),
               ),

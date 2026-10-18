@@ -785,6 +785,7 @@ class FakeEngine implements Engine {
   /// folder would; the vault is back (and its warning gone) before then.
   Completer<void>? recreateDone;
   Completer<void>? removeDone;
+  Completer<void>? disconnectDone;
 
   /// Folders that already hold a vault, for the join path.
   final Set<String> foldersWithVaults = {};
@@ -969,8 +970,9 @@ class FakeEngine implements Engine {
   }
 
   @override
-  void syncDisconnect() {
+  Future<void> syncDisconnect() async {
     syncCalls.add('disconnect');
+    await disconnectDone?.future;
     sync = notConfigured;
     syncStream.add(sync);
   }
@@ -1962,7 +1964,8 @@ void main() {
 
   testWidgets('a device removed elsewhere says so plainly and can disconnect', (tester) async {
     final engine = FakeEngine()
-      ..needsAttention(SyncAttention.removed, 'This device was removed from the vault on another device, so it no longer syncs.');
+      ..needsAttention(SyncAttention.removed, 'This device was removed from the vault on another device, so it no longer syncs.')
+      ..disconnectDone = Completer<void>();
     await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
     expect(find.text('Sync stopped: this device was removed'), findsOneWidget, reason: 'the hosts status line');
@@ -1975,8 +1978,13 @@ void main() {
     final disconnect = find.byKey(const Key('sync-removed-disconnect'));
     await tester.scrollUntilVisible(disconnect, -150, scrollable: find.byType(Scrollable).first);
     await tapVisible(tester, disconnect);
-    await tester.pumpAndSettle();
+    await tester.pump();
+    // A sync still running holds the disconnect up; the screen keeps
+    // drawing meanwhile, with the button off so it isn't pressed twice.
     expect(engine.syncCalls, ['disconnect']);
+    expect(tester.widget<FilledButton>(disconnect).onPressed, isNull);
+    engine.disconnectDone!.complete();
+    await tester.pumpAndSettle();
     expect(find.text('Where should Promptly keep your vault?'), findsOneWidget, reason: 'ready to join again');
   });
 
