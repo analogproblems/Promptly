@@ -15,6 +15,7 @@ use std::sync::Mutex;
 
 use hkdf::Hkdf;
 use promptly_vault::model::{Collection, CREATED_AT, SETTINGS_ID, SYNCED_SETTINGS, UPDATED_AT};
+use promptly_vault::policy::removed_devices;
 use promptly_vault::state::{Field, Record as VaultRecord};
 use promptly_vault::{
     Clock, Dek, DeviceId, Op, PullReport, State, SyncError, SyncState, Timestamp, Vault,
@@ -778,10 +779,7 @@ impl Store {
 
     pub fn sync_state(&self) -> Result<SyncState, StoreError> {
         let inner = self.inner.lock().unwrap();
-        Ok(match meta_get(&inner.conn, "sync_state")? {
-            Some(s) => serde_json::from_str(&s).map_err(|e| StoreError::Corrupt(e.to_string()))?,
-            None => SyncState::default(),
-        })
+        sync_state(&inner.conn)
     }
 
     /// Whether the database at `path` opens with `key` as it is, so that
@@ -813,31 +811,38 @@ impl Store {
     }
 
     /// Apply everything new from other devices; persists what changed.
+    ///
+    /// Sync calls run on their own thread while the app reads and saves on
+    /// its UI thread, so the store is locked only to take the markers and
+    /// to apply what came back, never while files are listed and read.
     pub fn pull(&self, vault: &Vault) -> Result<PullReport, StoreError> {
-        let mut inner = self.inner.lock().unwrap();
-        let mut sync = match meta_get(&inner.conn, "sync_state")? {
-            Some(s) => serde_json::from_str(&s).map_err(|e| StoreError::Corrupt(e.to_string()))?,
-            None => SyncState::default(),
+        let (mut sync, removed) = {
+            let inner = self.inner.lock().unwrap();
+            (sync_state(&inner.conn)?, removed_devices(&inner.state))
         };
+        let fetched = vault.fetch(&sync, &removed)?;
+        let mut inner = self.inner.lock().unwrap();
         let Inner { state, clock, .. } = &mut *inner;
-        let report = vault.pull(&mut sync, state, clock)?;
+        let report = vault.apply_fetched(fetched, &mut sync, state, clock);
         Self::persist_all(&mut inner, &sync)?;
         Ok(report)
     }
 
     /// Write pending operations as the next segment. Returns its number,
-    /// or `None` when there was nothing to push.
+    /// or `None` when there was nothing to push. The upload runs unlocked,
+    /// as [`Store::pull`]'s reads do; operations saved meanwhile stay
+    /// pending for the next push.
     pub fn push(&self, vault: &Vault) -> Result<Option<u64>, StoreError> {
-        let mut inner = self.inner.lock().unwrap();
-        let (ops, max_n) = Self::pending(&inner.conn)?;
+        let (ops, max_n, mut sync) = {
+            let inner = self.inner.lock().unwrap();
+            let (ops, max_n) = Self::pending(&inner.conn)?;
+            (ops, max_n, sync_state(&inner.conn)?)
+        };
         if ops.is_empty() {
             return Ok(None);
         }
-        let mut sync = match meta_get(&inner.conn, "sync_state")? {
-            Some(s) => serde_json::from_str(&s).map_err(|e| StoreError::Corrupt(e.to_string()))?,
-            None => SyncState::default(),
-        };
         let seq = vault.push(&mut sync, &ops)?;
+        let mut inner = self.inner.lock().unwrap();
         let tx = inner.conn.transaction()?;
         tx.execute("DELETE FROM pending_ops WHERE n <= ?1", params![max_n])?;
         meta_set(
@@ -850,25 +855,26 @@ impl Store {
     }
 
     /// Write a snapshot now (`force`), or only once one is owed or this
-    /// device's folder has grown past the limits.
+    /// device's folder has grown past the limits. It is written from a
+    /// copy of the records, so the store stays unlocked while it uploads.
     pub fn compact(&self, vault: &Vault, force: bool) -> Result<bool, StoreError> {
-        let inner = self.inner.lock().unwrap();
-        let mut sync = match meta_get(&inner.conn, "sync_state")? {
-            Some(s) => serde_json::from_str(&s).map_err(|e| StoreError::Corrupt(e.to_string()))?,
-            None => SyncState::default(),
+        let (mut sync, state, clock) = {
+            let inner = self.inner.lock().unwrap();
+            let mut sync = sync_state(&inner.conn)?;
+            if force && !sync.snapshot_due {
+                // Owed until it is written, so a failure now is made up later.
+                sync.snapshot_due = true;
+                meta_set(
+                    &inner.conn,
+                    "sync_state",
+                    &serde_json::to_string(&sync).expect("sync state serialises"),
+                )?;
+            }
+            (sync, inner.state.clone(), inner.clock.clone())
         };
-        if force && !sync.snapshot_due {
-            // Owed until it is written, so a failure now is made up later.
-            sync.snapshot_due = true;
-            meta_set(
-                &inner.conn,
-                "sync_state",
-                &serde_json::to_string(&sync).expect("sync state serialises"),
-            )?;
-        }
-        let Inner { state, clock, .. } = &*inner;
-        let did = vault.maybe_compact(&mut sync, state, clock)?;
+        let did = vault.maybe_compact(&mut sync, &state, &clock)?;
         if did {
+            let inner = self.inner.lock().unwrap();
             meta_set(
                 &inner.conn,
                 "sync_state",
@@ -877,6 +883,14 @@ impl Store {
         }
         Ok(did)
     }
+}
+
+/// The sync markers as saved.
+fn sync_state(conn: &Connection) -> Result<SyncState, StoreError> {
+    Ok(match meta_get(conn, "sync_state")? {
+        Some(s) => serde_json::from_str(&s).map_err(|e| StoreError::Corrupt(e.to_string()))?,
+        None => SyncState::default(),
+    })
 }
 
 #[cfg(test)]
@@ -1305,6 +1319,117 @@ mod tests {
         fn delete(&self, path: &str) -> Result<(), BackendError> {
             self.inner.delete(path)
         }
+    }
+
+    /// Counts the vault calls made while `store` is locked.
+    #[derive(Default)]
+    struct WhileLocked {
+        inner: MemoryBackend,
+        store: std::sync::OnceLock<std::sync::Arc<Store>>,
+        locked: std::sync::atomic::AtomicUsize,
+        /// Save a snippet from inside the next upload, as the app might
+        /// while a push is under way.
+        save_while_uploading: std::sync::atomic::AtomicBool,
+    }
+
+    impl WhileLocked {
+        fn check(&self) {
+            if let Some(store) = self.store.get() {
+                if store.inner.try_lock().is_err() {
+                    self.locked
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        }
+    }
+
+    impl Backend for WhileLocked {
+        fn list(&self, dir: &str) -> Result<Vec<promptly_vault::Entry>, BackendError> {
+            self.check();
+            self.inner.list(dir)
+        }
+        fn get(&self, path: &str) -> Result<Vec<u8>, BackendError> {
+            self.check();
+            self.inner.get(path)
+        }
+        fn put_new(&self, path: &str, bytes: &[u8]) -> Result<(), BackendError> {
+            self.check();
+            if self
+                .save_while_uploading
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                if let Some(store) = self.store.get() {
+                    store
+                        .put(
+                            Collection::Snippets,
+                            "late",
+                            r#"{"id":"late","label":"pwd","command":"pwd"}"#,
+                        )
+                        .unwrap();
+                }
+            }
+            self.inner.put_new(path, bytes)
+        }
+        fn delete(&self, path: &str) -> Result<(), BackendError> {
+            self.check();
+            self.inner.delete(path)
+        }
+    }
+
+    #[test]
+    fn the_store_is_not_locked_while_sync_reads_and_writes_files() {
+        let backend = WhileLocked::default();
+        let a = Store::open_in_memory().unwrap();
+        a.put(Collection::Hosts, "h", HOST).unwrap();
+        let (va, _) = Vault::create(
+            &backend,
+            a.device_id().clone(),
+            "pw",
+            KdfParams::fast_for_tests(),
+        )
+        .unwrap();
+        a.push(&va).unwrap();
+
+        let b = std::sync::Arc::new(Store::open_in_memory().unwrap());
+        let vb = Vault::open(&backend, b.device_id().clone(), "pw").unwrap();
+        assert!(backend.store.set(b.clone()).is_ok());
+        b.put(
+            Collection::Snippets,
+            "s",
+            r#"{"id":"s","label":"ls","command":"ls"}"#,
+        )
+        .unwrap();
+        assert_eq!(b.pull(&vb).unwrap().ops_applied, 1);
+        assert!(b.push(&vb).unwrap().is_some());
+        assert!(b.compact(&vb, true).unwrap());
+        assert_eq!(
+            backend.locked.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the app's reads and saves would wait on the network"
+        );
+        assert!(b.get(Collection::Hosts, "h").unwrap().is_some());
+        assert_eq!(b.pending_count().unwrap(), 0);
+
+        // A save that lands while a push uploads stays pending, and the
+        // next push sends it.
+        b.put(
+            Collection::Snippets,
+            "s",
+            r#"{"id":"s","label":"ls -l","command":"ls -l"}"#,
+        )
+        .unwrap();
+        backend
+            .save_while_uploading
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(b.push(&vb).unwrap().is_some());
+        assert_eq!(b.pending_count().unwrap(), 1, "the late save is kept");
+        assert!(b.push(&vb).unwrap().is_some());
+        assert_eq!(b.pending_count().unwrap(), 0);
+        let other = Store::open_in_memory().unwrap();
+        let vo = Vault::open(&backend, other.device_id().clone(), "pw").unwrap();
+        other.pull(&vo).unwrap();
+        assert!(other.get(Collection::Snippets, "late").unwrap().is_some());
+        assert!(other.get(Collection::Snippets, "s").unwrap().is_some());
     }
 
     #[test]

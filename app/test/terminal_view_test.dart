@@ -248,7 +248,7 @@ class RecordingEngine implements Engine {
   @override
   Future<SyncSetupResult> syncRecreateVault(String passphrase) => throw UnimplementedError();
   @override
-  void syncDisconnect() {}
+  Future<void> syncDisconnect() async {}
   @override
   Future<void> syncRemoveDevice(String deviceRecordId) async {}
   @override

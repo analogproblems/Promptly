@@ -300,6 +300,9 @@ struct Status {
     /// Operations applied from other devices since the app started; the
     /// UI reloads its lists when this moves.
     changes: u32,
+    /// The size of the vault's files, measured after each sync on the
+    /// sync thread: listing an SFTP vault is too slow for the UI thread.
+    vault_bytes: u64,
 }
 
 enum Wake {
@@ -770,6 +773,9 @@ pub fn finish_setup(
             .compact(&vault, first_snapshot || plan.newly_kept)
             .map_err(|e| e.to_string())?;
         save_kept(&store, &plan.kept)?;
+        if let Ok(bytes) = vault.total_bytes() {
+            ENGINE.status.lock().unwrap().vault_bytes = bytes;
+        }
     }
     {
         let mut st = ENGINE.status.lock().unwrap();
@@ -1067,12 +1073,20 @@ pub fn sync_once() -> Result<(), String> {
             config.snapshot_due = false;
             save_config(&store, &config)?;
         }
-        Ok::<(Vec<String>, usize), Failure>((report.warnings, report.ops_applied))
+        let bytes = vault.total_bytes().ok();
+        Ok::<(Vec<String>, usize, Option<u64>), Failure>((
+            report.warnings,
+            report.ops_applied,
+            bytes,
+        ))
     })();
     let mut st = ENGINE.status.lock().unwrap();
     st.syncing = false;
     match &result {
-        Ok((warnings, applied)) => {
+        Ok((warnings, applied, bytes)) => {
+            if let Some(bytes) = bytes {
+                st.vault_bytes = *bytes;
+            }
             st.last_sync_at = Some(promptly_vault::ops::now_rfc3339());
             st.last_error = None;
             st.attention = None;
@@ -1454,7 +1468,11 @@ pub fn ensure_loop() {
 }
 
 /// Forget the vault on this device. Records stay; the key and markers go.
+/// Waits for a sync that is running to finish, so it can't write the vault
+/// settings and markers back afterwards now that it no longer holds the
+/// store while it reads and writes the vault.
 pub fn disconnect() -> Result<(), String> {
+    let _guard = ENGINE.run.lock().unwrap();
     let store = store()?;
     store.meta_delete(META_VAULT).map_err(|e| e.to_string())?;
     store
@@ -1522,26 +1540,6 @@ pub fn status() -> Result<SyncStatus, String> {
             .cmp(&a.is_this_device)
             .then(a.name.cmp(&b.name))
     });
-    let vault_bytes = match &config {
-        // Only a cheap listing: a folder on disk, or an SFTP connection already open.
-        Some(c)
-            if c.kind() == SyncBackendKind::LocalFolder || SFTP_CACHE.lock().unwrap().is_some() =>
-        {
-            backend_for(c)
-                .ok()
-                .and_then(|b| {
-                    let v = Vault::with_dek(
-                        &*b,
-                        vault_device(&store),
-                        c.vault_id.clone(),
-                        Dek([0; 32]),
-                    );
-                    v.total_bytes().ok()
-                })
-                .unwrap_or(0)
-        }
-        _ => 0,
-    };
     Ok(SyncStatus {
         configured: config.is_some(),
         kind: config.as_ref().map(|c| c.kind()),
@@ -1559,7 +1557,7 @@ pub fn status() -> Result<SyncStatus, String> {
         warnings: st.warnings,
         pending_ops: store.pending_count().map_err(|e| e.to_string())? as u32,
         devices,
-        vault_bytes: vault_bytes.min(u32::MAX as u64) as u32,
+        vault_bytes: st.vault_bytes.min(u32::MAX as u64) as u32,
         recovery_hint: config.and_then(|c| c.recovery_hint),
         changes: st.changes,
     })

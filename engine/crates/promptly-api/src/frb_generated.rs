@@ -1958,15 +1958,16 @@ fn wire__crate__api__sync__sync_default_device_name_impl(
     )
 }
 fn wire__crate__api__sync__sync_disconnect_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "sync_disconnect",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1979,10 +1980,12 @@ fn wire__crate__api__sync__sync_disconnect_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
-            transform_result_sse::<_, String>((move || {
-                let output_ok = crate::api::sync::sync_disconnect()?;
-                std::result::Result::Ok(output_ok)
-            })())
+            move |context| {
+                transform_result_sse::<_, String>((move || {
+                    let output_ok = crate::api::sync::sync_disconnect()?;
+                    std::result::Result::Ok(output_ok)
+                })())
+            }
         },
     )
 }
@@ -4695,6 +4698,7 @@ fn pde_ffi_dispatcher_primary_impl(
             wire__crate__api__sync__sync_create_local_folder_impl(port, ptr, rust_vec_len, data_len)
         }
         58 => wire__crate__api__sync__sync_create_sftp_impl(port, ptr, rust_vec_len, data_len),
+        60 => wire__crate__api__sync__sync_disconnect_impl(port, ptr, rust_vec_len, data_len),
         61 => wire__crate__api__sync__sync_events_impl(port, ptr, rust_vec_len, data_len),
         63 => {
             wire__crate__api__sync__sync_join_local_folder_impl(port, ptr, rust_vec_len, data_len)
@@ -4765,7 +4769,6 @@ fn pde_ffi_dispatcher_sync_impl(
         51 => wire__crate__api__ssh__ssh_connect_begin_impl(ptr, rust_vec_len, data_len),
         55 => wire__crate__api__ssh__ssh_forwards_impl(ptr, rust_vec_len, data_len),
         59 => wire__crate__api__sync__sync_default_device_name_impl(ptr, rust_vec_len, data_len),
-        60 => wire__crate__api__sync__sync_disconnect_impl(ptr, rust_vec_len, data_len),
         62 => wire__crate__api__sync__sync_folder_has_vault_impl(ptr, rust_vec_len, data_len),
         66 => wire__crate__api__sync__sync_passphrase_check_impl(ptr, rust_vec_len, data_len),
         67 => wire__crate__api__sync__sync_qr_payload_impl(ptr, rust_vec_len, data_len),

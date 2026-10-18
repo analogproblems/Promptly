@@ -305,7 +305,7 @@ abstract class RustLibApi extends BaseApi {
 
   String crateApiSyncSyncDefaultDeviceName();
 
-  void crateApiSyncSyncDisconnect();
+  Future<void> crateApiSyncSyncDisconnect();
 
   Stream<SyncStatus> crateApiSyncSyncEvents();
 
@@ -2140,12 +2140,17 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       const TaskConstMeta(debugName: "sync_default_device_name", argNames: []);
 
   @override
-  void crateApiSyncSyncDisconnect() {
-    return handler.executeSync(
-      SyncTask(
-        callFfi: () {
+  Future<void> crateApiSyncSyncDisconnect() {
+    return handler.executeNormal(
+      NormalTask(
+        callFfi: (port_) {
           final serializer = SseSerializer(generalizedFrbRustBinding);
-          return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 60)!;
+          pdeCallFfi(
+            generalizedFrbRustBinding,
+            serializer,
+            funcId: 60,
+            port: port_,
+          );
         },
         codec: SseCodec(
           decodeSuccessData: sse_decode_unit,

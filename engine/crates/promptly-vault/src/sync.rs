@@ -105,6 +105,12 @@ pub struct Vault<'a> {
     kept: Kept,
 }
 
+/// Files read from the vault by [`Vault::fetch`], not applied yet.
+pub struct Fetched {
+    folders: Vec<Folder>,
+    devices_seen: Vec<DeviceId>,
+}
+
 /// What one pull read from one device's folder, before any of it applies.
 struct Folder {
     device: DeviceId,
@@ -418,11 +424,24 @@ impl<'a> Vault<'a> {
         state: &mut State,
         clock: &mut Clock,
     ) -> Result<PullReport, SyncError> {
-        let mut report = PullReport::default();
-        let removed_before = removed_devices(state);
+        let fetched = self.fetch(sync, &removed_devices(state))?;
+        Ok(self.apply_fetched(fetched, sync, state, clock))
+    }
+
+    /// The reading half of [`Self::pull`]: every file newer than `sync`'s
+    /// markers, read without touching the state, so a caller can do the
+    /// slow part without holding whatever guards it. `removed` is who the
+    /// state counts as removed now ([`removed_devices`]).
+    pub fn fetch(
+        &self,
+        sync: &SyncState,
+        removed: &BTreeMap<DeviceId, u64>,
+    ) -> Result<Fetched, SyncError> {
+        let removed_before = removed;
+        let mut devices_seen = Vec::new();
         let mut folders = Vec::new();
         for device in self.other_devices()? {
-            report.devices_seen.push(device.clone());
+            devices_seen.push(device.clone());
             let limit = removed_before.get(&device).copied().unwrap_or(u64::MAX);
             let marker = sync.markers.get(&device).cloned().unwrap_or_default();
             let mut snaps = Vec::new();
@@ -464,6 +483,29 @@ impl<'a> Vault<'a> {
                 segments,
             });
         }
+        Ok(Fetched {
+            folders,
+            devices_seen,
+        })
+    }
+
+    /// The applying half of [`Self::pull`], with what [`Self::fetch`] read
+    /// using the same `sync`. Reads nothing more from the vault.
+    pub fn apply_fetched(
+        &self,
+        fetched: Fetched,
+        sync: &mut SyncState,
+        state: &mut State,
+        clock: &mut Clock,
+    ) -> PullReport {
+        let Fetched {
+            folders,
+            devices_seen,
+        } = fetched;
+        let mut report = PullReport {
+            devices_seen,
+            ..Default::default()
+        };
 
         // Who is removed, counting what was just read.
         let mut devices = State::new();
@@ -576,7 +618,7 @@ impl<'a> Vault<'a> {
                 marker.seq += 1;
             }
         }
-        Ok(report)
+        report
     }
 
     /// Before this device's first write since its sync state was reset (a
