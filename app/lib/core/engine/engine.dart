@@ -54,7 +54,6 @@ export '../../src/rust/api/terminal.dart'
 /// can be tested with a fake and so the generated bridge stays in one place.
 abstract class Engine {
   String version();
-  String ping(String name);
   EndpointParse parseEndpoint(String input);
 
   /// Start the user's shell in a new session and return its id. `theme` is
@@ -285,9 +284,6 @@ class RustEngine implements Engine {
 
   @override
   String version() => rust.engineVersion();
-
-  @override
-  String ping(String name) => rust.ping(name: name);
 
   @override
   EndpointParse parseEndpoint(String input) {

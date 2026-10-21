@@ -9,7 +9,7 @@ import 'package:promptly/core/file_picker.dart';
 import 'package:promptly/core/platform.dart';
 import 'package:promptly/core/theme/theme.dart';
 import 'package:promptly/features/settings/fonts_screen.dart';
-import 'package:promptly/features/settings/settings_screen.dart' show TerminalChoices;
+import 'package:promptly/features/settings/settings_screen.dart' show TerminalChoices, TextChoices;
 import 'package:promptly/features/terminal/font_files.dart';
 import 'package:promptly/features/terminal/terminal_fonts.dart';
 
@@ -244,10 +244,10 @@ void main() {
       expect(engine.settings['terminal_font'], '"Fira Code"', reason: 'the font in use stays');
     });
 
-    testWidgets('ligatures and keyboard suggestions are switched in Settings, Terminal', (tester) async {
+    testWidgets('ligatures and keyboard suggestions are switched in Settings', (tester) async {
       touchPlatformOverride = true;
       addTearDown(() => touchPlatformOverride = null);
-      await show(tester, const SingleChildScrollView(child: Card(child: TerminalChoices())));
+      await show(tester, const SingleChildScrollView(child: Card(child: Column(children: [TextChoices(), TerminalChoices()]))));
       expect(find.text('JetBrains Mono, built in'), findsOneWidget);
       final ligatures = tester.widget<SwitchListTile>(find.byKey(const Key('ligatures')));
       expect(ligatures.value, isFalse);
@@ -263,7 +263,7 @@ void main() {
 
       // A computer has no keyboard to suggest words.
       touchPlatformOverride = false;
-      await show(tester, const SingleChildScrollView(child: Card(child: TerminalChoices())));
+      await show(tester, const SingleChildScrollView(child: Card(child: Column(children: [TextChoices(), TerminalChoices()]))));
       expect(find.byKey(const Key('autocorrect')), findsNothing);
     });
 
@@ -283,7 +283,7 @@ void main() {
       await tester.drag(find.byType(Scrollable).first, const Offset(0, -2000));
       await tester.pumpAndSettle();
 
-      await show(tester, const SingleChildScrollView(child: Card(child: TerminalChoices())));
+      await show(tester, const SingleChildScrollView(child: Card(child: Column(children: [TextChoices(), TerminalChoices()]))));
       expect(find.byKey(const Key('autocorrect')), findsOneWidget);
       // An overflow anywhere above would have failed the test.
     });

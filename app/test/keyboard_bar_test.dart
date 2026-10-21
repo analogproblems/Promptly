@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/core/theme/theme.dart';
+import 'package:promptly/core/platform.dart';
 import 'package:promptly/features/terminal/keyboard_bar.dart';
 import 'package:promptly/features/terminal/keyboard_bar_keys.dart';
 import 'package:promptly/features/terminal/terminal_controller.dart';
@@ -279,6 +280,8 @@ void main() {
 
   testWidgets('Settings chooses, orders and restores the keys on the bar', (tester) async {
     phone(tester);
+    touchPlatformOverride = true;
+    addTearDown(() => touchPlatformOverride = null);
     final engine = FakeEngine();
     await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
@@ -322,6 +325,8 @@ void main() {
 
   testWidgets('the keyboard bar page fits a narrow phone at double text size', (tester) async {
     phone(tester);
+    touchPlatformOverride = true;
+    addTearDown(() => touchPlatformOverride = null);
     final engine = FakeEngine();
     await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
