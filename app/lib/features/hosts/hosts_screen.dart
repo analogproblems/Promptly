@@ -484,11 +484,68 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                                 if (!folded(group))
                                   for (final h in list) row(h),
                               ],
+                              // After the hosts, so a small screen still shows them first.
+                              if (sync != null && !sync.configured && _query.isEmpty && !ref.watch(backupNudgeDismissedProvider))
+                                const _BackupNudge(),
                             ],
                           ),
                         ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Below the list while there is no vault: the hosts are only on this
+/// device, so suggest backing them up, until "Not now".
+class _BackupNudge extends ConsumerWidget {
+  const _BackupNudge();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = context.tokens;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
+      child: Card(
+        key: const Key('backup-nudge'),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.cloud_upload_outlined, color: t.accent, size: 20),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text('Back up your hosts', style: TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'They are only on this device for now. Set up sync to keep an encrypted copy in a folder or on a server you own, and to use them on your other devices.',
+                style: TextStyle(color: t.muted, fontSize: 13),
+              ),
+              OverflowBar(
+                alignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    key: const Key('backup-nudge-dismiss'),
+                    onPressed: () => ref.read(backupNudgeDismissedProvider.notifier).set(true),
+                    child: const Text('Not now'),
+                  ),
+                  TextButton(
+                    key: const Key('backup-nudge-setup'),
+                    onPressed: () => context.go('/settings/sync'),
+                    child: const Text('Set up sync'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

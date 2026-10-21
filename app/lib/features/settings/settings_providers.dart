@@ -27,6 +27,7 @@ abstract final class SettingKeys {
   static const font = 'terminal_font';
   static const ligatures = 'terminal_ligatures';
   static const autocorrect = 'terminal_autocorrect';
+  static const backupNudgeDismissed = 'backup_nudge_dismissed';
 }
 
 /// Read the settings that travel in the vault again, once other devices'
@@ -193,6 +194,19 @@ class PasteWarningNotifier extends BoolSettingNotifier {
 }
 
 final pasteWarningProvider = NotifierProvider<PasteWarningNotifier, bool>(PasteWarningNotifier.new);
+
+/// Whether "Not now" was tapped on the hosts list's card that suggests
+/// setting up a vault to back the hosts up. Kept on this device: another
+/// device may well want the reminder.
+class BackupNudgeDismissedNotifier extends BoolSettingNotifier {
+  @override
+  String get key => SettingKeys.backupNudgeDismissed;
+  @override
+  bool get fallback => false;
+}
+
+final backupNudgeDismissedProvider =
+    NotifierProvider<BackupNudgeDismissedNotifier, bool>(BackupNudgeDismissedNotifier.new);
 
 /// Whether Caps Lock on a hardware keyboard types Escape in the terminal.
 class CapsLockEscapeNotifier extends BoolSettingNotifier {

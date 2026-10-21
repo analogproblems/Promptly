@@ -10,6 +10,7 @@ import '../sessions/connect_flow.dart';
 import '../sessions/connecting_view.dart';
 import '../sessions/session_manager.dart';
 import '../settings/settings_providers.dart';
+import '../sync/sync_providers.dart';
 import 'host_colors.dart';
 import 'inheritance.dart';
 import 'models.dart';
@@ -350,6 +351,19 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     }
   }
 
+  /// Where a saved password goes: kept on this device, encrypted when the
+  /// system has secure storage, and copied to the vault once there is one.
+  String _savedPasswordNote() {
+    final engine = ref.read(engineProvider);
+    final encrypted = engine.secretsState() == SecretsState.encrypted;
+    final here = encrypted ? 'Kept encrypted on this device' : 'Kept on this device';
+    if (_localOnly) return '$here only.';
+    if (ref.watch(syncStatusProvider).value?.configured ?? false) {
+      return '$here, and synced encrypted to your other devices.';
+    }
+    return '$here. Once sync is set up, it is backed up and synced encrypted too.';
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = context.tokens;
@@ -499,8 +513,10 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                         ),
                       ),
                       SwitchListTile(
+                        key: const Key('host-remember-password'),
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('Remember the password on this device'),
+                        title: const Text('Save the password'),
+                        subtitle: Text(_savedPasswordNote()),
                         value: _rememberPassword,
                         onChanged: (v) => setState(() => _rememberPassword = v),
                       ),

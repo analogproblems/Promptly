@@ -1299,6 +1299,81 @@ void main() {
     expect(find.text('nas'), findsNothing);
   });
 
+  testWidgets('with hosts and no vault, a card below them suggests backing them up until Not now', (tester) async {
+    final engine = FakeEngine();
+    engine.records['hosts'] = {'h1': hostJson('h1', 'nas')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.text('nas'), findsOneWidget);
+    await scrollTo(tester, find.byKey(const Key('backup-nudge')));
+    await tester.tap(find.byKey(const Key('backup-nudge-dismiss')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('backup-nudge')), findsNothing);
+    expect(engine.settings['backup_nudge_dismissed'], 'true', reason: 'remembered for next time');
+    expect(find.text('nas'), findsOneWidget);
+  });
+
+  testWidgets('the backup card opens the sync setup', (tester) async {
+    final engine = FakeEngine();
+    engine.records['hosts'] = {'h1': hostJson('h1', 'nas')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('backup-nudge-setup')));
+    await tester.pumpAndSettle();
+    expect(find.text('Where should Promptly keep your vault?'), findsOneWidget);
+  });
+
+  testWidgets('there is no backup card with no hosts, or once a vault is set up', (tester) async {
+    await tester.pumpWidget(app(FakeEngine()));
+    await tester.pumpAndSettle();
+    expect(find.text('No hosts yet'), findsOneWidget);
+    expect(find.byKey(const Key('backup-nudge')), findsNothing);
+
+    final engine = FakeEngine()..configured();
+    engine.records['hosts'] = {'h1': hostJson('h1', 'nas')};
+    await tester.pumpWidget(Container());
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.text('nas'), findsOneWidget);
+    expect(find.byKey(const Key('backup-nudge')), findsNothing);
+  });
+
+  group('the save-password switch says where the password goes', () {
+    Future<void> open(WidgetTester tester, FakeEngine engine) async {
+      await tester.pumpWidget(app(engine));
+      await tester.pumpAndSettle();
+      await addHost(tester);
+      await tester.tap(find.text('Password'));
+      await tester.pumpAndSettle();
+      await scrollTo(tester, find.byKey(const Key('host-remember-password')));
+    }
+
+    testWidgets('before a vault: here, and backed up once sync is set up', (tester) async {
+      await open(tester, FakeEngine());
+      expect(find.text('Save the password'), findsOneWidget);
+      expect(find.textContaining('Kept encrypted on this device. Once sync is set up'), findsOneWidget);
+    });
+
+    testWidgets('with a vault: synced, unless the host stays on this device', (tester) async {
+      await open(tester, FakeEngine()..configured());
+      expect(find.textContaining('synced encrypted to your other devices'), findsOneWidget);
+      await scrollTap(tester, find.byKey(const Key('host-local-only')));
+      await tester.pumpAndSettle();
+      // Back up to the switch: the form is a lazily built list.
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('host-remember-password')),
+        -150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Kept encrypted on this device only.'), findsOneWidget);
+    });
+
+    testWidgets('with no secure storage it does not claim encryption', (tester) async {
+      await open(tester, FakeEngine()..secretsKept = SecretsState.plain);
+      expect(find.textContaining('Kept on this device. Once sync is set up'), findsOneWidget);
+    });
+  });
+
   testWidgets('the host editor saves a new host into the store', (tester) async {
     final engine = FakeEngine();
     await tester.pumpWidget(app(engine));
@@ -2022,7 +2097,7 @@ void main() {
     await tester.tap(find.text('Password'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const Key('host-password')), 'hunter2');
-    await scrollTap(tester, find.text('Remember the password on this device'));
+    await scrollTap(tester, find.byKey(const Key('host-remember-password')));
     await tester.pumpAndSettle();
     final local = find.byKey(const Key('host-local-only'));
     expect(tester.widget<SwitchListTile>(local).value, isFalse, reason: 'hosts sync by default');

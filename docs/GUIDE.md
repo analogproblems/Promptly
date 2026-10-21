@@ -191,7 +191,7 @@ If you use groups, the full list is divided into one section per group, with ung
 
 **To work on several hosts at once,** press and hold one (or choose **Select** from its **⋮** menu), then tap the others. The bar at the top says how many are selected and has **Move to group** and **Delete**. Moving offers your groups, **No group**, and **New group…**. Tap **×**, or press Back, to stop selecting.
 
-The small indicator at the top right of the list shows your sync status. Tap it to open the sync settings.
+The small indicator at the top right of the list shows your sync status. Tap it to open the sync settings. Until you set up sync, your hosts are saved only on this device (encrypted, like everything else Promptly keeps), and a card at the top of the list offers to set it up so they are backed up. Tap **Not now** to hide it.
 
 <img src="screenshots/m3-hosts-dots.png" alt="The Hosts tab, with a Favourites section and a green reachability dot beside each host" width="640">
 
@@ -212,7 +212,7 @@ Tap the **+** button on the **Hosts** tab and choose **Host**. The same button a
 
 | Method | When to use it |
 |---|---|
-| **Password** | The server asks for a password. Type it to save it, and keep **Remember the password on this device** on; or leave the field empty to be asked each time you connect. |
+| **Password** | The server asks for a password. Type it to save it, and keep **Save the password** on; or leave the field empty to be asked each time you connect. A saved password is kept encrypted on this device and, once you set up sync, in the vault too, so your other devices have it (unless the host is kept on this device only). |
 | **Key** | You've put one of your SSH keys on the server. Pick the key from the list. If the list is empty, make a key on the **Keys** tab first. |
 | **Agent** | Your keys live in an SSH agent on this computer (for example `ssh-agent` on Linux or macOS, or the OpenSSH agent or Pageant on Windows). |
 | **Ask each time** | The server decides what to ask for, such as a password, a two-factor code, or both, and Promptly shows you its questions. If the server needs nothing, you go straight in. |
