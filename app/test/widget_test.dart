@@ -19,7 +19,7 @@ import 'package:promptly/features/files/device_files.dart';
 import 'package:promptly/features/files/files_screen.dart';
 import 'package:promptly/features/files/fs.dart';
 import 'package:promptly/features/help/about_screen.dart';
-import 'package:promptly/features/settings/settings_screen.dart' show TerminalChoices;
+import 'package:promptly/features/settings/settings_screen.dart' show TerminalChoices, TextChoices;
 import 'package:promptly/features/terminal/font_files.dart';
 import 'package:promptly/features/terminal/terminal_fonts.dart';
 import 'package:promptly/features/terminal/keyboard_bar.dart';
@@ -75,8 +75,6 @@ class FakeEngine implements Engine {
   @override
   String version() => '9.9.9-test';
 
-  @override
-  String ping(String name) => 'pong: $name';
   @override
   SecretsState secretsState() => secretsKept;
 
@@ -1228,19 +1226,6 @@ void main() {
     await tester.enterText(find.byType(TextField).first, '@nobody');
     await tester.pumpAndSettle();
     expect(find.textContaining('user name is required'), findsOneWidget);
-  });
-
-  testWidgets('settings pings the engine and shows the reply', (tester) async {
-    await tester.pumpWidget(app());
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Settings').first);
-    await tester.pumpAndSettle();
-    await scrollTo(tester, find.text('Rust engine 9.9.9-test'));
-    expect(find.text('Rust engine 9.9.9-test'), findsOneWidget);
-    await tester.enterText(find.byKey(const Key('ping-input')), 'Ada');
-    await scrollTap(tester, find.text('Ping'));
-    await tester.pumpAndSettle();
-    expect(find.text('pong: Ada'), findsOneWidget);
   });
 
   testWidgets('theme can be switched to dark and is remembered for the next start', (tester) async {
@@ -3077,6 +3062,7 @@ void main() {
       (SecretsState.plain, 'Your data on this device is not encrypted'),
       (SecretsState.locked, 'Saved passwords and keys are locked'),
     ]) {
+      await tester.pumpWidget(const SizedBox());
       await tester.pumpWidget(appWith(FakeEngine()..secretsKept = state));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Settings').first);
@@ -3884,7 +3870,7 @@ void main() {
             home: Scaffold(
               body: ListView(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                children: const [Card(child: TerminalChoices())],
+                children: const [Card(child: Column(children: [TextChoices(), TerminalChoices()]))],
               ),
             ),
           ),

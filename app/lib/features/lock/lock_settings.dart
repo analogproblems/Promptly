@@ -38,8 +38,8 @@ class LockSettingsCard extends ConsumerWidget {
           title: const Text('Unlock SSH keys before use'),
           subtitle: Text(
             noCheck
-                ? 'This device has no fingerprint or PIN check for apps. Set an app passcode below to use this.'
-                : 'Promptly asks for ${how ?? 'your fingerprint or PIN'} before connecting with a key. Sync, once set up, uses its host\'s key without asking.',
+                ? 'Needs an app passcode on this device. Set one below.'
+                : 'Asks for ${how ?? 'your fingerprint or PIN'} before connecting with a key. Sync doesn\'t ask.',
           ),
           value: s.keyUnlock && !noCheck,
           onChanged: noCheck ? null : lock.setKeyUnlock,
@@ -49,8 +49,8 @@ class LockSettingsCard extends ConsumerWidget {
           title: const Text('Lock Promptly'),
           subtitle: Text(
             noCheck
-                ? 'Set an app passcode below to lock Promptly.'
-                : 'Ask for ${how ?? 'your fingerprint or PIN'} when Promptly opens, and when you come back to it.',
+                ? 'Needs an app passcode on this device. Set one below.'
+                : 'Asks for ${how ?? 'your fingerprint or PIN'} when you open or return to Promptly.',
           ),
           value: s.appLock && !noCheck,
           onChanged: noCheck ? null : lock.setAppLock,
@@ -60,7 +60,7 @@ class LockSettingsCard extends ConsumerWidget {
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('How long a check lasts, and how long Promptly can be away before it locks.'),
+              const Text('How long a check lasts before Promptly asks again.'),
               DropdownButton<int>(
                 key: const Key('lock-after'),
                 isExpanded: true,
@@ -79,8 +79,8 @@ class LockSettingsCard extends ConsumerWidget {
             title: Text(s.passcodeHash == null ? 'Set an app passcode' : 'App passcode'),
             subtitle: Text(
               s.passcodeHash == null
-                  ? 'This device has no fingerprint or PIN check Promptly can use, so it keeps a passcode of its own.'
-                  : 'Set. It is kept only as a hash, on this device.',
+                  ? 'For devices without a fingerprint or PIN check.'
+                  : 'Set. Stored only as a hash on this device.',
               style: TextStyle(color: t.muted),
             ),
             trailing: s.passcodeHash == null

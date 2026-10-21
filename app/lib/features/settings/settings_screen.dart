@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/engine/engine.dart';
 import '../../core/platform.dart';
-import '../../core/theme/theme.dart';
 import '../../core/theme/tokens.dart';
 import '../../core/version.dart';
 import '../shell/empty_state.dart';
@@ -18,30 +17,11 @@ import '../sync/sync_providers.dart';
 import '../updates/updates.dart';
 import 'themes_screen.dart';
 
-class SettingsScreen extends ConsumerStatefulWidget {
+class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
 
   @override
-  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
-}
-
-class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  final _pingController = TextEditingController();
-  String? _pingReply;
-
-  @override
-  void dispose() {
-    _pingController.dispose();
-    super.dispose();
-  }
-
-  void _ping() {
-    final reply = ref.read(engineProvider).ping(_pingController.text);
-    setState(() => _pingReply = reply);
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final t = context.tokens;
     final engine = ref.watch(engineProvider);
     final themeMode = ref.watch(themeModeProvider);
@@ -49,11 +29,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final terminalId = resolveTerminalTheme(terminalSetting, Theme.of(context).brightness);
     final themes = ref.watch(themesProvider);
     final sync = ref.watch(syncStatusProvider).value;
-    final programClipboard = ref.watch(programClipboardProvider);
     final terminalTheme = themes.cast<ThemeInfo?>().firstWhere(
       (th) => th!.id == terminalId,
       orElse: () => themes.isEmpty ? null : themes.first,
     );
+    final secrets = engine.secretsState();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -106,6 +86,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => context.go('/settings/themes'),
                     ),
+                    const TextChoices(),
                   ],
                 ),
               ),
@@ -114,40 +95,65 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 title: 'Terminal',
                 child: Column(
                   children: [
+                    const TerminalChoices(),
                     SwitchListTile(
                       key: const Key('paste-warning'),
-                      title: const Text('Show text before pasting several lines'),
-                      subtitle: const Text(
-                        'Each line of a paste runs as a command. On, you see the text and how many lines it has first.',
-                      ),
+                      title: const Text('Check pastes of several lines'),
+                      subtitle: const Text('Each line runs as a command, so see the text first.'),
                       value: ref.watch(pasteWarningProvider),
                       onChanged: (v) => ref.read(pasteWarningProvider.notifier).set(v),
                     ),
                     SwitchListTile(
                       key: const Key('program-clipboard'),
                       title: const Text('Let programs copy to the clipboard'),
-                      subtitle: const Text(
-                        'tmux, vim and others can set your clipboard (OSC 52). Off, a remote program cannot touch what you copied.',
-                      ),
-                      value: programClipboard,
+                      subtitle: const Text('For tmux, vim and others (OSC 52).'),
+                      value: ref.watch(programClipboardProvider),
                       onChanged: (v) => ref.read(programClipboardProvider.notifier).set(v),
                     ),
-                    const TerminalChoices(),
-                    Divider(height: 1, color: t.border),
-                    ListTile(
-                      key: const Key('keyboard-bar-settings'),
-                      title: const Text('Keyboard bar'),
-                      subtitle: const Text('Choose the keys above a phone or tablet keyboard, and their order.'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => context.go('/settings/keyboard-bar'),
-                    ),
+                    if (isTouchPlatform) ...[
+                      Divider(height: 1, color: t.border),
+                      ListTile(
+                        key: const Key('keyboard-bar-settings'),
+                        title: const Text('Keyboard bar'),
+                        subtitle: const Text('The extra keys above the on-screen keyboard.'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () => context.go('/settings/keyboard-bar'),
+                      ),
+                    ],
                   ],
                 ),
               ),
               const SizedBox(height: 16),
               const _Section(title: 'Hardware keyboard', child: HardwareKeyboardChoices()),
               const SizedBox(height: 16),
-              const _Section(title: 'Security', child: LockSettingsCard()),
+              _Section(
+                title: 'Security',
+                child: Column(
+                  children: [
+                    if (secrets != SecretsState.encrypted) ...[
+                      ListTile(
+                        key: const Key('secrets-state'),
+                        leading: Icon(
+                          secrets == SecretsState.locked ? Icons.lock_outline : Icons.lock_open_outlined,
+                          color: t.muted,
+                        ),
+                        title: Text(
+                          secrets == SecretsState.locked
+                              ? 'Saved passwords and keys are locked'
+                              : 'Your data on this device is not encrypted',
+                        ),
+                        subtitle: Text(
+                          secrets == SecretsState.locked
+                              ? "Promptly can't reach your system's secure storage, so saved hosts, passwords and keys can't be opened, and anything new is lost when Promptly closes. Unlock your keychain or allow Promptly when asked, then restart it."
+                              : 'No keyring was found, so only file permissions protect your data. Install one, such as GNOME Keyring or KWallet, then restart Promptly.',
+                        ),
+                      ),
+                      Divider(height: 1, color: t.border),
+                    ],
+                    const LockSettingsCard(),
+                  ],
+                ),
+              ),
               const SizedBox(height: 16),
               _Section(
                 title: 'Hosts',
@@ -156,9 +162,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     SwitchListTile(
                       key: const Key('reachability-check'),
                       title: const Text('Show which hosts are up'),
-                      subtitle: const Text(
-                        'A quick knock on each host\'s port once a minute, from this device. Nothing else is sent.',
-                      ),
+                      subtitle: const Text('Checks each host\'s port once a minute. Nothing else is sent.'),
                       value: ref.watch(reachabilityProvider),
                       onChanged: (v) => ref.read(reachabilityProvider.notifier).set(v),
                     ),
@@ -166,7 +170,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       key: const Key('import-csv'),
                       leading: Icon(Icons.table_chart_outlined, color: t.muted),
                       title: const Text('Import from a CSV file'),
-                      subtitle: const Text('The file Termius exports, or any with a Hostname column.'),
+                      subtitle: const Text('From Termius, or any file with a Hostname column.'),
                       trailing: TextButton(onPressed: () => showCsvImport(context, ref), child: const Text('Import')),
                     ),
                     if (supportsLocalShell)
@@ -174,7 +178,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         key: const Key('import-ssh-config'),
                         leading: Icon(Icons.file_download_outlined, color: t.muted),
                         title: const Text('Import from ~/.ssh/config'),
-                        subtitle: const Text('Hosts, users, ports, jump hosts and the keys they name.'),
+                        subtitle: const Text('Hosts, users, ports, jump hosts and keys.'),
                         trailing: TextButton(
                           onPressed: () => showSshConfigImport(context, ref),
                           child: const Text('Import'),
@@ -189,18 +193,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 child: ListTile(
                   key: const Key('settings-sync'),
                   leading: Icon(
-                    sync == null || !sync.configured
-                        ? Icons.cloud_off_outlined
-                        : sync.lastError != null
-                        ? Icons.cloud_off_outlined
-                        : Icons.cloud_done_outlined,
+                    sync != null && sync.configured && sync.lastError == null
+                        ? Icons.cloud_done_outlined
+                        : Icons.cloud_off_outlined,
                     color: sync != null && sync.configured && sync.lastError == null ? t.accent : t.muted,
                   ),
                   title: Text(syncSummary(sync)),
                   subtitle: Text(
                     sync != null && sync.configured
                         ? (sync.location ?? '')
-                        : 'The same hosts on every device, through storage you already have. Free.',
+                        : 'Share your hosts across devices, using storage you already have.',
                   ),
                   trailing: TextButton(
                     onPressed: () => context.go('/settings/sync'),
@@ -208,115 +210,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 ),
               ),
-              if (engine.secretsState() case final kept when kept != SecretsState.encrypted) ...[
-                const SizedBox(height: 16),
-                _Section(
-                  title: 'Security',
-                  child: ListTile(
-                    key: const Key('secrets-state'),
-                    leading: Icon(
-                      kept == SecretsState.locked ? Icons.lock_outline : Icons.lock_open_outlined,
-                      color: t.muted,
-                    ),
-                    title: Text(
-                      kept == SecretsState.locked
-                          ? 'Saved passwords and keys are locked'
-                          : 'Your data on this device is not encrypted',
-                    ),
-                    subtitle: Text(
-                      kept == SecretsState.locked
-                          ? "Promptly couldn't get its key from your system's secure storage, so it can't use or save passwords and keys, and it can't open your saved hosts and settings. Anything you add now is kept only until Promptly closes. Unlock your keychain, or allow Promptly when asked, and restart Promptly."
-                          : 'This computer has no keyring for Promptly to keep its key in, so only file permissions protect your hosts, settings, passwords and keys. Install one, such as GNOME Keyring or KWallet, and restart Promptly.',
-                    ),
-                  ),
-                ),
-              ],
               const SizedBox(height: 16),
               _Section(
-                title: 'Engine',
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.memory_outlined, color: t.muted, size: 20),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Rust engine ${engine.version()}',
-                              style: monoStyle(context, size: 13, color: t.text),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Milestone 0 check: send a string through the engine and back.',
-                        style: TextStyle(color: t.muted, fontSize: 13),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              key: const Key('ping-input'),
-                              controller: _pingController,
-                              onSubmitted: (_) => _ping(),
-                              style: monoStyle(context, size: 14),
-                              decoration: const InputDecoration(hintText: 'Your name'),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          FilledButton(onPressed: _ping, child: const Text('Ping')),
-                        ],
-                      ),
-                      if (_pingReply != null) ...[
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Icon(Icons.check_circle_outline, color: t.accent, size: 18),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                _pingReply!,
-                                key: const Key('ping-reply'),
-                                style: monoStyle(context, size: 13, color: t.text),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              if (updateChecksSupported) ...[
-                const SizedBox(height: 16),
-                _Section(
-                  title: 'Updates',
-                  child: SwitchListTile(
-                    key: const Key('update-check'),
-                    title: const Text('Check for updates automatically'),
-                    subtitle: const Text(
-                      'Asks GitHub once a day whether a new version is out. Off, Promptly only looks when you press Check on the About page.',
-                    ),
-                    value: ref.watch(updateCheckProvider),
-                    onChanged: (v) => ref.read(updateCheckProvider.notifier).set(v),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 16),
-              _Section(
-                title: 'Help',
+                title: 'About',
                 child: Column(
                   children: [
+                    if (updateChecksSupported)
+                      SwitchListTile(
+                        key: const Key('update-check'),
+                        title: const Text('Check for updates'),
+                        subtitle: const Text('Asks GitHub once a day.'),
+                        value: ref.watch(updateCheckProvider),
+                        onChanged: (v) => ref.read(updateCheckProvider.notifier).set(v),
+                      ),
                     ListTile(
                       key: const Key('settings-help'),
                       leading: Icon(Icons.help_outline, color: t.muted),
                       title: const Text('Help'),
-                      subtitle: const Text('Getting started, keyboard shortcuts, what the session bar does.'),
+                      subtitle: const Text('Getting started and keyboard shortcuts.'),
                       trailing: Icon(Icons.chevron_right, color: t.muted),
                       onTap: () => context.go('/settings/help'),
                     ),
@@ -324,7 +235,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       key: const Key('settings-about'),
                       leading: Icon(Icons.info_outline, color: t.muted),
                       title: const Text('About Promptly'),
-                      subtitle: Text('Version $appVersion · free and open source, MIT licensed.'),
+                      subtitle: Text('Version $appVersion'),
                       trailing: Icon(Icons.chevron_right, color: t.muted),
                       onTap: () => context.go('/settings/about'),
                     ),
@@ -342,10 +253,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 /// Text sizes offered in Settings; zooming can land between them.
 const fontSizeChoices = [10.0, 12.0, 13.0, 14.0, 16.0, 18.0, 20.0, 24.0, 28.0];
 
-/// The terminal's font, ligatures, keyboard suggestions, bell, text size
-/// and scrollback, in the Terminal section.
-class TerminalChoices extends ConsumerWidget {
-  const TerminalChoices({super.key});
+/// The terminal's font, text size and ligatures, in the Appearance section.
+class TextChoices extends ConsumerWidget {
+  const TextChoices({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -360,28 +270,44 @@ class TerminalChoices extends ConsumerWidget {
           trailing: const Icon(Icons.chevron_right),
           onTap: () => context.go('/settings/fonts'),
         ),
+        _ChoiceTile<double>(
+          key: const Key('font-size'),
+          title: 'Text size',
+          description: 'Zooming in a session (Ctrl and + or −) changes it too.',
+          value: fontSize,
+          choices: {
+            for (final size in {...fontSizeChoices, fontSize}.toList()..sort())
+              size: size == FontSizeNotifier.normal ? '${size.round()} (default)' : '${size.round()}',
+          },
+          onChanged: (v) {
+            ref.read(fontSizeProvider.notifier).set(v);
+            ref.read(sessionManagerProvider.notifier).applyFontSize(v);
+          },
+        ),
         SwitchListTile(
           key: const Key('ligatures'),
           title: const Text('Ligatures'),
-          subtitle: const Text('Draws pairs such as -> and != as one symbol, in fonts that have them.'),
+          subtitle: const Text('Shows pairs such as -> and != as one symbol, in fonts that have them.'),
           value: ref.watch(ligaturesProvider),
           onChanged: (v) => ref.read(ligaturesProvider.notifier).set(v),
         ),
-        if (isTouchPlatform)
-          SwitchListTile(
-            key: const Key('autocorrect'),
-            title: const Text('Keyboard suggestions and autocorrect'),
-            subtitle: const Text(
-              'Lets the keyboard suggest words and correct them as you type. Off, what you type is sent exactly as typed.',
-            ),
-            value: ref.watch(autocorrectProvider),
-            onChanged: (v) => ref.read(autocorrectProvider.notifier).set(v),
-          ),
+      ],
+    );
+  }
+}
+
+/// The bell, scrollback and keyboard suggestions, in the Terminal section.
+class TerminalChoices extends ConsumerWidget {
+  const TerminalChoices({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Column(
+      children: [
         _ChoiceTile<BellMode>(
           key: const Key('bell'),
           title: 'Bell',
-          description:
-              'What happens when a program rings the bell. Vibrate works on phones and tablets; elsewhere the screen flashes.',
+          description: 'When a program rings the bell. Vibrate is for phones and tablets.',
           value: ref.watch(bellProvider),
           choices: const {
             BellMode.flash: 'Flash the screen',
@@ -390,31 +316,25 @@ class TerminalChoices extends ConsumerWidget {
           },
           onChanged: (v) => ref.read(bellProvider.notifier).set(v),
         ),
-        _ChoiceTile<double>(
-          key: const Key('font-size'),
-          title: 'Text size',
-          description: 'Zooming in a session (Ctrl and + or −) changes it too, and the last size is kept.',
-          value: fontSize,
-          choices: {
-            for (final size in {...fontSizeChoices, fontSize}.toList()..sort())
-              size: size == FontSizeNotifier.normal ? '${size.round()}, the usual size' : '${size.round()}',
-          },
-          onChanged: (v) {
-            ref.read(fontSizeProvider.notifier).set(v);
-            ref.read(sessionManagerProvider.notifier).applyFontSize(v);
-          },
-        ),
         _ChoiceTile<int>(
           key: const Key('scrollback'),
-          title: 'Lines to keep for scrolling back',
-          description: 'More lines use more memory. A change applies to sessions opened after it.',
+          title: 'Scrollback',
+          description: 'Lines kept for scrolling back. Applies to new sessions.',
           value: ref.watch(scrollbackProvider),
           choices: {
             for (final lines in ScrollbackNotifier.choices)
-              lines: lines == 10000 ? '${_thousands(lines)}, the usual' : _thousands(lines),
+              lines: lines == 10000 ? '${_thousands(lines)} (default)' : _thousands(lines),
           },
           onChanged: (v) => ref.read(scrollbackProvider.notifier).set(v),
         ),
+        if (isTouchPlatform)
+          SwitchListTile(
+            key: const Key('autocorrect'),
+            title: const Text('Autocorrect and suggestions'),
+            subtitle: const Text('Off, what you type is sent exactly as typed.'),
+            value: ref.watch(autocorrectProvider),
+            onChanged: (v) => ref.read(autocorrectProvider.notifier).set(v),
+          ),
       ],
     );
   }
@@ -432,9 +352,7 @@ class HardwareKeyboardChoices extends ConsumerWidget {
         SwitchListTile(
           key: const Key('caps-lock-escape'),
           title: const Text('Caps Lock types Escape'),
-          subtitle: const Text(
-            'Handy in vim. Letters then follow Shift alone, even if the Caps Lock light comes on.',
-          ),
+          subtitle: const Text('Handy in vim. Use Shift for capitals.'),
           value: ref.watch(capsLockEscapeProvider),
           onChanged: (v) => ref.read(capsLockEscapeProvider.notifier).set(v),
         ),
@@ -442,9 +360,7 @@ class HardwareKeyboardChoices extends ConsumerWidget {
           SwitchListTile(
             key: const Key('cmd-as-ctrl'),
             title: const Text('Cmd works as Ctrl'),
-            subtitle: const Text(
-              'In the terminal, Cmd+C stops a program as Ctrl+C does. Copy and paste with Cmd+Shift+C and Cmd+Shift+V.',
-            ),
+            subtitle: const Text('Copy and paste become Cmd+Shift+C and Cmd+Shift+V.'),
             value: ref.watch(cmdAsCtrlProvider),
             onChanged: (v) => ref.read(cmdAsCtrlProvider.notifier).set(v),
           ),
@@ -452,9 +368,7 @@ class HardwareKeyboardChoices extends ConsumerWidget {
           SwitchListTile(
             key: const Key('option-as-meta'),
             title: const Text('Option works as Alt'),
-            subtitle: const Text(
-              'For Alt shortcuts in programs such as emacs. Off, Option types characters, such as @ on a German keyboard.',
-            ),
+            subtitle: const Text('For Alt shortcuts, as in emacs. Off, Option types special characters.'),
             value: ref.watch(optionAsMetaProvider),
             onChanged: (v) => ref.read(optionAsMetaProvider.notifier).set(v),
           ),
