@@ -167,6 +167,14 @@ class SettingsScreen extends ConsumerWidget {
                       onChanged: (v) => ref.read(reachabilityProvider.notifier).set(v),
                     ),
                     ListTile(
+                      key: const Key('settings-session-labels'),
+                      leading: Icon(Icons.label_outline, color: t.muted),
+                      title: const Text('Session labels'),
+                      subtitle: const Text('Coloured bars such as Production, so you know which box you are on.'),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => context.go('/settings/session-labels'),
+                    ),
+                    ListTile(
                       key: const Key('import-csv'),
                       leading: Icon(Icons.table_chart_outlined, color: t.muted),
                       title: const Text('Import from a CSV file'),

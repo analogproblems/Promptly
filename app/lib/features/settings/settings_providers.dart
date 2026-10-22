@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
+import '../hosts/session_labels.dart';
 
 /// Keys of the app's settings. These are wire names. The engine keeps the
 /// ones that make sense on every device (the look, how the terminal behaves;
@@ -40,6 +41,7 @@ void reloadSyncedSettings(WidgetRef ref) {
   ref.invalidate(pasteWarningProvider);
   ref.invalidate(bellProvider);
   ref.invalidate(scrollbackProvider);
+  ref.invalidate(sessionLabelsProvider);
 }
 
 String? _readString(Engine engine, String key) {

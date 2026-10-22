@@ -7,6 +7,7 @@ import '../hosts/host_colors.dart';
 import '../hosts/inheritance.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
+import '../hosts/session_labels.dart';
 import '../sessions/session_body.dart';
 import '../sessions/session_manager.dart';
 import '../sessions/status_dot.dart';
@@ -164,6 +165,8 @@ class _Tab extends StatelessWidget {
         final s = session;
         final title = s == null ? 'New tab' : s.title;
         final accent = s?.color == null ? null : hostColor(s!.color, brightness);
+        final mark = s?.mark;
+        final markColor = mark == null ? null : labelColor(mark.color, brightness);
         return InkWell(
           onTap: onSelect,
           child: Container(
@@ -173,7 +176,7 @@ class _Tab extends StatelessWidget {
               color: selected ? t.background : null,
               border: Border(
                 bottom: BorderSide(
-                  color: s?.production != null ? t.danger : (selected ? (accent ?? t.accent) : Colors.transparent),
+                  color: markColor ?? (selected ? (accent ?? t.accent) : Colors.transparent),
                   width: 2,
                 ),
                 right: BorderSide(color: t.border),
@@ -183,9 +186,9 @@ class _Tab extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 SessionStatusDot(entry: s, size: 7, liveColor: accent),
-                if (s?.production case final badge?) ...[
+                if (mark != null) ...[
                   const SizedBox(width: 6),
-                  _ProductionTag(label: badge),
+                  _LabelTag(text: mark.text, color: markColor!),
                 ],
                 const SizedBox(width: 8),
                 Flexible(
@@ -570,29 +573,29 @@ class _EmptyPaneState extends ConsumerState<_EmptyPane> {
   }
 }
 
-/// The production label on a tab, in words as well as red.
-class _ProductionTag extends StatelessWidget {
-  const _ProductionTag({required this.label});
+/// A session label on a tab, in words as well as colour.
+class _LabelTag extends StatelessWidget {
+  const _LabelTag({required this.text, required this.color});
 
-  final String label;
+  final String text;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 90),
       child: Container(
-        key: const Key('tab-production'),
+        key: const Key('tab-session-label'),
         padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
         decoration: BoxDecoration(
-          border: Border.all(color: t.danger),
+          border: Border.all(color: color),
           borderRadius: BorderRadius.circular(4),
         ),
         child: Text(
-          label.toUpperCase(),
+          text.toUpperCase(),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: t.danger),
+          style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color),
         ),
       ),
     );

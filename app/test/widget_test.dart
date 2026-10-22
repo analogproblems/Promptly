@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:async';
 import 'dart:io' show File;
 import 'dart:typed_data';
@@ -34,6 +35,7 @@ import 'package:promptly/features/workspace/workspace_screen.dart';
 import 'package:promptly/features/updates/updates.dart';
 import 'package:promptly/features/lock/app_lock.dart';
 import 'package:promptly/features/sync/sync_screen.dart' show SyncScreen;
+import 'package:promptly/features/hosts/repositories.dart' show hostsProvider;
 import 'package:promptly/features/snippets/repositories.dart' show snippetsProvider;
 import 'package:promptly/core/router.dart' show routerProvider;
 
@@ -3609,14 +3611,17 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Edit'));
     await tester.pumpAndSettle();
-    await scrollTap(tester, find.byKey(const Key('host-production')));
+    await scrollTap(tester, find.byKey(const Key('host-session-label')));
     await tester.pumpAndSettle();
-    await scrollTo(tester, find.byKey(const Key('host-production-label')));
-    await tester.enterText(find.byKey(const Key('host-production-label')), 'Live payments');
+    await tester.tap(find.text('Production').last);
+    await tester.pumpAndSettle();
+    await scrollTo(tester, find.byKey(const Key('host-label-text')));
+    await tester.enterText(find.byKey(const Key('host-label-text')), 'Live payments');
     await tester.tap(find.byKey(const Key('host-save')));
     await tester.pumpAndSettle();
     final saved = engine.records['hosts']!['h1']!;
-    expect(saved, contains('"production":true'));
+    expect(saved, contains('"session_label":"production"'));
+    expect(saved, contains('"production":true'), reason: 'older apps still see a production host');
     expect(saved, contains('"production_label":"Live payments"'));
 
     // On a desktop window, so the session opens in a tab.
@@ -3626,12 +3631,110 @@ void main() {
     await tester.pumpAndSettle();
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('production-bar')), findsOneWidget);
+    expect(find.byKey(const Key('session-label-bar')), findsOneWidget);
     expect(find.text('LIVE PAYMENTS'), findsWidgets, reason: 'the bar and the tab say it in words');
-    expect(find.byKey(const Key('tab-production')), findsOneWidget);
+    expect(find.byKey(const Key('tab-session-label')), findsOneWidget);
     expect(find.bySemanticsLabel('Production host: Live payments'), findsOneWidget);
     expect(find.byKey(const Key('host-colour-bar')), findsNothing, reason: 'the red bar replaces the colour strip');
+    expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget, reason: 'production warns');
     handle.dispose();
+  });
+
+  testWidgets('a label made in Settings has its own name and colour, and a host can carry it', (tester) async {
+    final engine = FakeEngine()..connectedSessionId = 7;
+    engine.records['hosts'] = {'h1': hostJson('h1', 'stage-1')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('settings-session-labels')));
+    await tester.pumpAndSettle();
+    expect(find.text('Production'), findsOneWidget, reason: 'the preset comes with the app');
+
+    await tester.tap(find.byKey(const Key('label-add')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('label-name')), 'Staging');
+    await tester.enterText(find.byKey(const Key('label-hex')), '#12345');
+    await tester.pump();
+    expect(find.text('Six hex digits, such as #1F6FEB'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('label-hex')), '1f6feb');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('label-save')));
+    await tester.pumpAndSettle();
+    final labels = jsonDecode(engine.settings['session_labels']!) as List;
+    expect(labels.map((l) => l['name']), ['Production', 'Staging']);
+    final staging = labels.last as Map;
+    expect(staging['color'], '#1F6FEB');
+    expect(staging['warn'], isFalse);
+
+    // Production can be changed like any other label.
+    await tester.tap(find.byKey(const Key('label-production')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('label-name')), 'Live');
+    await tester.tap(find.byKey(const Key('label-colour-orange')));
+    await tester.tap(find.byKey(const Key('label-save')));
+    await tester.pumpAndSettle();
+    final edited = (jsonDecode(engine.settings['session_labels']!) as List).first as Map;
+    expect(edited, {'id': 'production', 'name': 'Live', 'color': 'orange', 'warn': true});
+
+    // The host takes Staging, and its session's bar is in Staging's colour.
+    await tester.tap(find.text('Hosts').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Host actions').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Edit'));
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('host-session-label')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Staging').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('host-save')));
+    await tester.pumpAndSettle();
+    expect(engine.records['hosts']!['h1'], contains('"session_label":"${staging['id']}"'));
+    expect(engine.records['hosts']!['h1'], contains('"production":false'));
+    await tester.tap(find.byKey(const Key('host-row-h1')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+    final bar = tester.widget<Container>(find.byKey(const Key('session-label-bar')));
+    expect(bar.color, const Color(0xFF1F6FEB));
+    expect(find.text('STAGING'), findsWidgets);
+    expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+  });
+
+  testWidgets('deleting a label takes it off its hosts', (tester) async {
+    final engine = FakeEngine();
+    engine.records['hosts'] = {
+      'h1': hostJson('h1', 'db-1', extra: ',"production":true'),
+    };
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('settings-session-labels')));
+    await tester.pumpAndSettle();
+    expect(find.text('1 host'), findsOneWidget, reason: 'a host marked production before labels has the preset');
+    await tester.tap(find.byKey(const Key('label-production')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('label-delete')));
+    await tester.pumpAndSettle();
+    expect(find.text('1 host uses it. It stays, without a label.'), findsOneWidget);
+    // While the question is open, another device moves the host and adds one more with the label.
+    engine.records['hosts'] = {
+      'h1': hostJson('h1', 'db-1', extra: ',"production":true').replaceFirst('"hostname":"db-1.example"', '"hostname":"db-2.example"'),
+      'h2': hostJson('h2', 'db-3', extra: ',"session_label":"production"'),
+    };
+    ProviderScope.containerOf(tester.element(find.byType(MaterialApp))).invalidate(hostsProvider);
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('label-delete-confirm')));
+    await tester.pumpAndSettle();
+    expect(engine.settings['session_labels'], '[]');
+    final saved = jsonDecode(engine.records['hosts']!['h1']!) as Map;
+    expect(saved['session_label'], isNull);
+    expect(saved['production'], isFalse);
+    expect(saved['hostname'], 'db-2.example', reason: 'the synced change stands');
+    expect(jsonDecode(engine.records['hosts']!['h2']!)['session_label'], isNull);
+    expect(find.text('No labels yet.'), findsOneWidget);
   });
 
   testWidgets('while reconnecting the status dot is amber, says so, and pulses unless motion is reduced', (
@@ -3715,7 +3818,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Edit'));
     await tester.pumpAndSettle();
-    for (final key in ['host-tags', 'host-production-label', 'host-jump']) {
+    for (final key in ['host-tags', 'host-label-text', 'host-jump']) {
       await scrollTo(tester, find.byKey(Key(key)));
     }
     // The test dialog, with a failure in it.

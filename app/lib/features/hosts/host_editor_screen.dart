@@ -15,6 +15,12 @@ import 'host_colors.dart';
 import 'inheritance.dart';
 import 'models.dart';
 import 'repositories.dart';
+import 'session_label_editor.dart';
+import 'session_labels.dart';
+
+// Session label menu values that are not label ids.
+const _noLabel = '';
+const _newLabel = '+new';
 
 enum _AuthChoice { password, key, agent, ask, none }
 
@@ -47,7 +53,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
   late final TextEditingController _password;
   late final TextEditingController _notes;
   late final TextEditingController _tags;
-  late final TextEditingController _productionLabel;
+  late final TextEditingController _labelText;
   late final TextEditingController _keepalive;
   late final TextEditingController _startup;
   late final TextEditingController _env;
@@ -66,7 +72,8 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
   String? _groupId;
   String? _color;
   late bool _favourite;
-  late bool _production;
+  String? _sessionLabelId;
+  int _labelMenuVersion = 0;
   late bool _localOnly;
   String? _error;
 
@@ -83,8 +90,8 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     _password = TextEditingController();
     _notes = TextEditingController(text: _original.notes);
     _tags = TextEditingController(text: _original.tags.join(', '));
-    _productionLabel = TextEditingController(text: _original.productionLabel);
-    _production = _original.production;
+    _labelText = TextEditingController(text: _original.labelText);
+    _sessionLabelId = _original.sessionLabelId;
     _keepalive = TextEditingController(text: '${_original.keepaliveSeconds}');
     _startup = TextEditingController(text: _original.startupCommand ?? '');
     _env = TextEditingController(text: [for (final e in _original.env.entries) '${e.key}=${e.value}'].join('\n'));
@@ -118,7 +125,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
       _password,
       _notes,
       _tags,
-      _productionLabel,
+      _labelText,
       _keepalive,
       _startup,
       _env,
@@ -152,8 +159,8 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     notes: _notes.text,
     keepaliveSeconds: int.tryParse(_keepalive.text.trim()) ?? 30,
     favourite: _favourite,
-    production: _production,
-    productionLabel: _productionLabel.text.trim(),
+    sessionLabelId: _sessionLabelId,
+    labelText: _labelText.text.trim(),
     jumpHostId: _jumpHostId,
     persistentSession: _persistent,
     agentForwarding: _agentForwarding,
@@ -371,6 +378,7 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
     final t = context.tokens;
     final identities = ref.watch(identitiesProvider);
     final groups = ref.watch(groupsProvider);
+    final labels = ref.watch(sessionLabelsProvider);
     final otherHosts = [for (final h in ref.watch(hostsProvider)) if (h.id != _original.id) h];
     final brightness = Theme.of(context).brightness;
     ref.watch(groupsProvider);
@@ -660,23 +668,61 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
                       ),
                     ],
                     const SizedBox(height: 4),
-                    SwitchListTile(
-                      key: const Key('host-production'),
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Mark as production'),
-                      subtitle: const Text('Its sessions get a red bar with a label, so you always know.'),
-                      value: _production,
-                      onChanged: (v) => setState(() => _production = v),
-                    ),
-                    if (_production)
-                      TextFormField(
-                        key: const Key('host-production-label'),
-                        controller: _productionLabel,
+                    const SizedBox(height: 12),
+                    KeyedSubtree(
+                      key: ValueKey(_labelMenuVersion),
+                      child: DropdownButtonFormField<String>(
+                        key: const Key('host-session-label'),
+                        initialValue: labels.any((l) => l.id == _sessionLabelId) ? _sessionLabelId : _noLabel,
+                        isExpanded: true,
                         decoration: const InputDecoration(
-                          labelText: 'Label on the bar',
-                          hintText: 'Production',
+                          labelText: 'Session label',
+                          helperText: 'Its sessions get a bar in the label\'s colour, with its name, so you always know.',
+                          helperMaxLines: 2,
+                        ),
+                        items: [
+                          const DropdownMenuItem(value: _noLabel, child: Text('None')),
+                          for (final l in labels)
+                            DropdownMenuItem(
+                              value: l.id,
+                              child: Row(
+                                children: [
+                                  LabelDot(color: l.color),
+                                  const SizedBox(width: 8),
+                                  Flexible(child: Text(l.name, overflow: TextOverflow.ellipsis)),
+                                ],
+                              ),
+                            ),
+                          const DropdownMenuItem(value: _newLabel, child: Text('New label…')),
+                        ],
+                        onChanged: (v) async {
+                          if (v != _newLabel) {
+                            setState(() => _sessionLabelId = v == _noLabel ? null : v);
+                            return;
+                          }
+                          final made = await showSessionLabelEditor(context, SessionLabel.create(), isNew: true);
+                          if (!mounted) return;
+                          // Rebuilt either way, so the menu shows what is chosen and not "New label…".
+                          setState(() {
+                            _sessionLabelId = made?.id ?? _sessionLabelId;
+                            _labelMenuVersion++;
+                          });
+                        },
+                      ),
+                    ),
+                    if (labels.any((l) => l.id == _sessionLabelId)) ...[
+                      const SizedBox(height: 12),
+                      TextFormField(
+                        key: const Key('host-label-text'),
+                        controller: _labelText,
+                        decoration: InputDecoration(
+                          labelText: 'Words on the bar',
+                          hintText: labels.firstWhere((l) => l.id == _sessionLabelId).name,
+                          helperText: 'Leave blank to show the label\'s name.',
                         ),
                       ),
+                    ],
+                    const SizedBox(height: 4),
                     SwitchListTile(
                       key: const Key('host-local-only'),
                       contentPadding: EdgeInsets.zero,

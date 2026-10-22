@@ -111,8 +111,8 @@ class Host {
     this.portForwards = const [],
     this.lastConnectedAt,
     this.favourite = false,
-    this.production = false,
-    this.productionLabel = '',
+    this.sessionLabelId,
+    this.labelText = '',
     this.sync = 'vault',
   });
 
@@ -139,15 +139,13 @@ class Host {
   final DateTime? lastConnectedAt;
   final bool favourite;
 
-  /// Sessions to this host carry a red bar with [productionBadge].
-  final bool production;
+  /// The session label (see `session_labels.dart`) whose coloured bar
+  /// its sessions carry, or null for none.
+  final String? sessionLabelId;
 
-  /// The bar's words; blank means "Production".
-  final String productionLabel;
+  /// The bar's words for this host; blank uses the label's name.
+  final String labelText;
   final String sync;
-
-  /// What a production host's sessions say on their red bar.
-  String get productionBadge => productionLabel.trim().isEmpty ? 'Production' : productionLabel.trim();
 
   String get endpoint => '$username@$hostname${port == 22 ? '' : ':$port'}';
 
@@ -164,8 +162,8 @@ class Host {
     int? keepaliveSeconds,
     Object? lastConnectedAt = _unset,
     bool? favourite,
-    bool? production,
-    String? productionLabel,
+    Object? sessionLabelId = _unset,
+    String? labelText,
     Object? jumpHostId = _unset,
     Object? startupCommand = _unset,
     Map<String, String>? env,
@@ -196,8 +194,8 @@ class Host {
         lastConnectedAt: lastConnectedAt == _unset ? this.lastConnectedAt : lastConnectedAt as DateTime?,
         favourite: favourite ?? this.favourite,
         sync: sync ?? this.sync,
-        production: production ?? this.production,
-        productionLabel: productionLabel ?? this.productionLabel,
+        sessionLabelId: sessionLabelId == _unset ? this.sessionLabelId : sessionLabelId as String?,
+        labelText: labelText ?? this.labelText,
       );
 
   Map<String, dynamic> toJson() => {
@@ -221,8 +219,10 @@ class Host {
         'port_forwards': [for (final f in portForwards) f.toJson()],
         'last_connected_at': lastConnectedAt?.toUtc().toIso8601String(),
         'favourite': favourite,
-        'production': production,
-        'production_label': productionLabel,
+        'session_label': sessionLabelId,
+        // What older apps read: they know only the production label.
+        'production': sessionLabelId == 'production',
+        'production_label': labelText,
         'sync': sync,
       };
 
@@ -250,8 +250,9 @@ class Host {
         ],
         lastConnectedAt: j['last_connected_at'] == null ? null : DateTime.tryParse(j['last_connected_at'] as String),
         favourite: j['favourite'] as bool? ?? false,
-        production: j['production'] as bool? ?? false,
-        productionLabel: j['production_label'] as String? ?? '',
+        // A host marked production before labels existed has that label.
+        sessionLabelId: j['session_label'] as String? ?? (j['production'] == true ? 'production' : null),
+        labelText: j['production_label'] as String? ?? '',
         sync: j['sync'] as String? ?? 'vault',
       );
 }

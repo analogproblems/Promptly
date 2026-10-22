@@ -161,7 +161,7 @@ On a computer with a window at least 900 pixels wide, the app gains a **menu bar
 Each session has a slim bar along its top edge. From left to right it shows:
 
 - A coloured dot: green when connected, amber while connecting, amber and pulsing while reconnecting, grey when not connected. Point at it (or use a screen reader) to hear which.
-- For a [production host](#marking-a-production-host), a red bar above it with the host's label.
+- For a host with a [session label](#session-labels), such as **Production**, a bar in the label's colour above it, with its name.
 - The session's title, usually set by the server's shell (for example `deploy@web-1: ~`).
 - The terminal's size in columns and rows, such as `120×40`.
 - Buttons for **Search**, **Snippets**, **Files** (SSH sessions only) and **Port forwards** (hosts that have some), and a **Close** button.
@@ -230,7 +230,7 @@ Some servers only ask for the password through their own login prompt (PAM). A h
 - **Colour:** pick the colour used for the host's tile and its sessions.
 - **Favourite:** show the host in the **Favourites** section.
 - **Tags:** words to find the host by, separated by commas, such as `web, eu-west`.
-- **Mark as production:** see [Marking a production host](#marking-a-production-host) below.
+- **Session label:** a coloured bar on the host's sessions, such as **Production**. See [Session labels](#session-labels) below.
 - **Keep on this device only:** if you use sync, the host and its saved password stay on this device and never go into the vault. Turning it on for a host that already syncs removes it from your other devices; it stays here. Turn it off to sync it again. See [Keeping things on one device](#keeping-things-on-one-device).
 
 **Connection.** Jump host, persistent session, agent forwarding, startup command, environment variables and keep-alive. These are explained in [chapter 13](#13-more-connection-options).
@@ -241,9 +241,11 @@ Some servers only ask for the password through their own login prompt (PAM). A h
 
 Tap **Save** when you're done.
 
-### Marking a production host
+### Session labels
 
-Turn on **Mark as production** in the host's **Organise** section, and optionally type a **Label on the bar**, such as `Live payments`. Every session to that host then has a red bar across the top with the label in capitals (or **PRODUCTION** if you leave the label empty), and on a computer its tab carries the label too. The words are there as well as the colour, so the warning doesn't depend on seeing red.
+A session label marks the hosts you need to be careful with, or just want to tell apart. Pick one under **Session label** in the host's **Organise** section, and optionally type **Words on the bar**, such as `Live payments`. Every session to that host then has a bar across the top in the label's colour with the words in capitals (or the label's name if you leave them empty), and on a computer its tab carries the words and the colour too. The words are there as well as the colour, so the warning doesn't depend on seeing it.
+
+Promptly comes with one label, **Production**: red, with a warning sign. To change it or make your own, such as **Staging** in yellow or a label per customer, go to **Settings**, **Hosts**, **Session labels**, or choose **New label…** in a host's **Session label** menu. Each label has a name, a colour (one of the eight, or your own as a hex code such as `#1F6FEB`) and, if you like, a warning sign. Deleting a label takes it off its hosts; the hosts stay. Labels sync with your other devices along with your settings.
 
 ### Editing and deleting a host
 

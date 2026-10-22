@@ -39,6 +39,7 @@ pub const SYNCED_SETTINGS: &[&str] = &[
     "paste_warning",
     "terminal_bell",
     "terminal_scrollback",
+    "session_labels",
 ];
 
 /// Whether a record travels in the vault or stays on this device. Hosts
@@ -150,11 +151,18 @@ pub struct Host {
     pub last_connected_at: Option<OffsetDateTime>,
     #[serde(default)]
     pub favourite: bool,
-    /// Sessions to this host carry a red bar with `production_label`, so
-    /// nobody types into a live server thinking it is a test box.
+    /// The session label whose coloured bar and border its sessions carry,
+    /// by id from the `session_labels` setting, so nobody types into a live
+    /// server thinking it is a test box. Missing on records from before
+    /// labels: those use `production`.
+    #[serde(default)]
+    pub session_label: Option<String>,
+    /// Whether the label is the built-in "production" one. Older apps read
+    /// only this; a record with no `session_label` takes it as that label.
     #[serde(default)]
     pub production: bool,
-    /// The bar's words; the app says "Production" when this is empty.
+    /// The bar's words for this host; blank uses the label's name. Named
+    /// from when only production hosts had a bar.
     #[serde(default)]
     pub production_label: String,
     #[serde(default)]
@@ -193,6 +201,7 @@ impl Host {
             port_forwards: Vec::new(),
             last_connected_at: None,
             favourite: false,
+            session_label: None,
             production: false,
             production_label: String::new(),
             sync: SyncPolicy::Vault,
@@ -382,6 +391,20 @@ mod tests {
         assert_eq!(h.sync, SyncPolicy::Vault);
         assert!(!h.production, "older records are not production hosts");
         assert_eq!(h.production_label, "");
+        assert_eq!(h.session_label, None);
+    }
+
+    #[test]
+    fn a_labelled_host_keeps_its_label_id() {
+        let mut h = Host::new("stage-1", "10.0.0.6");
+        h.session_label = Some("0192d1c2-staging".into());
+        let json = serde_json::to_string(&h).unwrap();
+        assert!(
+            json.contains(r#""session_label":"0192d1c2-staging""#),
+            "{json}"
+        );
+        let back: Host = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.session_label.as_deref(), Some("0192d1c2-staging"));
     }
 
     #[test]

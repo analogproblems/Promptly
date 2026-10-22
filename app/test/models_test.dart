@@ -1,9 +1,11 @@
 import 'dart:convert';
 
+import 'package:flutter/painting.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:promptly/core/engine/engine.dart';
 import 'package:promptly/core/engine/records.dart';
 import 'package:promptly/features/hosts/models.dart';
+import 'package:promptly/features/hosts/session_labels.dart';
 
 void main() {
   test('a host round-trips through the vault JSON format', () {
@@ -31,14 +33,40 @@ void main() {
     expect(back.lastConnectedAt, h.lastConnectedAt);
   });
 
-  test('a production host keeps its mark and label, and older records have none', () {
-    final h = Host(id: newRecordId(), label: 'db-1', hostname: 'db', production: true, productionLabel: 'Live');
-    final back = Host.fromJson(jsonDecode(jsonEncode(h.toJson())) as Map<String, dynamic>);
-    expect(back.production, isTrue);
-    expect(back.productionBadge, 'Live');
-    final old = Host.fromJson({'id': 'x', 'label': 'x', 'hostname': 'x'});
-    expect(old.production, isFalse);
-    expect(old.copyWith(production: true).productionBadge, 'Production');
+  test('a labelled host keeps its label and words, and older records keep their production mark', () {
+    final h = Host(id: newRecordId(), label: 'db-1', hostname: 'db', sessionLabelId: 'staging', labelText: 'Live');
+    final json = h.toJson();
+    expect(json['production'], isFalse, reason: 'older apps only know the production label');
+    final back = Host.fromJson(jsonDecode(jsonEncode(json)) as Map<String, dynamic>);
+    expect(back.sessionLabelId, 'staging');
+    expect(back.labelText, 'Live');
+    expect(back.copyWith(sessionLabelId: null).sessionLabelId, isNull);
+
+    final none = Host.fromJson({'id': 'x', 'label': 'x', 'hostname': 'x'});
+    expect(none.sessionLabelId, isNull);
+    final old = Host.fromJson({'id': 'x', 'label': 'x', 'hostname': 'x', 'production': true, 'production_label': 'Payments'});
+    expect(old.sessionLabelId, productionLabelId, reason: 'marked production before labels existed');
+    expect(old.toJson()['production'], isTrue);
+  });
+
+  test('a host shows its own words, or the label\'s name, and nothing once its label is gone', () {
+    const labels = [
+      ...defaultSessionLabels,
+      SessionLabel(id: 'stg', name: 'Staging', color: '#1F6FEB'),
+    ];
+    final prod = Host(id: 'a', label: 'a', hostname: 'a', sessionLabelId: productionLabelId);
+    final mark = markFor(prod, labels)!;
+    expect(mark.text, 'Production');
+    expect(mark.warn, isTrue);
+    expect(mark.color, 'red');
+    final stg = markFor(prod.copyWith(sessionLabelId: 'stg', labelText: ' Blue team '), labels)!;
+    expect(stg.text, 'Blue team');
+    expect(stg.name, 'Staging');
+    expect(markFor(prod.copyWith(sessionLabelId: 'gone'), labels), isNull);
+    expect(markFor(prod.copyWith(sessionLabelId: null), labels), isNull);
+    expect(parseHexColor('#1f6feb'), const Color(0xFF1F6FEB));
+    expect(parseHexColor('1F6FEB'), const Color(0xFF1F6FEB));
+    expect(parseHexColor('#12345'), isNull);
   });
 
   test('ids are UUIDs and colours are stable per label', () {
