@@ -916,9 +916,13 @@ class _TerminalViewState extends State<TerminalView> with TextInputClient, Delta
     final hasSelection = widget.controller.selectionText()?.isNotEmpty == true;
     final link = _isLinkCell(cell) ? widget.controller.linkAt(cell.col, cell.line) : null;
     final kind = link == null ? null : linkKind(link.uri);
+    // The menu lands in the nearest navigator's overlay, which on wide
+    // screens sits beside the sidebar rather than at the window's corner.
+    final overlay = Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    final at = overlay.globalToLocal(global);
     final choice = await showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(global.dx, global.dy, global.dx, global.dy),
+      position: RelativeRect.fromRect(at & Size.zero, Offset.zero & overlay.size),
       items: [
         if (kind != null) ...[
           if (kind == LinkKind.web) const PopupMenuItem(value: 'open-link', child: Text('Open link')),
