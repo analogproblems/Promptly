@@ -2,6 +2,13 @@
 
 Each release's section is what the GitHub Release says; keep it in plain words.
 
+## 1.1.1
+
+- The Settings screen is tidier and shorter. The font, text size and ligatures are together under *Appearance*, the encryption note sits inside *Security*, and *Updates* and *Help* are under *About*. The *Keyboard bar* setting only shows on phones and tablets, where the bar appears, and the leftover *Engine* test section is gone (the engine version is still on the About page).
+- On a computer, the terminal's right-click menu opens where you clicked. Before, on a wide window it opened off to the right and below the pointer.
+- On the host form, *Remember the password on this device* is now *Save the password*, with a line saying where it goes: kept on this device (encrypted where the system has secure storage), and synced once a vault is set up, unless the host is kept on this device only.
+- While you have no sync vault, a card below the hosts list suggests setting one up so your hosts are backed up. *Not now* hides it on that device.
+
 ## 1.1.0
 
 **Before you update:** passwords and private keys saved by 1.0.0 or 1.0.1 aren't carried over, because they are now kept encrypted on your device. After updating, type the passwords again and re-import the keys. On Linux, Promptly now needs libsecret.

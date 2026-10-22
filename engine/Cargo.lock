@@ -1893,7 +1893,7 @@ dependencies = [
 
 [[package]]
 name = "promptly-cli"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -1908,7 +1908,7 @@ dependencies = [
 
 [[package]]
 name = "promptly-session"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "libc",
  "portable-pty",
@@ -1919,7 +1919,7 @@ dependencies = [
 
 [[package]]
 name = "promptly-ssh"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "base64 0.23.1",
  "hmac",
@@ -1941,7 +1941,7 @@ dependencies = [
 
 [[package]]
 name = "promptly-store"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "hkdf",
  "promptly-vault",
@@ -1955,7 +1955,7 @@ dependencies = [
 
 [[package]]
 name = "promptly-term"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "alacritty_terminal",
  "regex",
@@ -1966,7 +1966,7 @@ dependencies = [
 
 [[package]]
 name = "promptly-vault"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "argon2",
  "base64 0.23.1",
@@ -1984,7 +1984,7 @@ dependencies = [
 
 [[package]]
 name = "promptly_api"
-version = "1.1.0"
+version = "1.1.1"
 dependencies = [
  "anyhow",
  "argon2",
