@@ -8,7 +8,8 @@ import '../../core/theme/tokens.dart';
 import 'updates.dart';
 
 /// The About page's update row: check now, and when a new version is out,
-/// install it (Windows, from the installer) or open its download page.
+/// install it (Windows, and Linux from the .deb or the tarball) or open its
+/// download page.
 class UpdatePanel extends ConsumerWidget {
   const UpdatePanel({super.key});
 
@@ -42,11 +43,11 @@ class UpdatePanel extends ConsumerWidget {
       UpdateAvailable(:final release) when state.canInstallInApp => (
         Icons.system_update_alt,
         'Version ${release.version} is out',
-        'Promptly closes, installs it and opens again. Open sessions are closed.',
+        _installHint,
         FilledButton(
           key: const Key('update-install'),
           onPressed: () => notifier.installAndRestart(release),
-          child: const Text('Update and restart'),
+          child: Text(installKind == InstallKind.windowsZip ? 'Install and restart' : 'Update and restart'),
         ),
       ),
       UpdateAvailable(:final release) => (
@@ -64,7 +65,9 @@ class UpdatePanel extends ConsumerWidget {
       UpdateInstalling(:final release) => (
         Icons.system_update_alt,
         'Installing ${release.version}',
-        'Promptly will close and open again by itself.',
+        installKind == InstallKind.linuxDeb
+            ? 'Enter your password to install it. Promptly then closes and opens again.'
+            : 'Promptly will close and open again by itself.',
         null,
       ),
       UpdateFailed(:final message, :final release) => (
@@ -84,6 +87,16 @@ class UpdatePanel extends ConsumerWidget {
       trailing: trailing,
     );
   }
+
+  /// What pressing the install button does on this copy.
+  static String get _installHint => switch (installKind) {
+    InstallKind.windowsZip =>
+      'Promptly installs itself for this user, with a Start menu entry, and opens the installed copy, which updates '
+          'itself from then on. You can delete this unzipped folder afterwards. Open sessions are closed.',
+    InstallKind.linuxDeb => 'Promptly asks for your password, installs it and opens again. Open sessions are closed.',
+    InstallKind.linuxTarball => 'Promptly puts it in place of this folder and opens again. Open sessions are closed.',
+    _ => 'Promptly closes, installs it and opens again. Open sessions are closed.',
+  };
 
   /// What to do with a new version where the app cannot install it itself.
   static String get _downloadHint {

@@ -4,10 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/router.dart';
+import '../onboarding/onboarding.dart';
 import 'updates.dart';
 
 /// With the setting on, looks for a new version a little after launch and
-/// once a day after that, and says so once per version found.
+/// once a day after that, and says so once per version found. With the
+/// setting never touched, offers once to turn it on.
 class UpdateReminder extends ConsumerStatefulWidget {
   const UpdateReminder({super.key, required this.child});
 
@@ -24,10 +26,37 @@ class _UpdateReminderState extends ConsumerState<UpdateReminder> {
   Timer? _timer;
   String? _told;
 
+  static const _offerAfter = Duration(seconds: 20);
+
   @override
   void initState() {
     super.initState();
-    if (updateChecksSupported && ref.read(updateCheckProvider)) _schedule();
+    if (!updateChecksSupported) return;
+    if (ref.read(updateCheckProvider)) {
+      _schedule();
+    } else if (!ref.read(updateCheckProvider.notifier).chosen && ref.read(onboardingDoneProvider)) {
+      // Not on the first run, which has the welcome tour to get through.
+      _timer = Timer(_offerAfter, _offer);
+    }
+  }
+
+  /// Ask once whether to check daily. Asking counts as the answer "no"
+  /// until Turn on is pressed, so it never comes back.
+  void _offer() {
+    if (!mounted || ref.read(updateCheckProvider.notifier).chosen) return;
+    ref.read(updateCheckProvider.notifier).set(false);
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        key: const Key('update-check-offer'),
+        content: const Text('Check for new versions once a day? Promptly only asks GitHub. You can change this in Settings.'),
+        duration: const Duration(seconds: 20),
+        persist: false,
+        action: SnackBarAction(
+          label: 'Turn on',
+          onPressed: () => ref.read(updateCheckProvider.notifier).set(true),
+        ),
+      ),
+    );
   }
 
   @override
@@ -55,7 +84,7 @@ class _UpdateReminderState extends ConsumerState<UpdateReminder> {
         // Gone by itself: the About page keeps the news until it is acted on.
         persist: false,
         action: SnackBarAction(
-          label: 'See',
+          label: release.assetFor(installKind) != null ? 'Update' : 'See',
           onPressed: () => ref.read(routerProvider).go('/settings/about'),
         ),
       ),
