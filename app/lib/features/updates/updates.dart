@@ -200,9 +200,7 @@ class UpdateService {
   /// Fetch [asset] into a temporary folder, reporting progress from 0 to 1,
   /// and check it arrived whole.
   Future<File> download(ReleaseAsset asset, void Function(double) onProgress) async {
-    final dir = await Directory(
-      '${Directory.systemTemp.path}${Platform.pathSeparator}promptly-update',
-    ).create(recursive: true);
+    final dir = await downloadFolder();
     final file = File('${dir.path}${Platform.pathSeparator}${asset.name}');
     final client = _client();
     try {
@@ -227,22 +225,31 @@ class UpdateService {
       }
       return file;
     } on UpdateError {
-      await _remove(file);
+      await _remove(dir);
       rethrow;
     } on TimeoutException {
-      await _remove(file);
+      await _remove(dir);
       throw const UpdateError('The download stalled. Check the connection and try again.');
     } on SocketException {
-      await _remove(file);
+      await _remove(dir);
       throw const UpdateError('The download failed. Check the connection and try again.');
     } finally {
       client.close(force: true);
     }
   }
 
-  Future<void> _remove(File f) async {
+  /// A new folder for one download, that only this user can change. The
+  /// .deb is installed as root from it after a password prompt, so nobody
+  /// else may be able to swap the file in the meantime, which they could in
+  /// a folder with a fixed name in the shared temporary folder (anyone could
+  /// make that first). createTemp makes a new one with a name of its own,
+  /// and without write access for anyone else.
+  @visibleForTesting
+  Future<Directory> downloadFolder() => Directory.systemTemp.createTemp('promptly-update-');
+
+  Future<void> _remove(Directory d) async {
     try {
-      await f.delete();
+      await d.delete(recursive: true);
     } catch (_) {}
   }
 
@@ -299,48 +306,52 @@ class UpdateService {
   /// launchers that point into it still work.
   Future<void> _replaceFolder(File tarball) async {
     final dir = File(Platform.resolvedExecutable).parent;
-    final old = await swapFolder(tarball, dir);
+    final work = await swapFolder(tarball, dir);
     // This copy runs from the old folder until it quits; Linux is fine with
     // that, and the folder goes once it has.
-    await _openWhenClosed('${dir.path}/promptly', remove: old.path);
+    await _openWhenClosed('${dir.path}/promptly', remove: work.path);
   }
 
-  /// Unpack [tarball] beside [dir] and swap it in. Returns where the old
-  /// folder went.
+  /// Unpack [tarball] beside [dir] and swap it in. Everything happens in a
+  /// new folder of its own next to [dir] (the same disk, so the swap is two
+  /// renames), which ends up holding the old version: the caller removes it.
+  /// Nothing else beside [dir] is touched.
   @visibleForTesting
   Future<Directory> swapFolder(File tarball, Directory dir) async {
-    final staging = Directory('${dir.path}.update');
-    final old = Directory('${dir.path}.old');
+    final Directory work;
     try {
-      for (final d in [staging, old]) {
-        if (await d.exists()) await d.delete(recursive: true);
-      }
-      await staging.create();
+      work = await dir.parent.createTemp('.promptly-update-');
     } on FileSystemException {
       throw UpdateError('Promptly cannot write beside its folder (${dir.parent.path}). Download the new tarball from the release page instead.');
     }
+    final unpackTo = Directory('${work.path}/new');
+    final old = '${work.path}/old';
     try {
-      final r = await Process.run('tar', ['-xzf', tarball.path, '-C', staging.path]);
+      await unpackTo.create();
+      final r = await Process.run('tar', ['-xzf', tarball.path, '-C', unpackTo.path]);
       // The tarball holds one folder, promptly-X.Y.Z-linux-x64.
-      final unpacked = r.exitCode == 0 ? staging.listSync().whereType<Directory>().toList() : const <Directory>[];
+      final unpacked = r.exitCode == 0 ? unpackTo.listSync().whereType<Directory>().toList() : const <Directory>[];
       if (unpacked.length != 1 || !File('${unpacked.single.path}/promptly').existsSync()) {
         throw const UpdateError('The download could not be unpacked. Try again.');
       }
-      await dir.rename(old.path);
+      await dir.rename(old);
       try {
         await unpacked.single.rename(dir.path);
       } catch (_) {
-        await old.rename(dir.path);
+        await Directory(old).rename(dir.path);
         rethrow;
       }
-    } on FileSystemException {
-      throw const UpdateError('Promptly could not swap in the new version. Nothing changed. Download it from the release page instead.');
-    } finally {
-      try {
-        await staging.delete(recursive: true);
-      } catch (_) {}
+      return work;
+    } catch (e) {
+      // Unless putting the old version back failed too: then it is still in
+      // there, and must not go.
+      if (!Directory(old).existsSync()) await _remove(work);
+      if (e is UpdateError) rethrow;
+      if (e is FileSystemException) {
+        throw const UpdateError('Promptly could not swap in the new version. Nothing changed. Download it from the release page instead.');
+      }
+      rethrow;
     }
-    return old;
   }
 
   /// Wait in the background for this process to end, then (after removing

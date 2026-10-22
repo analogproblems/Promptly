@@ -1056,6 +1056,9 @@ class FakeUpdateService implements UpdateService {
 
   @override
   Future<Directory> swapFolder(File tarball, Directory dir) => throw UnimplementedError();
+
+  @override
+  Future<Directory> downloadFolder() => throw UnimplementedError();
 }
 
 Widget app([FakeEngine? engine]) => appWith(engine);

@@ -71,20 +71,55 @@ void main() {
       return out;
     }
 
+    // Folders of the person's own beside the app, with names an update
+    // might have picked.
+    void neighbours() {
+      for (final name in ['.old', '.update', '.bak']) {
+        File('${dir.path}$name/keep')
+          ..createSync(recursive: true)
+          ..writeAsStringSync('mine');
+      }
+    }
+
+    List<String> beside() => [for (final e in root.listSync()) e.path.split('/').last]..sort();
+
+    void neighboursKept() {
+      for (final name in ['.old', '.update', '.bak']) {
+        expect(File('${dir.path}$name/keep').readAsStringSync(), 'mine');
+      }
+    }
+
     test('the new version takes the folder\'s place and name', () async {
-      final old = await const UpdateService().swapFolder(tarball({'promptly-2.0.0-linux-x64/promptly': 'new'}), dir);
+      neighbours();
+      final src = tarball({'promptly-2.0.0-linux-x64/promptly': 'new'});
+      final work = await const UpdateService().swapFolder(src, dir);
       expect(File('${dir.path}/promptly').readAsStringSync(), 'new');
-      expect(File('${old.path}/promptly').readAsStringSync(), 'old', reason: 'removed once this copy quits');
-      expect(Directory('${dir.path}.update').existsSync(), isFalse);
+      expect(File('${work.path}/old/promptly').readAsStringSync(), 'old', reason: 'removed once this copy quits');
+      expect(work.parent.path, root.path);
+      neighboursKept();
     });
 
-    test('a tarball without the app leaves the folder alone', () async {
-      await expectLater(
-        const UpdateService().swapFolder(tarball({'something-else/readme': 'x'}), dir),
-        throwsA(isA<UpdateError>()),
-      );
+    test('a tarball without the app leaves the folder and its neighbours alone', () async {
+      neighbours();
+      final src = tarball({'something-else/readme': 'x'});
+      final before = beside();
+      await expectLater(const UpdateService().swapFolder(src, dir), throwsA(isA<UpdateError>()));
       expect(File('${dir.path}/promptly').readAsStringSync(), 'old');
-      expect(Directory('${dir.path}.update').existsSync(), isFalse);
+      neighboursKept();
+      expect(beside(), before, reason: 'its own work folder is gone again');
+    });
+
+    test('each download gets a new folder only this user can change', () async {
+      final a = await const UpdateService().downloadFolder();
+      final b = await const UpdateService().downloadFolder();
+      addTearDown(() {
+        a.deleteSync();
+        b.deleteSync();
+      });
+      expect(a.path, isNot(b.path));
+      if (!Platform.isWindows) {
+        expect(a.statSync().mode & 0x12, 0, reason: 'no writing for the group or anyone else');
+      }
     });
   });
 }
