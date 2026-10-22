@@ -354,9 +354,11 @@ class _HostEditorScreenState extends ConsumerState<HostEditorScreen> {
   /// Where a saved password goes: kept on this device, encrypted when the
   /// system has secure storage, and copied to the vault once there is one.
   String _savedPasswordNote() {
-    final engine = ref.read(engineProvider);
-    final encrypted = engine.secretsState() == SecretsState.encrypted;
-    final here = encrypted ? 'Kept encrypted on this device' : 'Kept on this device';
+    final state = ref.read(engineProvider).secretsState();
+    if (state == SecretsState.locked) {
+      return "Can't be saved now: Promptly can't reach your system's secure storage. Unlock it, then restart Promptly.";
+    }
+    final here = state == SecretsState.encrypted ? 'Kept encrypted on this device' : 'Kept on this device';
     if (_localOnly) return '$here only.';
     if (ref.watch(syncStatusProvider).value?.configured ?? false) {
       return '$here, and synced encrypted to your other devices.';

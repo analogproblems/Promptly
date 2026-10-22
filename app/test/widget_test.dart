@@ -1313,6 +1313,15 @@ void main() {
     expect(find.text('nas'), findsOneWidget);
   });
 
+  testWidgets('the backup card stays hidden on the next start once Not now was tapped', (tester) async {
+    final engine = FakeEngine()..settings['backup_nudge_dismissed'] = 'true';
+    engine.records['hosts'] = {'h1': hostJson('h1', 'nas')};
+    await tester.pumpWidget(app(engine));
+    await tester.pumpAndSettle();
+    expect(find.text('nas'), findsOneWidget);
+    expect(find.byKey(const Key('backup-nudge')), findsNothing);
+  });
+
   testWidgets('the backup card opens the sync setup', (tester) async {
     final engine = FakeEngine();
     engine.records['hosts'] = {'h1': hostJson('h1', 'nas')};
@@ -1371,6 +1380,11 @@ void main() {
     testWidgets('with no secure storage it does not claim encryption', (tester) async {
       await open(tester, FakeEngine()..secretsKept = SecretsState.plain);
       expect(find.textContaining('Kept on this device. Once sync is set up'), findsOneWidget);
+    });
+
+    testWidgets('with secure storage locked it says the password cannot be saved', (tester) async {
+      await open(tester, FakeEngine()..secretsKept = SecretsState.locked);
+      expect(find.textContaining("Can't be saved now"), findsOneWidget);
     });
   });
 
