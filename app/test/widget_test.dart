@@ -3173,6 +3173,34 @@ void main() {
     expect(find.byKey(const Key('update-open-page')), findsOneWidget);
   });
 
+  testWidgets('an Android copy from GitHub hands the APK to Android, and stays open while it asks', (tester) async {
+    final updates = FakeUpdateService(
+      const Release(
+        version: '99.0.0',
+        pageUrl: releasesPage,
+        assets: [ReleaseAsset(name: 'promptly-99.0.0$androidApkSuffix', url: 'https://a', size: 1)],
+      ),
+    );
+    installKindOverride = InstallKind.androidApk;
+    addTearDown(() => installKindOverride = null);
+    await tester.pumpWidget(appWith(FakeEngine(), updates: updates));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
+    await tester.pumpAndSettle();
+    await scrollTap(tester, find.byKey(const Key('settings-about')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('update-check-now')));
+    await tester.pumpAndSettle();
+    expect(find.text('Update'), findsOneWidget);
+    expect(find.textContaining('Android asks you to confirm'), findsOneWidget);
+
+    // Android's screen is showing: the app does not quit by itself.
+    await tester.tap(find.byKey(const Key('update-install')));
+    await tester.pumpAndSettle();
+    expect(updates.ran, isNotNull);
+    expect(find.text('Installing 99.0.0'), findsOneWidget);
+  });
+
   testWidgets('the app offers once to check for updates, after the first run', (tester) async {
     final engine = FakeEngine();
     final updates = FakeUpdateService(const Release(version: '99.0.0', pageUrl: releasesPage));

@@ -8,6 +8,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Updating from inside the app, with a newer APK from GitHub
+         (AppUpdater.kt). Android still asks the person each time, unless
+         this copy installed the one it replaces (Android 12 and later). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>
     <!-- No backups: the data is encrypted with a key that stays on this
          phone, so a restored copy could not be opened (see
          res/xml/data_extraction_rules.xml for Android 12 and later). -->

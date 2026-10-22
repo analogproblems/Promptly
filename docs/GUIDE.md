@@ -114,7 +114,8 @@ When a new version is out, **Update and restart** downloads it, checks it matche
 - **Windows, from the zip:** the button says **Install and restart**. It installs Promptly for your account, with a Start menu entry, and opens the installed copy, which updates itself from then on. Your hosts and settings come along; you can delete the unzipped folder afterwards.
 - **Linux, from the `.deb`:** your desktop asks for your password, as it does for system updates, and the new `.deb` is installed. If you cancel, nothing changes.
 - **Linux, from the tarball:** the new version replaces the folder you unpacked, keeping its name, so a launcher pointing into it still works. Promptly needs to be able to write in the folder that holds it.
-- **Mac and Android:** tap **Download** to open the release page, then install the new version the same way you installed the first one.
+- **Android, from the `.apk`:** the button says **Update**. Android shows its own screen asking whether to update Promptly (the first time, it also asks you to allow installs from Promptly). Confirm, and Android closes Promptly, along with its open sessions, and installs the new version; open it again afterwards. On Android 12 and later, once Promptly has updated itself this way, later updates may install without that screen.
+- **Mac:** tap **Download** to open the release page, then install the new version the same way you installed the first one.
 
 ## 3. Getting started
 
