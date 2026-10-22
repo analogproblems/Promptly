@@ -71,12 +71,12 @@ class _SessionLabelEditorState extends ConsumerState<_SessionLabelEditor> {
   }
 
   Future<void> _delete() async {
-    final users = [for (final h in ref.read(hostsProvider)) if (h.sessionLabelId == widget.label.id) h];
+    final count = ref.read(hostsProvider).where((h) => h.sessionLabelId == widget.label.id).length;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('Delete ${widget.label.name}?'),
-        content: Text(switch (users.length) {
+        content: Text(switch (count) {
           0 => 'No hosts use it.',
           1 => '1 host uses it. It stays, without a label.',
           final n => '$n hosts use it. They stay, without a label.',
@@ -92,8 +92,10 @@ class _SessionLabelEditorState extends ConsumerState<_SessionLabelEditor> {
       ),
     );
     if (ok != true || !mounted) return;
+    // The hosts as they are now: sync may have changed or removed some
+    // while the question was open, and those changes must stand.
     final hosts = ref.read(hostsProvider.notifier);
-    for (final h in users) {
+    for (final h in [for (final h in ref.read(hostsProvider)) if (h.sessionLabelId == widget.label.id) h]) {
       hosts.save(h.copyWith(sessionLabelId: null));
     }
     ref.read(sessionLabelsProvider.notifier).delete(widget.label.id);

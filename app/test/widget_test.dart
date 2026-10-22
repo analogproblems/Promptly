@@ -35,6 +35,7 @@ import 'package:promptly/features/workspace/workspace_screen.dart';
 import 'package:promptly/features/updates/updates.dart';
 import 'package:promptly/features/lock/app_lock.dart';
 import 'package:promptly/features/sync/sync_screen.dart' show SyncScreen;
+import 'package:promptly/features/hosts/repositories.dart' show hostsProvider;
 import 'package:promptly/features/snippets/repositories.dart' show snippetsProvider;
 import 'package:promptly/core/router.dart' show routerProvider;
 
@@ -3718,12 +3719,21 @@ void main() {
     await tester.tap(find.byKey(const Key('label-delete')));
     await tester.pumpAndSettle();
     expect(find.text('1 host uses it. It stays, without a label.'), findsOneWidget);
+    // While the question is open, another device moves the host and adds one more with the label.
+    engine.records['hosts'] = {
+      'h1': hostJson('h1', 'db-1', extra: ',"production":true').replaceFirst('"hostname":"db-1.example"', '"hostname":"db-2.example"'),
+      'h2': hostJson('h2', 'db-3', extra: ',"session_label":"production"'),
+    };
+    ProviderScope.containerOf(tester.element(find.byType(MaterialApp))).invalidate(hostsProvider);
+    await tester.pump();
     await tester.tap(find.byKey(const Key('label-delete-confirm')));
     await tester.pumpAndSettle();
     expect(engine.settings['session_labels'], '[]');
     final saved = jsonDecode(engine.records['hosts']!['h1']!) as Map;
     expect(saved['session_label'], isNull);
     expect(saved['production'], isFalse);
+    expect(saved['hostname'], 'db-2.example', reason: 'the synced change stands');
+    expect(jsonDecode(engine.records['hosts']!['h2']!)['session_label'], isNull);
     expect(find.text('No labels yet.'), findsOneWidget);
   });
 
