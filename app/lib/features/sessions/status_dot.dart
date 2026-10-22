@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/theme/tokens.dart';
+import '../hosts/session_labels.dart';
 import 'session_manager.dart';
 
 /// Where a session's connection stands, in words: what the dot means, for
@@ -83,35 +84,37 @@ class _SessionStatusDotState extends State<SessionStatusDot> with SingleTickerPr
   }
 }
 
-/// The red bar across a session to a production host. It carries the
-/// host's label in words, so the warning never rests on colour alone.
-class ProductionBar extends StatelessWidget {
-  const ProductionBar({super.key, required this.label, this.compact = false});
+/// The coloured bar across a session to a labelled host, such as a
+/// production one. It carries the label in words, so the warning never
+/// rests on colour alone.
+class SessionLabelBar extends StatelessWidget {
+  const SessionLabelBar({super.key, required this.mark, this.compact = false});
 
-  final String label;
+  final SessionMark mark;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final t = context.tokens;
-    // Whichever of black and white reads better on this theme's red.
-    final ink = t.danger.computeLuminance() > 0.179 ? const Color(0xFF0E1116) : Colors.white;
+    final color = labelColor(mark.color, Theme.of(context).brightness);
+    final ink = inkOn(color);
     return Semantics(
       container: true,
-      label: 'Production host: $label',
+      label: '${mark.name} host: ${mark.text}',
       excludeSemantics: true,
       child: Container(
-        key: const Key('production-bar'),
+        key: const Key('session-label-bar'),
         width: double.infinity,
-        color: t.danger,
+        color: color,
         padding: EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 2 : 4),
         child: Row(
           children: [
-            Icon(Icons.warning_amber_rounded, size: compact ? 14 : 16, color: ink),
-            const SizedBox(width: 6),
+            if (mark.warn) ...[
+              Icon(Icons.warning_amber_rounded, size: compact ? 14 : 16, color: ink),
+              const SizedBox(width: 6),
+            ],
             Expanded(
               child: Text(
-                label.toUpperCase(),
+                mark.text.toUpperCase(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(

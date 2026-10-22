@@ -145,7 +145,7 @@ Built in M4: the terminal is a text-input client on phones and tablets and reads
 
 - Ships with JetBrains Mono (with Nerd Font symbols) and uses system fonts for the UI. Users can add any monospace font file. Ligatures on by default, switchable. (M1)
 - Built-in theme gallery: Promptly Dark, Promptly Light, Catppuccin (four flavours), Dracula, Nord, Gruvbox, Solarized, One Dark, Tokyo Night, Rosé Pine. Live preview while picking. (M1)
-- Per-host colour accent so you always know which box you are typing into. Production hosts can get a red bar. (M1)
+- Per-host colour accent so you always know which box you are typing into. Session labels, such as Production, put a coloured bar with words on a host's sessions. (M1)
 - Import any iTerm2, Windows Terminal, Alacritty or base16 theme file. (M4)
 
 ### 4.10 Desktop extras
@@ -260,7 +260,8 @@ Host
   persistent_session: bool
   port_forwards[]: { kind: local | remote | dynamic, bind_host, bind_port, target_host, target_port, auto }
   last_connected_at?, favourite: bool
-  production: bool, production_label     the red bar and its words
+  session_label?, production_label        the session label's bar, and this host's words on it
+  production: bool                        session_label is "production", for older apps
 
 Group
   label, parent_id?, color
@@ -288,7 +289,8 @@ Theme
 
 Settings                            one record, id "app": only what makes sense on every device
   theme_mode, terminal_theme, terminal_bell, terminal_scrollback, paste_warning,
-  program_clipboard, reachability_check, ...
+  program_clipboard, reachability_check,
+  session_labels: [{ id, name, color, warn }], ...
   (font size, keyboard bar, app lock and the update check stay on each device)
 
 Device                              one per enrolled device

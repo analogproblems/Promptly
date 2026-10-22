@@ -9,6 +9,7 @@ import '../../core/engine/engine.dart';
 import '../hosts/inheritance.dart';
 import '../hosts/models.dart';
 import '../hosts/repositories.dart';
+import '../hosts/session_labels.dart';
 import '../lock/app_lock.dart';
 import '../settings/settings_providers.dart';
 import '../terminal/terminal_controller.dart';
@@ -24,7 +25,7 @@ class SessionEntry extends ChangeNotifier {
     required this.isLocal,
     this.hostId,
     this.color,
-    this.production,
+    this.mark,
   });
 
   /// The app's own id, stable for the session's whole life. Not the engine's.
@@ -44,9 +45,9 @@ class SessionEntry extends ChangeNotifier {
   /// into. Null for local shells and one-off connections.
   final String? color;
 
-  /// The words on the red bar of a session to a production host; null for
-  /// every other session.
-  final String? production;
+  /// The coloured bar of a session to a labelled host, as the label was
+  /// when it opened; null for every other session.
+  final SessionMark? mark;
 
   TerminalController? _controller;
   ConnectFlow? _flow;
@@ -192,7 +193,7 @@ class SessionManager extends Notifier<List<SessionEntry>> {
       isLocal: false,
       hostId: host.id,
       color: host.color ?? defaultColorFor(host.label),
-      production: host.production ? host.productionBadge : null,
+      mark: markFor(host, ref.read(sessionLabelsProvider)),
     );
     final plan = requestFor(host, theme: theme);
     if (plan.request == null) {

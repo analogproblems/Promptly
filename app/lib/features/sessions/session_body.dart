@@ -222,8 +222,8 @@ class _SessionBodyState extends ConsumerState<SessionBody> {
           onPointerDown: widget.onFocus == null ? null : (_) => widget.onFocus!(),
           child: Column(
             children: [
-              if (entry.production != null)
-                ProductionBar(label: entry.production!, compact: widget.compact)
+              if (entry.mark case final mark?)
+                SessionLabelBar(mark: mark, compact: widget.compact)
               else if (accent != null)
                 Container(key: const Key('host-colour-bar'), height: 3, color: accent),
               Container(
