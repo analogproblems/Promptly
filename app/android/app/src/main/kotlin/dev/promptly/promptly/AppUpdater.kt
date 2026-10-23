@@ -58,6 +58,11 @@ class AppUpdater(private val activity: Activity) {
                         session.fsync(out)
                     }
                 }
+                // The session holds its own copy now. A successful update
+                // ends this process before the Dart side could clean up, so
+                // the download goes here: the file, then its folder if empty.
+                file.delete()
+                file.parentFile?.delete()
                 val staged = id
                 activity.runOnUiThread { commit(staged) }
             } catch (e: Exception) {

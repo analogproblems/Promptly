@@ -290,8 +290,9 @@ class UpdateService {
     } finally {
       // Whether it worked or not, the download has done its job: apt-get
       // and tar are finished with it, and Android's installer took its own
-      // copy. The Windows installer is still running from it, so that one
-      // stays in the temporary folder.
+      // copy (AppUpdater.kt already deletes it then, as a successful update
+      // never comes back here). The Windows installer is still running from
+      // it, so that one stays in the temporary folder.
       if (kind != InstallKind.windowsInstaller && kind != InstallKind.windowsZip) await discard(file);
     }
   }
