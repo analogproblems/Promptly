@@ -27,6 +27,8 @@ void main() {
         {'name': 'promptly-1.2.3-linux-x64.tar.gz', 'browser_download_url': 'https://t', 'size': 30},
         {'name': 'promptly_1.2.3_amd64.deb', 'browser_download_url': 'https://d', 'size': 40},
         {'name': 'promptly-1.2.3-macos.dmg', 'browser_download_url': 'https://m', 'size': 50},
+        {'name': 'promptly-1.2.3-android.apk', 'browser_download_url': 'https://a', 'size': 60},
+        {'name': 'promptly-1.2.3-android.aab', 'browser_download_url': 'https://b', 'size': 70},
       ],
     })!;
     expect(r.version, '1.2.3');
@@ -38,6 +40,7 @@ void main() {
     expect(r.assetFor(InstallKind.windowsZip)!.url, 'https://s', reason: 'the zip moves to the installer');
     expect(r.assetFor(InstallKind.linuxTarball)!.url, 'https://t');
     expect(r.assetFor(InstallKind.linuxDeb)!.url, 'https://d');
+    expect(r.assetFor(InstallKind.androidApk)!.url, 'https://a', reason: 'the APK, not the bundle for Play');
     expect(r.assetFor(InstallKind.manual), isNull);
   });
 

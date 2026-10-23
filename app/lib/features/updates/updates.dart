@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
+import 'package:flutter/services.dart' show MethodChannel, PlatformException;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/engine/engine.dart';
@@ -22,6 +23,7 @@ const releasesPage = 'https://github.com/analogproblems/Promptly/releases/latest
 const windowsInstallerSuffix = '-windows-x64-setup.exe';
 const linuxTarballSuffix = '-linux-x64.tar.gz';
 const linuxDebSuffix = '_amd64.deb';
+const androidApkSuffix = '-android.apk';
 
 /// How this copy was installed, which decides how it can update itself.
 enum InstallKind {
@@ -40,7 +42,11 @@ enum InstallKind {
   /// newer one in its place.
   linuxTarball(linuxTarballSuffix),
 
-  /// Anything else (macOS, Android, a build from source) opens the release page.
+  /// Android, an APK from GitHub: hands the newer APK to Android, which asks
+  /// to confirm (MainActivity's AppUpdater) and replaces the app.
+  androidApk(androidApkSuffix),
+
+  /// Anything else (macOS, a build from source) opens the release page.
   manual(null);
 
   const InstallKind(this.assetSuffix);
@@ -159,6 +165,9 @@ InstallKind _detectInstallKind() {
     }
     // The tarball's folder has its README and the licence beside the app.
     if (has('README.txt') && has('LICENSE')) return InstallKind.linuxTarball;
+  } else if (Platform.isAndroid) {
+    // A copy from Google Play is turned away when it tries (AppUpdater.kt).
+    return InstallKind.androidApk;
   }
   return InstallKind.manual;
 }
@@ -272,8 +281,26 @@ class UpdateService {
         await _openWhenClosed('/opt/promptly/promptly');
       case InstallKind.linuxTarball:
         await _replaceFolder(file);
+      case InstallKind.androidApk:
+        await _installApk(file);
       case InstallKind.manual:
         throw const UpdateError('This copy cannot update itself. Download the new version from the release page.');
+    }
+  }
+
+  static const _android = MethodChannel('dev.promptly/update');
+
+  /// Hand the APK to Android. This returns only if it is not installed:
+  /// otherwise Android closes the app and replaces it.
+  Future<void> _installApk(File apk) async {
+    try {
+      await _android.invokeMethod<void>('install', apk.path);
+    } on PlatformException catch (e) {
+      throw switch (e.code) {
+        'cancelled' => const UpdateCancelled(),
+        'play' => const UpdateError('Google Play installed this copy, and updates it. Look for the update there.'),
+        _ => const UpdateError('Android could not install it. Download the .apk from the release page instead.'),
+      };
     }
   }
 
@@ -468,6 +495,8 @@ class UpdateNotifier extends Notifier<UpdateState> {
       });
       state = UpdateInstalling(release);
       await service.install(kind, file);
+      // Android closes the app itself once it has the new version.
+      if (kind == InstallKind.androidApk) return;
     } on UpdateCancelled {
       state = UpdateAvailable(release);
       return;

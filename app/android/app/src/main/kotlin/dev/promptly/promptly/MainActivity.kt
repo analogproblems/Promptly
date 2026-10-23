@@ -13,6 +13,7 @@ class MainActivity : FlutterFragmentActivity() {
     // Asked once a run at most: from Android 13 the sessions notification
     // stays hidden without it, though the sessions keep running either way.
     private var askedToNotify = false
+    private val updater = AppUpdater(this)
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -43,6 +44,19 @@ class MainActivity : FlutterFragmentActivity() {
                             setRecentsScreenshotEnabled(call.arguments != true)
                         }
                         result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        // Installing a newer version downloaded from GitHub
+        // (lib/features/updates/updates.dart).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "dev.promptly/update")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "install" -> {
+                        val path = call.arguments as? String
+                        if (path == null) result.error("failed", "No file to install.", null)
+                        else updater.install(path, result)
                     }
                     else -> result.notImplemented()
                 }

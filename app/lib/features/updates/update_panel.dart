@@ -8,7 +8,7 @@ import '../../core/theme/tokens.dart';
 import 'updates.dart';
 
 /// The About page's update row: check now, and when a new version is out,
-/// install it (Windows, and Linux from the .deb or the tarball) or open its
+/// install it (Windows, Linux, and Android from the GitHub APK) or open its
 /// download page.
 class UpdatePanel extends ConsumerWidget {
   const UpdatePanel({super.key});
@@ -47,7 +47,11 @@ class UpdatePanel extends ConsumerWidget {
         FilledButton(
           key: const Key('update-install'),
           onPressed: () => notifier.installAndRestart(release),
-          child: Text(installKind == InstallKind.windowsZip ? 'Install and restart' : 'Update and restart'),
+          child: Text(switch (installKind) {
+            InstallKind.windowsZip => 'Install and restart',
+            InstallKind.androidApk => 'Update',
+            _ => 'Update and restart',
+          }),
         ),
       ),
       UpdateAvailable(:final release) => (
@@ -65,9 +69,11 @@ class UpdatePanel extends ConsumerWidget {
       UpdateInstalling(:final release) => (
         Icons.system_update_alt,
         'Installing ${release.version}',
-        installKind == InstallKind.linuxDeb
-            ? 'Enter your password to install it. Promptly then closes and opens again.'
-            : 'Promptly will close and open again by itself.',
+        switch (installKind) {
+          InstallKind.linuxDeb => 'Enter your password to install it. Promptly then closes and opens again.',
+          InstallKind.androidApk => 'Confirm on the screen Android shows. Promptly then closes to update.',
+          _ => 'Promptly will close and open again by itself.',
+        },
         null,
       ),
       UpdateFailed(:final message, :final release) => (
@@ -95,6 +101,8 @@ class UpdatePanel extends ConsumerWidget {
           'itself from then on. You can delete this unzipped folder afterwards. Open sessions are closed.',
     InstallKind.linuxDeb => 'Promptly asks for your password, installs it and opens again. Open sessions are closed.',
     InstallKind.linuxTarball => 'Promptly puts it in place of this folder and opens again. Open sessions are closed.',
+    InstallKind.androidApk =>
+      'Android asks you to confirm, then closes Promptly and installs it. Open sessions end; open Promptly again after.',
     _ => 'Promptly closes, installs it and opens again. Open sessions are closed.',
   };
 
