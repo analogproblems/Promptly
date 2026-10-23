@@ -13,6 +13,13 @@
          this copy installed the one it replaces (Android 12 and later). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION"/>
+    <!-- Guards the installer's answer about an update (AppUpdater.kt): only
+         apps signed with Promptly's key can send it, which leaves Promptly
+         itself, through the PendingIntent it gives the installer. -->
+    <permission
+        android:name="dev.promptly.promptly.permission.UPDATE_STATUS"
+        android:protectionLevel="signature"/>
+    <uses-permission android:name="dev.promptly.promptly.permission.UPDATE_STATUS"/>
     <!-- No backups: the data is encrypted with a key that stays on this
          phone, so a restored copy could not be opened (see
          res/xml/data_extraction_rules.xml for Android 12 and later). -->
