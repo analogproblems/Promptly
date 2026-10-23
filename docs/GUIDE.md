@@ -79,7 +79,7 @@ Download the file for your system from the [Releases page](https://github.com/an
 
 ### Windows
 
-The installer is the easiest choice, and the only one that can update itself.
+The installer is the easiest choice. A copy from the zip can still update, by installing itself the first time (see [Updating](#updating)).
 
 1. Download `promptly-…-windows-x64-setup.exe` and run it.
 2. Windows may show **Windows protected your PC**, because Promptly isn't signed with a paid certificate yet. Click **More info**, then **Run anyway**.
@@ -106,10 +106,15 @@ You only need to do this once. The **Open Anyway** button is shown for about an 
 
 Your hosts, keys and settings are kept when you update.
 
-To see whether a new version is out, open **Settings › About Promptly** and tap **Check**. To have Promptly look once a day and tell you, turn on **Settings › About › Check for updates** (it's off by default).
+To see whether a new version is out, open **Settings › About Promptly** and tap **Check**. To have Promptly look once a day and tell you, turn on **Settings › About › Check for updates**. It's off until you turn it on; a little after you first open Promptly (after the welcome tour), it asks once whether you'd like it on.
 
-- **Windows, installed with the installer:** when a new version is out, tap **Update and restart**. Promptly downloads it, closes (along with any open sessions), installs it and opens again.
-- **Everywhere else:** tap **Download** to open the release page, then install the new version the same way you installed the first one.
+When a new version is out, **Update and restart** downloads it, checks it matches the release, closes Promptly (along with any open sessions), puts the new version in place and opens it again:
+
+- **Windows, installed with the installer:** it runs the new installer quietly.
+- **Windows, from the zip:** the button says **Install and restart**. It installs Promptly for your account, with a Start menu entry, and opens the installed copy, which updates itself from then on. Your hosts and settings come along; you can delete the unzipped folder afterwards.
+- **Linux, from the `.deb`:** your desktop asks for your password, as it does for system updates, and the new `.deb` is installed. If you cancel, nothing changes.
+- **Linux, from the tarball:** the new version replaces the folder you unpacked, keeping its name, so a launcher pointing into it still works. Promptly needs to be able to write in the folder that holds it.
+- **Mac and Android:** tap **Download** to open the release page, then install the new version the same way you installed the first one.
 
 ## 3. Getting started
 
@@ -866,7 +871,7 @@ Open sessions change as you tap. Choose a monospaced font: in any other, the col
 | | **Import from a CSV file** | Imports hosts from a CSV file. |
 | | **Import from ~/.ssh/config** | Imports hosts and keys from your SSH config (computers only). |
 | **Sync** | | Sets up the vault, or shows its status. See [chapter 14](#14-sync). |
-| **About** | **Check for updates** | Asks GitHub once a day whether a new version is out. Off by default. |
+| **About** | **Check for updates** | Asks GitHub once a day whether a new version is out. Off until you turn it on; Promptly asks once. |
 | | **Help** | A quick-start guide, the keyboard shortcuts, and links to this guide and to report a problem. |
 | | **About Promptly** | The version, a check for updates, links, and the licences of the open-source parts Promptly is built on, including OpenSSL and SQLCipher, which its engine uses. |
 

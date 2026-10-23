@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:io' show File;
+import 'dart:io' show Directory, File;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride;
@@ -1032,6 +1032,9 @@ class FakeUpdateService implements UpdateService {
   int checks = 0;
   File? ran;
 
+  /// What [install] throws instead of installing, when set.
+  UpdateError? installError;
+
   @override
   Future<Release?> latest() async {
     checks++;
@@ -1045,7 +1048,17 @@ class FakeUpdateService implements UpdateService {
   }
 
   @override
-  Future<void> runInstaller(File installer) async => ran = installer;
+  Future<void> install(InstallKind kind, File file) async {
+    final e = installError;
+    if (e != null) throw e;
+    ran = file;
+  }
+
+  @override
+  Future<Directory> swapFolder(File tarball, Directory dir) => throw UnimplementedError();
+
+  @override
+  Future<Directory> downloadFolder() => throw UnimplementedError();
 }
 
 Widget app([FakeEngine? engine]) => appWith(engine);
@@ -1097,9 +1110,13 @@ Widget appWith(
   SaveTextFile? fileSaver,
   DeviceFiles? deviceFiles,
   FontLibrary? fonts,
+  bool askUpdateCheck = false,
 }) {
   engine ??= FakeEngine();
   if (onboarded) engine.settings.putIfAbsent('onboarding_done', () => 'true');
+  // The once-only offer to check for updates counts as answered unless a
+  // test is about it.
+  if (!askUpdateCheck) engine.settings.putIfAbsent('update_check', () => 'false');
   return ProviderScope(
     overrides: [
       engineProvider.overrideWithValue(engine),
@@ -3085,23 +3102,105 @@ void main() {
     updates.release = const Release(
       version: '99.0.0',
       pageUrl: releasesPage,
-      windowsInstaller: ReleaseAsset(name: 'promptly-99.0.0$windowsInstallerSuffix', url: 'https://x', size: 1),
+      assets: [ReleaseAsset(name: 'promptly-99.0.0$windowsInstallerSuffix', url: 'https://x', size: 1)],
     );
-    installedByInstallerOverride = false;
-    addTearDown(() => installedByInstallerOverride = null);
+    installKindOverride = InstallKind.manual;
+    addTearDown(() => installKindOverride = null);
     await tester.tap(find.byKey(const Key('update-check-now')));
     await tester.pumpAndSettle();
     expect(find.text('Version 99.0.0 is out'), findsOneWidget);
-    expect(find.byKey(const Key('update-open-page')), findsOneWidget, reason: 'a copy from the zip downloads by hand');
+    expect(find.byKey(const Key('update-open-page')), findsOneWidget, reason: 'a build from source downloads by hand');
     expect(find.byKey(const Key('update-install')), findsNothing);
 
+    Future<void> reopenAbout() async {
+      await tester.tap(find.byTooltip('Back to settings'));
+      await tester.pumpAndSettle();
+      await scrollTap(tester, find.byKey(const Key('settings-about')));
+      await tester.pumpAndSettle();
+    }
+
     // Installed with the installer, it offers to update itself.
-    installedByInstallerOverride = true;
-    await tester.tap(find.byTooltip('Back to settings'));
+    installKindOverride = InstallKind.windowsInstaller;
+    await reopenAbout();
+    expect(find.text('Update and restart'), findsOneWidget);
+
+    // Unzipped, it offers to install itself, and says what that means.
+    installKindOverride = InstallKind.windowsZip;
+    await reopenAbout();
+    expect(find.text('Install and restart'), findsOneWidget);
+    expect(find.textContaining('Start menu'), findsOneWidget);
+
+    // A Linux copy needs its own file, which this release does not have.
+    installKindOverride = InstallKind.linuxTarball;
+    await reopenAbout();
+    expect(find.byKey(const Key('update-install')), findsNothing);
+  });
+
+  testWidgets('a Linux copy updates itself, and a cancelled password prompt goes back to the offer', (tester) async {
+    final updates = FakeUpdateService(
+      const Release(
+        version: '99.0.0',
+        pageUrl: releasesPage,
+        assets: [
+          ReleaseAsset(name: 'promptly-99.0.0$linuxTarballSuffix', url: 'https://t', size: 1),
+          ReleaseAsset(name: 'promptly_99.0.0$linuxDebSuffix', url: 'https://d', size: 1),
+        ],
+      ),
+    );
+    installKindOverride = InstallKind.linuxDeb;
+    addTearDown(() => installKindOverride = null);
+    await tester.pumpWidget(appWith(FakeEngine(), updates: updates));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings').first);
     await tester.pumpAndSettle();
     await scrollTap(tester, find.byKey(const Key('settings-about')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const Key('update-install')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('update-check-now')));
+    await tester.pumpAndSettle();
+    expect(find.text('Update and restart'), findsOneWidget);
+    expect(find.textContaining('asks for your password'), findsOneWidget);
+
+    updates.installError = const UpdateCancelled();
+    await tester.tap(find.byKey(const Key('update-install')));
+    await tester.pumpAndSettle();
+    expect(find.text('Update and restart'), findsOneWidget, reason: 'nothing changed, so it can be tried again');
+
+    updates.installError = const UpdateError('The package manager could not install it.');
+    await tester.tap(find.byKey(const Key('update-install')));
+    await tester.pumpAndSettle();
+    expect(find.text('The update did not work'), findsOneWidget);
+    expect(find.text('The package manager could not install it.'), findsOneWidget);
+    expect(find.byKey(const Key('update-open-page')), findsOneWidget);
+  });
+
+  testWidgets('the app offers once to check for updates, after the first run', (tester) async {
+    final engine = FakeEngine();
+    final updates = FakeUpdateService(const Release(version: '99.0.0', pageUrl: releasesPage));
+    await tester.pumpWidget(appWith(engine, updates: updates, askUpdateCheck: true));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('update-check-offer')), findsNothing);
+    await tester.pump(const Duration(seconds: 21));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('update-check-offer')), findsOneWidget);
+    expect(updates.checks, 0, reason: 'asking sends nothing');
+    expect(engine.settings['update_check'], 'false', reason: 'asked once counts as an answer');
+
+    await tester.tap(find.text('Turn on'));
+    await tester.pumpAndSettle();
+    expect(engine.settings['update_check'], 'true');
+    await tester.pump(const Duration(seconds: 11));
+    await tester.pump();
+    expect(updates.checks, 1);
+  });
+
+  testWidgets('the update offer waits while the welcome tour is still to come', (tester) async {
+    final engine = FakeEngine();
+    await tester.pumpWidget(appWith(engine, onboarded: false, askUpdateCheck: true));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 30));
+    await tester.pump();
+    expect(find.byKey(const Key('update-check-offer')), findsNothing);
+    expect(engine.settings.containsKey('update_check'), isFalse);
   });
 
   testWidgets('the automatic update check is off until turned on, then reminds once', (tester) async {
