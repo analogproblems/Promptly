@@ -266,26 +266,45 @@ class UpdateService {
   /// it, and leave something running that opens the new version once this
   /// one has quit. The caller quits.
   Future<void> install(InstallKind kind, File file) async {
-    switch (kind) {
-      case InstallKind.windowsInstaller || InstallKind.windowsZip:
-        // The installer shows its progress, closes anything still holding
-        // the files, and opens Promptly again when it is done (the [Run]
-        // entry in the .iss). From the zip, that is a new installed copy.
-        await Process.start(
-          file.path,
-          ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/FORCECLOSEAPPLICATIONS'],
-          mode: ProcessStartMode.detached,
-        );
-      case InstallKind.linuxDeb:
-        await _installDeb(file);
-        await _openWhenClosed('/opt/promptly/promptly');
-      case InstallKind.linuxTarball:
-        await _replaceFolder(file);
-      case InstallKind.androidApk:
-        await _installApk(file);
-      case InstallKind.manual:
-        throw const UpdateError('This copy cannot update itself. Download the new version from the release page.');
+    try {
+      switch (kind) {
+        case InstallKind.windowsInstaller || InstallKind.windowsZip:
+          // The installer shows its progress, closes anything still holding
+          // the files, and opens Promptly again when it is done (the [Run]
+          // entry in the .iss). From the zip, that is a new installed copy.
+          await Process.start(
+            file.path,
+            ['/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS', '/FORCECLOSEAPPLICATIONS'],
+            mode: ProcessStartMode.detached,
+          );
+        case InstallKind.linuxDeb:
+          await _installDeb(file);
+          await _openWhenClosed('/opt/promptly/promptly');
+        case InstallKind.linuxTarball:
+          await _replaceFolder(file);
+        case InstallKind.androidApk:
+          await _installApk(file);
+        case InstallKind.manual:
+          throw const UpdateError('This copy cannot update itself. Download the new version from the release page.');
+      }
+    } finally {
+      // Whether it worked or not, the download has done its job: apt-get
+      // and tar are finished with it, and Android's installer took its own
+      // copy (AppUpdater.kt already deletes it then, as a successful update
+      // never comes back here). The Windows installer is still running from
+      // it, so that one stays in the temporary folder.
+      if (kind != InstallKind.windowsInstaller && kind != InstallKind.windowsZip) await discard(file);
     }
+  }
+
+  /// Delete a downloaded [file], then its folder ([downloadFolder]) if that
+  /// is now empty. Only ever the one file: nothing else goes with it.
+  @visibleForTesting
+  Future<void> discard(File file) async {
+    try {
+      await file.delete();
+      await file.parent.delete();
+    } catch (_) {}
   }
 
   static const _android = MethodChannel('dev.promptly/update');
