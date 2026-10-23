@@ -1059,6 +1059,9 @@ class FakeUpdateService implements UpdateService {
 
   @override
   Future<Directory> downloadFolder() => throw UnimplementedError();
+
+  @override
+  Future<void> discard(File file) => throw UnimplementedError();
 }
 
 Widget app([FakeEngine? engine]) => appWith(engine);

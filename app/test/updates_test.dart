@@ -124,5 +124,27 @@ void main() {
         expect(a.statSync().mode & 0x12, 0, reason: 'no writing for the group or anyone else');
       }
     });
+
+    test('a used download goes, with its folder', () async {
+      final dir = await const UpdateService().downloadFolder();
+      addTearDown(() {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      });
+      final file = File('${dir.path}/promptly-1.1.0-linux-x64.tar.gz')..writeAsStringSync('x');
+      // A copy that cannot update itself fails at once, and still cleans up.
+      await expectLater(const UpdateService().install(InstallKind.manual, file), throwsA(isA<UpdateError>()));
+      expect(file.existsSync(), isFalse);
+      expect(dir.existsSync(), isFalse);
+    });
+
+    test('only the download goes, not anything else beside it', () async {
+      final dir = await Directory.systemTemp.createTemp('promptly-test-');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final file = File('${dir.path}/promptly.apk')..writeAsStringSync('x');
+      final other = File('${dir.path}/other')..writeAsStringSync('keep');
+      await const UpdateService().discard(file);
+      expect(file.existsSync(), isFalse);
+      expect(other.readAsStringSync(), 'keep');
+    });
   });
 }
