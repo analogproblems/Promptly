@@ -284,9 +284,9 @@ Turn on **Settings › Hosts › Show which hosts are up** to see a dot beside e
 
 You don't have to type in every server by hand.
 
-**From your SSH config (Linux, Windows and macOS).** If you already use the `ssh` command, your hosts are probably in `~/.ssh/config`. Go to **Settings › Hosts › Import from ~/.ssh/config** (or use the button on an empty hosts list). Promptly lists the hosts it found; untick any you don't want and tap **Import**. Each host comes in with its user, port and jump host. A key named by `IdentityFile` is imported too; hosts without one are set to use your SSH agent. Hosts you've already imported are greyed out.
+**From your SSH config (Linux, Windows and macOS).** If you already use the `ssh` command, your hosts are probably in `~/.ssh/config`. On the **Hosts** tab, tap the **+** button and choose **Import from ~/.ssh/config** (or use the button on an empty hosts list). Promptly lists the hosts it found; untick any you don't want and tap **Import**. Each host comes in with its user, port and jump host. A key named by `IdentityFile` is imported too; hosts without one are set to use your SSH agent. Hosts you've already imported are greyed out.
 
-**From a CSV file.** Go to **Settings › Hosts › Import from a CSV file** and choose the file. This reads the CSV that Termius exports, or any CSV with a `Hostname` column. Hosts come in with their user, port, group and tags. A password in the file is saved with its host; a host without one asks for it when you connect.
+**From a CSV file.** On the **Hosts** tab, tap the **+** button, choose **Import from a CSV file** and pick the file. This reads the CSV that Termius exports, or any CSV with a `Hostname` column. Hosts come in with their user, port, group and tags. A password in the file is saved with its host; a host without one asks for it when you connect.
 
 ## 6. Keys
 
@@ -869,8 +869,6 @@ Open sessions change as you tap. Choose a monospaced font: in any other, the col
 | | **App passcode** | Only on computers with no fingerprint or PIN check that apps can use (Linux). Sets a passcode Promptly asks for instead. It's stored only as a hash, on that computer. |
 | | | If Promptly can't keep your data encrypted on this device, a warning at the top of this section says why and what to do. |
 | **Hosts** | **Show which hosts are up** | Shows a reachability dot beside each host, checked once a minute. Off by default. |
-| | **Import from a CSV file** | Imports hosts from a CSV file. |
-| | **Import from ~/.ssh/config** | Imports hosts and keys from your SSH config (computers only). |
 | **Sync** | | Sets up the vault, or shows its status. See [chapter 14](#14-sync). |
 | **About** | **Check for updates** | Asks GitHub once a day whether a new version is out. Off until you turn it on; Promptly asks once. |
 | | **Help** | A quick-start guide, the keyboard shortcuts, and links to this guide and to report a problem. |

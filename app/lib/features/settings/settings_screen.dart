@@ -8,11 +8,8 @@ import '../../core/theme/tokens.dart';
 import '../../core/version.dart';
 import '../shell/empty_state.dart';
 import 'settings_providers.dart';
-import '../hosts/csv_import.dart';
-import '../hosts/ssh_config_import.dart';
 import '../lock/lock_settings.dart';
 import '../sessions/session_manager.dart' show sessionManagerProvider;
-import '../sessions/sessions_screen.dart' show supportsLocalShell;
 import '../sync/sync_providers.dart';
 import '../updates/updates.dart';
 import 'themes_screen.dart';
@@ -174,24 +171,6 @@ class SettingsScreen extends ConsumerWidget {
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () => context.go('/settings/session-labels'),
                     ),
-                    ListTile(
-                      key: const Key('import-csv'),
-                      leading: Icon(Icons.table_chart_outlined, color: t.muted),
-                      title: const Text('Import from a CSV file'),
-                      subtitle: const Text('From Termius, or any file with a Hostname column.'),
-                      trailing: TextButton(onPressed: () => showCsvImport(context, ref), child: const Text('Import')),
-                    ),
-                    if (supportsLocalShell)
-                      ListTile(
-                        key: const Key('import-ssh-config'),
-                        leading: Icon(Icons.file_download_outlined, color: t.muted),
-                        title: const Text('Import from ~/.ssh/config'),
-                        subtitle: const Text('Hosts, users, ports, jump hosts and keys.'),
-                        trailing: TextButton(
-                          onPressed: () => showSshConfigImport(context, ref),
-                          child: const Text('Import'),
-                        ),
-                      ),
                   ],
                 ),
               ),

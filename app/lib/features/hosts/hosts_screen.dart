@@ -218,7 +218,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                 key: const Key('add-import-csv'),
                 leading: const Icon(Icons.table_chart_outlined),
                 title: const Text('Import from a CSV file'),
-                subtitle: const Text('The file Termius exports, or any with a Hostname column.'),
+                subtitle: const Text('From Termius, or any file with a Hostname column.'),
                 onTap: () => Navigator.pop(ctx, 'csv'),
               ),
               if (supportsLocalShell)
@@ -226,7 +226,7 @@ class _HostsScreenState extends ConsumerState<HostsScreen> {
                   key: const Key('add-import-ssh-config'),
                   leading: const Icon(Icons.file_download_outlined),
                   title: const Text('Import from ~/.ssh/config'),
-                  subtitle: const Text('Hosts, users, ports, jump hosts and the keys they name.'),
+                  subtitle: const Text('Hosts, users, ports, jump hosts and keys.'),
                   onTap: () => Navigator.pop(ctx, 'ssh-config'),
                 ),
             ],

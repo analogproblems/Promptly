@@ -2330,10 +2330,9 @@ void main() {
       ];
     await tester.pumpWidget(app(engine));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Settings').first);
+    await tester.tap(find.byKey(const Key('hosts-add')));
     await tester.pumpAndSettle();
-    await scrollTo(tester, find.byKey(const Key('import-ssh-config')));
-    await tester.tap(find.descendant(of: find.byKey(const Key('import-ssh-config')), matching: find.text('Import')));
+    await tester.tap(find.byKey(const Key('add-import-ssh-config')));
     await tester.pumpAndSettle();
     expect(find.text('Import from ~/.ssh/config'), findsWidgets);
     expect(find.text('already saved'), findsOneWidget);
@@ -3409,10 +3408,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Settings').first);
+    await tester.tap(find.byKey(const Key('hosts-add')));
     await tester.pumpAndSettle();
-    await scrollTo(tester, find.byKey(const Key('import-csv')));
-    await tester.tap(find.descendant(of: find.byKey(const Key('import-csv')), matching: find.text('Import')));
+    await tester.tap(find.byKey(const Key('add-import-csv')));
     await tester.pumpAndSettle();
     expect(find.text('Import from termius.csv'), findsOneWidget);
     expect(find.text('deploy@10.0.0.1 · password'), findsOneWidget);
