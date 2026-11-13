@@ -37,7 +37,7 @@ What to paste into Play Console for the Android app, and what it asks for. Costs
 
 **Category:** Tools. **Tags:** SSH, terminal, sysadmin, developer tools.
 
-**Contact email:** the project's. **Website:** https://analogproblems.github.io/Promptly/ **Privacy policy:** https://analogproblems.github.io/Promptly/privacy/
+**Contact email:** the project's. **Website:** https://jasondwhyte.github.io/Promptly/ **Privacy policy:** https://jasondwhyte.github.io/Promptly/privacy/
 
 ## Graphics
 

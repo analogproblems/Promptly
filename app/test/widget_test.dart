@@ -5,7 +5,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -3868,6 +3868,10 @@ void main() {
   testWidgets('while reconnecting the status dot is amber, says so, and pulses unless motion is reduced', (
     tester,
   ) async {
+    // find.byTooltip only knows the SDK's own Tooltip class, and the dot's
+    // (from material_ui) leaves its message out of semantics on purpose.
+    Finder dotTooltip(String message) => find.byWidgetPredicate((w) => w is Tooltip && w.message == message);
+
     Future<double> opacityAfter(Duration d) async {
       await tester.pump(d);
       final fade = tester.widget<FadeTransition>(
@@ -3893,7 +3897,7 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.text('Connection dropped'), findsOneWidget);
-      expect(find.byTooltip('Reconnecting…'), findsOneWidget);
+      expect(dotTooltip('Reconnecting…'), findsOneWidget);
       final dot = tester.widget<Container>(
         find.descendant(of: find.byType(SessionStatusDot), matching: find.byType(Container)).first,
       );
@@ -3909,7 +3913,7 @@ void main() {
       // Let the reconnect finish so nothing is left running.
       await tester.pump(const Duration(seconds: 1));
       await tester.pumpAndSettle();
-      expect(find.byTooltip('Connected'), findsOneWidget);
+      expect(dotTooltip('Connected'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
     }
     tester.platformDispatcher.clearAccessibilityFeaturesTestValue();

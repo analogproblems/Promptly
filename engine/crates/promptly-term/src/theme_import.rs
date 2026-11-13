@@ -227,8 +227,8 @@ fn iterm2(text: &str, fallback_name: &str) -> Result<Palette, String> {
     p.cursor = get("Cursor Color");
     p.cursor_text = get("Cursor Text Color");
     p.selection = get("Selection Color");
-    for i in 0..16 {
-        p.ansi[i] = get(&format!("Ansi {i} Color"));
+    for (i, slot) in p.ansi.iter_mut().enumerate() {
+        *slot = get(&format!("Ansi {i} Color"));
     }
     p.finish()
 }
