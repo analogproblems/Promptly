@@ -70,7 +70,7 @@ Promptly is free and open source under the MIT licence.
 
 ## 2. Installing Promptly
 
-Download the file for your system from the [Releases page](https://github.com/analogproblems/Promptly/releases). Each release also includes a `SHA256SUMS` file, which you can use to check that your download arrived intact.
+Download the file for your system from the [Releases page](https://github.com/jasondwhyte/Promptly/releases). Each release also includes a `SHA256SUMS` file, which you can use to check that your download arrived intact.
 
 ### Linux
 
@@ -940,7 +940,7 @@ Every vault command asks for the passphrase, or reads it from the `PROMPTLY_PASS
 - **You choose what programs can do.** Remote programs can only set your clipboard if you allow it, and agent forwarding is off unless you turn it on for a host.
 - **Reachability checks are local.** With **Show which hosts are up** on, your device knocks on each host's SSH port directly; nothing goes anywhere else.
 
-Promptly is open source, so anyone can check what it does. To report a security problem privately, follow the instructions in the [security policy](https://github.com/analogproblems/Promptly/blob/main/SECURITY.md).
+Promptly is open source, so anyone can check what it does. To report a security problem privately, follow the instructions in the [security policy](https://github.com/jasondwhyte/Promptly/blob/main/SECURITY.md).
 
 ## 20. Troubleshooting
 
@@ -977,5 +977,5 @@ Promptly is open source, so anyone can check what it does. To report a security 
 ## 21. Getting help
 
 - **In the app:** **Settings › About › Help** has a quick start, the keyboard shortcuts, and links.
-- **Report a problem or ask for a feature:** open an issue on [GitHub](https://github.com/analogproblems/Promptly/issues). Include your platform, the Promptly version (in **Settings › About Promptly**), and what you saw.
+- **Report a problem or ask for a feature:** open an issue on [GitHub](https://github.com/jasondwhyte/Promptly/issues). Include your platform, the Promptly version (in **Settings › About Promptly**), and what you saw.
 - **What's new:** the [changelog](../CHANGELOG.md) lists the changes in each release.

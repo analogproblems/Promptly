@@ -5,11 +5,11 @@ import 'package:url_launcher/url_launcher.dart';
 
 /// Where the project lives, for the help and about screens.
 abstract final class AppLinks {
-  static const website = 'https://analogproblems.github.io/Promptly/';
-  static const guide = 'https://analogproblems.github.io/Promptly/guide/';
-  static const source = 'https://github.com/analogproblems/Promptly';
-  static const issues = 'https://github.com/analogproblems/Promptly/issues';
-  static const privacy = 'https://analogproblems.github.io/Promptly/privacy/';
+  static const website = 'https://jasondwhyte.github.io/Promptly/';
+  static const guide = 'https://jasondwhyte.github.io/Promptly/guide/';
+  static const source = 'https://github.com/jasondwhyte/Promptly';
+  static const issues = 'https://github.com/jasondwhyte/Promptly/issues';
+  static const privacy = 'https://jasondwhyte.github.io/Promptly/privacy/';
 }
 
 /// Open a link in the system browser (or mail client, and so on). Linux

@@ -19,7 +19,7 @@ import sys
 import markdown
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-REPO_URL = "https://github.com/analogproblems/Promptly"
+REPO_URL = "https://github.com/jasondwhyte/Promptly"
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # Navigation order; any other docs/*.md file still gets a page.

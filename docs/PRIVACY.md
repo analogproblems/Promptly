@@ -41,4 +41,4 @@ If this policy changes, the new text is published at the same address with a new
 
 ## Contact
 
-Questions go to the project's issue tracker: https://github.com/analogproblems/Promptly/issues
+Questions go to the project's issue tracker: https://github.com/jasondwhyte/Promptly/issues
