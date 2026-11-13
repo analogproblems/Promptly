@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// The eight named host colours, tuned per theme so a chip reads well on
 /// both backgrounds.
