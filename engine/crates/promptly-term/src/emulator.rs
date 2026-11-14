@@ -922,8 +922,8 @@ mod tests {
         assert_eq!((hit.index, hit.total), (1, 1));
         let f = e.frame();
         let row = f.rows_changed.iter().find(|r| r.line == 0).unwrap();
-        for col in 13..16 {
-            assert_eq!(row.bg[col], p.ansi[3]);
+        for bg in &row.bg[13..16] {
+            assert_eq!(*bg, p.ansi[3]);
         }
 
         // Other matches are softer than the focused one.

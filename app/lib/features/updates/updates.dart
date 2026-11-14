@@ -14,8 +14,8 @@ import '../settings/settings_providers.dart';
 
 /// Where new versions are published. `releases/latest` skips drafts and
 /// pre-releases, so a tag that is still being tried never shows up here.
-const latestReleaseApi = 'https://api.github.com/repos/analogproblems/Promptly/releases/latest';
-const releasesPage = 'https://github.com/analogproblems/Promptly/releases/latest';
+const latestReleaseApi = 'https://api.github.com/repos/jasondwhyte/Promptly/releases/latest';
+const releasesPage = 'https://github.com/jasondwhyte/Promptly/releases/latest';
 
 /// The release files each kind of install updates from. The Windows
 /// installer's name is set in tools/windows-installer.iss, the Linux ones in

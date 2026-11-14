@@ -9,9 +9,9 @@ Promptly is a fast, good-looking terminal and SSH client for your computer, tabl
 </p>
 
 <p align="center">
-  <a href="https://github.com/analogproblems/Promptly/releases/latest"><b>Download</b></a>
+  <a href="https://github.com/jasondwhyte/Promptly/releases/latest"><b>Download</b></a>
   &nbsp;·&nbsp;
-  <a href="https://analogproblems.github.io/Promptly/guide/"><b>User guide</b></a>
+  <a href="https://jasondwhyte.github.io/Promptly/guide/"><b>User guide</b></a>
   &nbsp;·&nbsp;
   <a href="CHANGELOG.md">What's new</a>
 </p>
@@ -74,7 +74,7 @@ Most SSH apps that sync your setup between devices want a monthly subscription a
 
 ## Get Promptly
 
-Download the latest version for your system from [GitHub Releases](https://github.com/analogproblems/Promptly/releases/latest).
+Download the latest version for your system from [GitHub Releases](https://github.com/jasondwhyte/Promptly/releases/latest).
 
 | System | What to download |
 |---|---|
@@ -83,13 +83,13 @@ Download the latest version for your system from [GitHub Releases](https://githu
 | Linux | The `.deb` for Debian and Ubuntu, or the tarball for anything else. |
 | Android | The `.apk`. Google Play is on the way. |
 
-The Windows and Mac builds aren't signed with a paid certificate yet, so the first launch shows a warning you need to click past once. The [installing chapter](https://analogproblems.github.io/Promptly/guide/#2-installing-promptly) of the guide walks you through it. An iPhone version needs the App Store and comes later; [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) explains the plan.
+The Windows and Mac builds aren't signed with a paid certificate yet, so the first launch shows a warning you need to click past once. The [installing chapter](https://jasondwhyte.github.io/Promptly/guide/#2-installing-promptly) of the guide walks you through it. An iPhone version needs the App Store and comes later; [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) explains the plan.
 
 ## Learn more
 
-The [user guide](https://analogproblems.github.io/Promptly/guide/) covers everything step by step: your first connection, keys, the desktop workspace, snippets, files, sync, every [keyboard shortcut](https://analogproblems.github.io/Promptly/guide/#17-keyboard-shortcuts) and [fixes for common problems](https://analogproblems.github.io/Promptly/guide/#20-troubleshooting).
+The [user guide](https://jasondwhyte.github.io/Promptly/guide/) covers everything step by step: your first connection, keys, the desktop workspace, snippets, files, sync, every [keyboard shortcut](https://jasondwhyte.github.io/Promptly/guide/#17-keyboard-shortcuts) and [fixes for common problems](https://jasondwhyte.github.io/Promptly/guide/#20-troubleshooting).
 
-Found a bug or have an idea? [Open an issue](https://github.com/analogproblems/Promptly/issues). For security problems, see [SECURITY.md](SECURITY.md).
+Found a bug or have an idea? [Open an issue](https://github.com/jasondwhyte/Promptly/issues). For security problems, see [SECURITY.md](SECURITY.md).
 
 ## For developers
 
