@@ -2,6 +2,16 @@
 
 Each release's section is what the GitHub Release says; keep it in plain words.
 
+## 1.1.2
+
+- Promptly's home on GitHub is now github.com/jasondwhyte/Promptly, and the guide is at jasondwhyte.github.io/Promptly. The links in the app point there, and the update check looks there. Older copies still find new versions, but their links to the guide no longer open.
+- Linux and Windows copies can update themselves. When a new version is out, the About page offers *Update and restart*: a .deb installs through your desktop's password dialog, and a copy from the tarball swaps itself for the new one. A Windows copy from the zip runs the installer once and from then on is an installed copy that updates itself.
+- Promptly asks once whether to check for new versions every day. *Check for updates* in Settings, About turns it on or off. It only asks GitHub.
+- A downloaded update is deleted once it has been installed, so updates no longer pile up in the temporary folder.
+- The production mark is now one of any number of *session labels*, each with a name, a colour and, if you like, a warning sign. Production comes as a label you can change. Make and edit labels in Settings, Hosts, *Session labels*, or from the host form; they sync with your other settings. Hosts marked production before keep their red bar.
+- Importing hosts from a CSV file or from ~/.ssh/config is now only in the Hosts screen's + menu; the copies in Settings are gone.
+- Updated the libraries Promptly uses for SSH, encryption, compression and its local database, including fixes for recently published security advisories.
+
 ## 1.1.1
 
 - The Settings screen is tidier and shorter. The font, text size and ligatures are together under *Appearance*, the encryption note sits inside *Security*, and *Updates* and *Help* are under *About*. The *Keyboard bar* setting only shows on phones and tablets, where the bar appears, and the leftover *Engine* test section is gone (the engine version is still on the About page).
