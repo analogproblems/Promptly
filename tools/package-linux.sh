@@ -66,8 +66,8 @@ Priority: optional
 Architecture: $ARCH
 Installed-Size: $SIZE_KB
 Depends: libgtk-3-0, libsecret-1-0, libstdc++6, libc6
-Maintainer: Promptly <https://github.com/analogproblems/Promptly/issues>
-Homepage: https://github.com/analogproblems/Promptly
+Maintainer: Promptly <https://github.com/jasondwhyte/Promptly/issues>
+Homepage: https://github.com/jasondwhyte/Promptly
 Description: Terminal and SSH client with free, zero-knowledge sync
  Promptly is a terminal emulator and SSH client. Hosts, keys and snippets
  sync between devices through an encrypted vault kept on storage you

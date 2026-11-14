@@ -15,7 +15,7 @@ void main() {
   test('a GitHub release reads its version and the file each kind of install updates from', () {
     final r = Release.fromGitHub({
       'tag_name': 'v1.2.3',
-      'html_url': 'https://github.com/analogproblems/Promptly/releases/tag/v1.2.3',
+      'html_url': 'https://github.com/jasondwhyte/Promptly/releases/tag/v1.2.3',
       'assets': [
         {'name': 'promptly-1.2.3-windows-x64.zip', 'browser_download_url': 'https://z', 'size': 10},
         {

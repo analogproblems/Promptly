@@ -9,9 +9,9 @@ Pod::Spec.new do |s|
   s.description      = <<-DESC
 A new Flutter FFI plugin project.
                        DESC
-  s.homepage         = 'https://github.com/analogproblems/Promptly'
+  s.homepage         = 'https://github.com/jasondwhyte/Promptly'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Promptly contributors' => 'https://github.com/analogproblems/Promptly' }
+  s.author           = { 'Promptly contributors' => 'https://github.com/jasondwhyte/Promptly' }
 
   # This will ensure the source files in Classes/ are included in the native
   # builds of apps using this FFI plugin. Podspec does not support relative

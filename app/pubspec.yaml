@@ -34,6 +34,10 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^2.0.0
+  # Material and Cupertino widgets moved out of the Flutter SDK into these
+  # packages (Flutter 3.47+ deprecates package:flutter/material.dart).
+  material_ui: ^1.7.0
+  cupertino_ui: ^1.1.3
   rust_lib_promptly:
     path: rust_builder
   flutter_rust_bridge: 2.13.0
